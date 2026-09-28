@@ -13,8 +13,9 @@
 эмодзи, только линейные иконки.
 
 Размещено бесплатно: статика на **GitHub Pages**, API на **Cloudflare Workers**,
-метаданные в **D1**, файлы в **R2**. Ноль зависимостей во фронтенде, ноль
-зависимостей в Worker.
+метаданные в **D1**, байты в **KV**. Ноль зависимостей во фронтенде, ноль
+зависимостей в Worker, ноль привязки карты — KV входит в бесплатный тариф, а R2
+пришлось бы включать в панели через оплату.
 
 | | |
 | --- | --- |
@@ -50,13 +51,13 @@ public/                статика для GitHub Pages (vanilla, без сб�
 worker/                Cloudflare Worker — единственный бэкенд
   src/index.js         маршруты, CORS, лимиты, Range
   src/store.js         D1: items, files, clients, rate
-  src/blobs.js         R2: байты по SHA-256, дедупликация
+  src/blobs.js         KV: байты по SHA-256, дедупликация
   src/plugins.js       хост плагинов
   src/util.js          id, секреты, хеши, mime, имена файлов
   plugins/             upload-guard, denylist, webhooks
   schema.sql           схема D1
   migrations/          миграции для wrangler d1 execute
-  test/                142 теста на локальных шимах D1 и R2
+  test/                143 теста на локальных шимах D1 и KV
 
 scripts/set-api-url.mjs   вписывает адрес Worker в public/index.html
 tools/screens.py          рисует og.png и скриншоты из docs/
@@ -78,10 +79,10 @@ npm install
 
 npx wrangler login
 npx wrangler d1 create cheatlab          # вписать database_id в wrangler.toml
-npx wrangler r2 bucket create cheatlab
+npx wrangler kv namespace create BLOBS   # вписать id в wrangler.toml
 
-npx wrangler d1 execute cheatlab --file=./migrations/0001_init.sql
-npx wrangler deploy
+npx wrangler d1 execute cheatlab --remote --file=./migrations/0001_init.sql
+npx wrangler deploy --config wrangler.toml
 ```
 
 `wrangler.toml` содержит два места для ручной правки:
@@ -91,9 +92,14 @@ npx wrangler deploy
 database_name = "cheatlab"
 database_id   = "REPLACE_WITH_D1_DATABASE_ID"   # ← из вывода wrangler d1 create
 
-[[r2_buckets]]
-bucket_name = "cheatlab"                        # ← имя созданного бакета
+[[kv_namespaces]]
+binding = "BUCKET"
+id       = "REPLACE_WITH_KV_NAMESPACE_ID"       # ← из вывода wrangler kv namespace create
 ```
+
+> `--config wrangler.toml` указан не по привычке: если в родительских каталогах
+> лежит чужой `wrangler.jsonc`, wrangler подхватит его вместо вашего конфига и
+> упадёт на чужом `name`. Флаг фиксирует, какой файл читать.
 
 Настройки (все — обычные `vars`, секретов нет):
 
@@ -101,7 +107,7 @@ bucket_name = "cheatlab"                        # ← имя созданног�
 | --- | --- | --- |
 | `SITE_URL` | `https://tatarhost.github.io/cheatlab` | куда `PLUGINS` и ссылки ведут на этот хост |
 | `ALLOW_ORIGIN` | `*` | значение `Access-Control-Allow-Origin` |
-| `MAX_FILE_MB` | `25` | лимит одного файла |
+| `MAX_FILE_MB` | `24` | лимит одного файла; потолок KV — 25 МиБ на значение |
 | `MAX_TEXT_KB` | `256` | лимит текста публикации |
 | `MAX_FILES` | `20` | файлов на публикацию |
 | `MAX_WRITE_RPM` | `30` | записей в минуту на устройство |
@@ -146,8 +152,8 @@ node scripts/set-api-url.mjs
 
 Cloudflare Free-тариф покрывает эту нагрузку с запасом: 100 000 запросов
 Workers в сутки, 5 млн строк чтения и 100 000 строк записи D1 в сутки, 5 ГБ
-базы, около 10 ГБ-месяц хранения R2 и **бесплатный исходящий трафик** — то есть
-скачивание файлов и видео не тарифицируется.
+базы, 1 ГБ KV, 100 000 чтений и 1 000 записей KV в сутки. Исходящий трафик
+Workers не тарифицируется — скачивание файлов и видео бесплатно.
 
 ---
 
@@ -205,7 +211,7 @@ curl -X POST https://cheatlab.example.workers.dev/api/items/abc12345/files \
 ```
 
 Имя кодируется в URL-безопасную строку, сервер декодирует и чистит. Размер
-проверяется на лету: файл больше лимита не пишется в R2 целиком.
+проверяется на лету: файл больше лимита не пишется в KV целиком.
 
 Пример создания пасты:
 
@@ -245,7 +251,7 @@ export default {
 | `item:published` | после создания | публичное представление |
 | `item:update` | после PATCH | публичное представление |
 | `item:delete` | после удаления | публичное представление |
-| `file:upload` | **до** записи байт в R2 | `{ id, item_id, name, mime }` |
+| `file:upload` | **до** записи байт в KV | `{ id, item_id, name, mime }` |
 | `file:stored` | после записи | файл с `size` и `sha256`; `throw reject()` откатывает и строку, и объект |
 | `file:delete` | после удаления | файл |
 
@@ -291,7 +297,7 @@ export default {
 
 ## Хранилище
 
-Файлы адресуются по содержимому: ключ R2 — `blobs/<aa>/<bb>/<sha256>`. Одинаковые
+Файлы адресуются по содержимому: ключ KV — `blobs/<aa>/<bb>/<sha256>`. Одинаковые
 байты хранятся один раз, удаление публикации убирает объект, только если на эти
 байты не ссылается больше ни одна строка.
 
@@ -323,14 +329,14 @@ npx wrangler d1 time-travel restore cheatlab --timestamp=2026-09-01T08:46:42Z
 npx wrangler d1 export cheatlab --remote --output backup.sql
 ```
 
-Файлы в R2 — через репликацию бакета: в панели Cloudflare у бакета `cheatlab`
-включается **Replication** на второй бакет. Трафик между бакетами R2 не
-тарифицируется, копия появляется автоматически. Wrangler умеет только
-`r2 object get/put/delete` для одиночных объектов, массовой выгрузки в нём нет —
-для разовых задач бакет подключают через S3-совместимый API (`rclone`, `aws s3`).
+Файлы в KV. У wrangler есть только точечные операции над ключом
+(`kv key put/get/delete`), массовой выгрузки нет, поэтому для переносимой копии
+нужен дамп по диапазону префиксов: имена байтов выводятся из D1-колонки `sha256`
+у таблицы `file`, а сами значения забираются ключ за ключом.
 
-Восстановление: создать пустой D1, выполнить `backup.sql`, затем положить объекты
-обратно в R2 тем же путём. Благодаря адресации по содержимому порядок не важен.
+Восстановление: создать пустой D1, выполнить `backup.sql`, затем вернуть ключи
+`blobs/<aa>/<bb>/<sha256>` в KV с прежними значениями. Благодаря адресации по
+содержимому порядок не важен.
 
 ---
 
@@ -341,7 +347,7 @@ cd worker
 npm test
 ```
 
-142 проверки на локальных шимах: D1 эмулируется через `node:sqlite`, R2 — через
+143 проверки на локальных шимах: D1 эмулируется через `node:sqlite`, KV — через
 in-memory binding с поддержкой `Range`. Реальный Cloudflare runtime проверяется
 только деплоем; тесты ловят логику, маршруты и дедупликацию, но не поведение
 платформы.
