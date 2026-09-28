@@ -255,6 +255,9 @@ await t('video range requests are satisfiable', async (env) => {
   const part = await worker.fetch(request(`/m/${id}`, { headers: { range: 'bytes=100-199' } }), env);
   check('partial 206', part.status === 206, `got ${part.status}`);
   check('content-range correct', part.headers.get('Content-Range') === `bytes 100-199/${size}`, part.headers.get('Content-Range'));
+  // A ranged response is produced by a different branch than the full one, and
+  // scrubbing a video that comes back as application/octet-stream fails.
+  check('partial keeps media content-type', part.headers.get('Content-Type') === 'video/mp4', part.headers.get('Content-Type'));
   check('partial length 100', Number(part.headers.get('Content-Length')) === 100, part.headers.get('Content-Length'));
   const got = new Uint8Array(await part.arrayBuffer());
   check('partial bytes correct', got[0] === 100 % 251 && got[99] === 199 % 251, `${got[0]},${got[99]}`);

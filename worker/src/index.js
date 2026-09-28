@@ -365,16 +365,29 @@ function dispositionFor(file, inline) {
   return `${inline ? 'inline' : 'attachment'}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(file.name)}`;
 }
 
-/** Text must never be sniffed as HTML, so non-text inline types are forced to octet-stream. */
-function serveType(file, inline) {
-  if (inline && !isTextExt(extOf(file.name))) return 'application/octet-stream';
-  return file.mime;
+/**
+ * Inline serving must not hand the browser anything it could execute, but the
+ * rule is not "binary is unsafe": an <img> or <video> pointed at
+ * application/octet-stream simply refuses to render, so media on the preview
+ * route has to keep its real type or previews and scrubbing break.
+ *
+ * `render` is what separates the two callers. The media route wants a file
+ * shown in the page, so image, video and audio keep their real type; the raw
+ * route only ever displays a text file and inlines anything else as a download.
+ * SVG stays blocked in both cases because it can carry script.
+ */
+function serveType(file, inline, render) {
+  if (!inline) return file.mime;
+  const mime = file.mime || 'application/octet-stream';
+  if (render && /^(?:image\/(?!svg\+xml)|video\/|audio\/)/i.test(mime)) return mime;
+  if (isTextExt(extOf(file.name))) return mime;
+  return 'application/octet-stream';
 }
 
-async function serveFile(request, env, file, { inline }) {
+async function serveFile(request, env, file, { inline, render = false }) {
   const etag = `"${file.sha256}"`;
   const headers = {
-    'Content-Type': serveType(file, inline),
+    'Content-Type': serveType(file, inline, render),
     'Content-Disposition': dispositionFor(file, inline),
     'Cache-Control': 'public, max-age=31536000, immutable',
     ETag: etag,
@@ -444,7 +457,7 @@ route('GET', /^\/m\/([A-Za-z0-9]{4,16})$/, async (request, env, m) => {
   }
   await env.STORE.incFileDownloads(file.id);
   const range = request.headers.get('range');
-  if (range) return serveFile(request, env, file, { inline: true });
+  if (range) return serveFile(request, env, file, { inline: true, render: true });
   const object = await env.BLOBS.get(file.sha256);
   if (!object) return fail(404, 'file content missing');
   return new Response(object.body, {
