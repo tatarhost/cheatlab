@@ -1,0 +1,14 @@
+{
+  "name": "cheatlab",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CHEATLAB — анонимная публикация скриптов, паст и файлов. Без регистрации и входа.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.mjs",
+    "dev": "node --disable-warning=ExperimentalWarning --watch server.mjs"
+  }
+}

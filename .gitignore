@@ -1,0 +1,17 @@
+# runtime state: sqlite db + uploaded blobs
+data/
+
+# deps
+node_modules/
+
+# env / secrets
+.env
+.env.*
+
+# logs, temp, editor
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
