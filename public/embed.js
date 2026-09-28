@@ -5,10 +5,13 @@
  *
  *   <script src="https://your-cheatlab-host/embed.js"
  *           data-api="https://your-cheatlab-host"
+ *           data-site="https://your-cheatlab-site"
  *           data-target="#publish"
  *           defer></script>
  *
  * Optional attributes:
+ *   data-api      API origin (required)
+ *   data-site      site origin for follow-up links, when it differs from data-api
  *   data-target   CSS selector for the element to render into (default: auto-mount)
  *   data-language preselected language
  *   data-label    button label (default: "В CHEATLAB")
@@ -26,6 +29,9 @@
   })();
 
   const API = (script && script.dataset.api) || script && script.src.replace(/\/embed\.js.*$/, '') || '';
+  // Where the reader lands when they follow a published link. Separate from the
+  // API origin whenever the site and the Worker sit on different hosts.
+  const SITE = (script && script.dataset.site) || API;
   const TARGET = (script && script.dataset.target) || '';
   const LABEL = (script && script.dataset.label) || 'В CHEATLAB';
   const LANG = (script && script.dataset.language) || 'text';
@@ -41,6 +47,9 @@
     ['script', 'Скрипт', 'M8 17 3 12l5-5m3 3 6 6M9 12l3-3'],
     ['app', 'Приложение', 'M21 8l-9-5-9 5 9 5 9-5M3 8v8l9 5 9-5V8M12 13v8'],
     ['paste', 'Паста', 'M9 4h6v3H9M7 5H5v15h14V5h-2M9 12h6M9 16h4'],
+    ['image', 'Изображение', 'M3 3h18v18H3zM9 10a1 1 0 1 0 0-2 1 1 0 0 0 0 2M21 15l-5-5-9 9'],
+    ['video', 'Видео', 'M15 10l5-3v10l-5-3M3 6h12v12H3z'],
+    ['file', 'Файл', 'M15 2v4h4M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2z'],
   ];
 
   function clientId() {
@@ -192,10 +201,10 @@
         keys[data.item.id] = data.secret;
         localStorage.setItem(STORE, JSON.stringify(keys));
 
-        open.href = API + '/i/' + data.item.id;
+        open.href = SITE + '/i/' + data.item.id;
         open.style.display = '';
         send.textContent = 'Опубликовано';
-        showNote('Ссылка: ' + API + '/i/' + data.item.id + '  Ключ: ' + data.secret, false);
+        showNote('Ссылка: ' + SITE + '/i/' + data.item.id + '  Ключ: ' + data.secret, false);
       } catch (err) {
         send.disabled = false;
         send.textContent = 'Опубликовать';

@@ -1,6 +1,11 @@
-import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
-
 const ID_ALPHABET = '23456789abcdefghjkmnpqrstuvwxyz';
+const enc = new TextEncoder();
+
+function randomBytes(n) {
+  const b = new Uint8Array(n);
+  crypto.getRandomValues(b);
+  return b;
+}
 
 export function newId(len = 10) {
   const bytes = randomBytes(len);
@@ -10,23 +15,35 @@ export function newId(len = 10) {
 }
 
 export function newSecret() {
-  return randomBytes(24).toString('base64url');
+  const b = randomBytes(24);
+  let s = '';
+  for (const x of b) s += String.fromCharCode(x);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-export function sha256(buf) {
-  return createHash('sha256').update(buf).digest('hex');
+export async function sha256(buf) {
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  const view = new Uint8Array(digest);
+  let hex = '';
+  for (const b of view) hex += b.toString(16).padStart(2, '0');
+  return hex;
 }
 
-export function secretHash(secret) {
-  return sha256(Buffer.from(String(secret)));
+export const secretHash = (secret) => sha256(enc.encode(String(secret)));
+
+/** Constant-time compare, works on hex strings. */
+export async function secretMatches(secret, expectedHash) {
+  if (typeof secret !== 'string' || !secret) return false;
+  if (typeof expectedHash !== 'string' || expectedHash.length !== 64) return false;
+  const got = await secretHash(secret);
+  if (got.length !== expectedHash.length) return false;
+  let diff = 0;
+  for (let i = 0; i < got.length; i++) diff |= got.charCodeAt(i) ^ expectedHash.charCodeAt(i);
+  return diff === 0;
 }
 
-export function secretMatches(secret, expectedHash) {
-  if (typeof secret !== 'string' || secret.length === 0) return false;
-  const a = Buffer.from(secretHash(secret));
-  const b = Buffer.from(expectedHash);
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
+export async function authorTag(id) {
+  return (await sha256(enc.encode(String(id)))).slice(0, 6);
 }
 
 export function normaliseClientId(raw) {
@@ -36,13 +53,9 @@ export function normaliseClientId(raw) {
   return v;
 }
 
-export function now() {
-  return Date.now();
-}
+export const now = () => Date.now();
 
-export function clamp(n, min, max) {
-  return Math.min(max, Math.max(min, n));
-}
+export const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
 
 export function str(v, max, fallback = '') {
   if (typeof v !== 'string') return fallback;
@@ -71,7 +84,6 @@ const MIME = {
   '.py': 'text/x-python',
   '.js': 'text/javascript',
   '.ts': 'text/javascript',
-  '.tsconfig': 'text/plain',
   '.html': 'text/plain',
   '.css': 'text/plain',
   '.yml': 'text/plain',
@@ -90,13 +102,17 @@ const MIME = {
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
   '.gif': 'image/gif',
+  '.avif': 'image/avif',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav',
   '.ogg': 'audio/ogg',
+  '.m4a': 'audio/mp4',
   '.mp4': 'video/mp4',
   '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.mkv': 'video/x-matroska',
   '.zip': 'application/zip',
   '.apk': 'application/vnd.android.package-archive',
   '.jar': 'application/java-archive',
@@ -107,6 +123,8 @@ const MIME = {
   '.otf': 'font/otf',
   '.wasm': 'application/wasm',
   '.so': 'application/octet-stream',
+  '.dll': 'application/octet-stream',
+  '.exe': 'application/octet-stream',
 };
 
 export function extOf(name) {
@@ -115,13 +133,15 @@ export function extOf(name) {
   return String(name).slice(i).toLowerCase().slice(0, 12);
 }
 
-export function mimeOf(name) {
-  return MIME[extOf(name)] || 'application/octet-stream';
-}
+export const mimeOf = (name) => MIME[extOf(name)] || 'application/octet-stream';
 
 export function isTextExt(ext) {
   return /\.(lua|luau|txt|md|json|py|js|ts|html|css|yml|yaml|sh|bat|ps1|cfg|ini|toml|log|csv|xml|glsl|frag|vert|compute)$/.test(ext);
 }
+
+export const isImage = (mime) => /^image\//.test(mime);
+export const isVideo = (mime) => /^video\//.test(mime);
+export const isAudio = (mime) => /^audio\//.test(mime);
 
 export function formatBytes(n) {
   if (!Number.isFinite(n)) return '0 B';

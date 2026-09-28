@@ -1,0 +1,36 @@
+name = "cheatlab"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+# Metadata. SQLite dialect, same schema as the original node:sqlite store.
+[[d1_databases]]
+binding = "DB"
+database_name = "cheatlab"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+# Uploaded files, images and video. Egress is not billed.
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "cheatlab"
+
+[triggers]
+crons = ["17 * * * *"]
+
+[vars]
+MAX_FILE_MB = "25"
+MAX_TEXT_KB = "256"
+MAX_FILES = "20"
+TITLE_MAX = "120"
+LABEL_MAX = "24"
+WRITE_CAP = "30"
+READ_CAP = "240"
+ALLOW_ORIGIN = "*"
+SITE_URL = "https://tatarhost.github.io/cheatlab"
+DENY_EXT = ""
+DENY_SHA = ""
+WEBHOOK_URL = ""
+
+[observability]
+enabled = true

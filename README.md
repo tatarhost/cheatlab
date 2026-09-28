@@ -1,64 +1,139 @@
+<p align="center">
+  <img src="public/og.png" width="640" alt="CHEATLAB">
+</p>
+
 # CHEATLAB
 
-Анонимная площадка для публикации скриптов, паст и файлов. Без регистрации, без
-входа, без OAuth и без внешних сервисов: браузер сам генерирует идентификатор
-устройства, сервер выдаёт ключ редактирования при публикации.
+Анонимная площадка для публикации **скриптов, кода, изображений, видео и любых
+файлов**. Без регистрации, без входа, без OAuth и без внешних сервисов: браузер
+сам генерирует идентификатор устройства, API выдаёт ключ редактирования при
+публикации, и больше ничего не требуется.
 
 Чёрно-белый интерфейс: один акцент — чёрный, никаких градиентов, скруглений и
 эмодзи, только линейные иконки.
 
-Ноль зависимостей. Только Node 22.5+ (`node:http`, `node:sqlite`).
+Размещено бесплатно: статика на **GitHub Pages**, API на **Cloudflare Workers**,
+метаданные в **D1**, файлы в **R2**. Ноль зависимостей во фронтенде, ноль
+зависимостей в Worker.
+
+| | |
+| --- | --- |
+| ![Лента](docs/feed.png) | ![Публикация](docs/item.png) |
+| ![Форма публикации](docs/publish.png) | ![Статистика](docs/stats.png) |
 
 ---
 
-## Запуск
+## Что умеет
 
-```bash
-cd cheatlab
-npm start                 # http://localhost:8787
+- Шесть типов публикаций: скрипт, приложение, паста, изображение, видео, файл.
+- Файлы адресуются по содержимому: два одинаковых файла занимают место один раз.
+- Изображения показываются в ленте и на странице публикации с подписью и
+  кнопкой скачивания.
+- Видео отдаётся с поддержкой `Range` и перемотки, аудио — плеером.
+- Просмотр исходника, скачивание, счётчик просмотров, теги, поиск, сортировка.
+- Свои публикации на странице «Мои загрузки», экспорт и импорт ключей.
+- Виджет `embed.js` для встраивания в чужие сайты.
+- Никаких гейтов: страна, ASN, VPN и тип подключения не влияют на доступ.
+
+---
+
+## Архитектура
+
+```
+public/                статика для GitHub Pages (vanilla, без сборки)
+  index.html           разметка и спрайт иконок
+  app.js               SPA: роуты, формы, лента, публикация
+  style.css            чёрно-белая тема
+  embed.js             виджет для чужих сайтов
+  og.png               превью для ссылок
+
+worker/                Cloudflare Worker — единственный бэкенд
+  src/index.js         маршруты, CORS, лимиты, Range
+  src/store.js         D1: items, files, clients, rate
+  src/blobs.js         R2: байты по SHA-256, дедупликация
+  src/plugins.js       хост плагинов
+  src/util.js          id, секреты, хеши, mime, имена файлов
+  plugins/             upload-guard, denylist, webhooks
+  schema.sql           схема D1
+  migrations/          миграции для wrangler d1 execute
+  test/                142 теста на локальных шимах D1 и R2
+
+scripts/set-api-url.mjs   вписывает адрес Worker в public/index.html
+tools/screens.py          рисует og.png и скриншоты из docs/
 ```
 
-`npm run dev` — то же самое с автоперезапуском.
+Фронтенд не знает, где живёт API: он читает `<meta name="cheatlab-api">` в
+`public/index.html`. Пустое значение означает «тот же origin», поэтому сайт
+работает и локально, и за прокси, который раздаёт всё с одного хоста.
 
-### Переменные окружения
+---
+
+## Развёртывание
+
+### 1. API
+
+```bash
+cd worker
+npm install
+
+npx wrangler login
+npx wrangler d1 create cheatlab          # вписать database_id в wrangler.toml
+npx wrangler r2 bucket create cheatlab
+
+npx wrangler d1 execute cheatlab --file=./migrations/0001_init.sql
+npx wrangler deploy
+```
+
+`wrangler.toml` содержит два места для ручной правки:
+
+```toml
+[[d1_databases]]
+database_name = "cheatlab"
+database_id   = "REPLACE_WITH_D1_DATABASE_ID"   # ← из вывода wrangler d1 create
+
+[[r2_buckets]]
+bucket_name = "cheatlab"                        # ← имя созданного бакета
+```
+
+Настройки (все — обычные `vars`, секретов нет):
 
 | Переменная | По умолчанию | Назначение |
 | --- | --- | --- |
-| `PORT` | `8787` | порт |
-| `HOST` | `0.0.0.0` | интерфейс |
-| `CL_DATA_DIR` | `./data` | база и файлы |
-| `CL_MAX_FILE_MB` | `25` | лимит одного файла |
-| `CL_MAX_TEXT_KB` | `256` | лимит текста публикации |
-| `CL_MAX_FILES` | `20` | файлов на публикацию |
+| `SITE_URL` | `https://tatarhost.github.io/cheatlab` | куда `PLUGINS` и ссылки ведут на этот хост |
+| `ALLOW_ORIGIN` | `*` | значение `Access-Control-Allow-Origin` |
+| `MAX_FILE_MB` | `25` | лимит одного файла |
+| `MAX_TEXT_KB` | `256` | лимит текста публикации |
+| `MAX_FILES` | `20` | файлов на публикацию |
+| `MAX_WRITE_RPM` | `30` | записей в минуту на устройство |
+| `MAX_READ_RPM` | `240` | чтений в минуту |
 | `CL_DENY_EXT` | — | `exe,scr,vbs` — запретить расширения |
 | `CL_DENY_SHA` | — | список SHA-256 для блокировки |
 | `CL_WEBHOOK_URL` | — | адрес для уведомлений о публикациях |
 
-Никаких `CL_ALLOW_*` флагов не существует: доступ не зависит от страны, ASN,
-VPN или типа сети. Единственное ограничение — частота запросов.
+### 2. Сайт
 
----
-
-## Устройство
-
-```
-server.mjs            маршруты, лимиты, отдача статики
-lib/util.mjs          id, секреты, хеши, mime, разбор имён файлов
-lib/store.mjs         SQLite: items, files, clients
-lib/blobs.mjs         файлы по содержимому: data/blobs/aa/bb/<sha256>
-lib/plugins.mjs       загрузчик серверных плагинов
-plugins/*.mjs         upload-guard, denylist, webhooks
-public/               интерфейс (vanilla, без сборки)
-public/embed.js       виджет для встраивания в чужие сайты
-tools/seed.mjs        демонстрационные публикации
+```bash
+node scripts/set-api-url.mjs https://cheatlab.<ваш-поддомен>.workers.dev
+git commit -am "point the site at the deployed API"
+git push
 ```
 
-Данные лежат в `data/`: `cheatlab.db` (SQLite в режиме WAL) и `blobs/` с
-файлами, названными по SHA-256. Два одинаковых файла занимают место один раз.
+Дальше срабатывает `.github/workflows/pages.yml`: он публикует каталог
+`public/` через `actions/deploy-pages`. API при этом не трогается — он живёт в
+Cloudflare.
 
-Иконки — [Lucide](https://lucide.dev) 1.38.0, лицензия ISC; геометрия
-перенесена в спрайт `public/index.html`, поэтому внешних загрузок нет и строгая
-CSP не нарушается.
+Чтобы стереть адрес и вернуть same-origin:
+
+```bash
+node scripts/set-api-url.mjs
+```
+
+### Бесплатно
+
+Cloudflare Free-тариф покрывает эту нагрузку с запасом: 100 000 запросов
+Workers в сутки, 5 млн строк чтения и 100 000 строк записи D1 в сутки, 5 ГБ
+базы, около 10 ГБ-месяц хранения R2 и **бесплатный исходящий трафик** — то есть
+скачивание файлов и видео не тарифицируется.
 
 ---
 
@@ -96,41 +171,46 @@ CSP не нарушается.
 | `POST` | `/api/items/:id/files` | загрузить файл (нужен `x-cheatlab-client` автора) |
 | `DELETE` | `/api/files/:id` | удалить файл |
 | `GET` | `/api/me` | свои публикации и файлы |
-| `GET` | `/f/:fileId` | скачать вложение |
-| `GET` | `/f/:fileId/raw` | открыть в браузере, поддерживает `Range` |
+| `GET` | `/f/:fileId` | скачать вложение (`Content-Disposition: attachment`) |
+| `GET` | `/f/:fileId/raw` | открыть в браузере, поддерживает `Range` и `ETag` |
+| `GET` | `/m/:itemId` | медиа публикации: изображение, видео или аудио целиком |
 | `GET` | `/r/:itemId` | сырой текст без интерфейса |
+
+`/m/:id` и `/f/:id/raw` отдают `206 Partial Content` на запрос с `Range`, так что
+видео перематывается без загрузки целиком, и `304` при совпадении `ETag`.
 
 ### Загрузка файла
 
 Тело запроса — сами байты, имя — в заголовке. Multipart не разбирается:
 
 ```bash
-curl -X POST http://localhost:8787/api/items/abc12345/files \
+curl -X POST https://cheatlab.example.workers.dev/api/items/abc12345/files \
   -H "x-cheatlab-client: <ваш client id>" \
   -H "x-filename: aimbot.lua" \
   --data-binary @aimbot.lua
 ```
 
 Имя кодируется в URL-безопасную строку, сервер декодирует и чистит. Размер
-проверяется на лету: файл больше лимита не пишется на диск целиком.
+проверяется на лету: файл больше лимита не пишется в R2 целиком.
 
 Пример создания пасты:
 
 ```bash
-curl -X POST http://localhost:8787/api/items \
+curl -X POST https://cheatlab.example.workers.dev/api/items \
   -H "content-type: application/json" \
   -H "x-cheatlab-client: <ваш client id>" \
   -d '{"type":"paste","title":"хоткейы","body":"F6 — toggle"}'
 ```
 
-`GET /api/*` отдаётся с `Access-Control-Allow-Origin: *`, поэтому API можно
-дёргать с любой страницы.
+`GET /api/*` отдаётся с `Access-Control-Allow-Origin: *` и отвечает на
+`OPTIONS`, поэтому API можно дёргать с любой страницы.
 
 ---
 
 ## Серверные плагины
 
-Файл `.mjs` в `plugins/` с default-экспортом:
+Плагин — модуль в `worker/plugins/`, зарегистрированный в `worker/src/plugins.js`.
+Динамического `import()` по имени файла в Workers нет, поэтому список статический:
 
 ```js
 export default {
@@ -151,15 +231,15 @@ export default {
 | `item:published` | после создания | публичное представление |
 | `item:update` | после PATCH | публичное представление |
 | `item:delete` | после удаления | публичное представление |
-| `file:upload` | **до** записи байт на диск | `{ id, item_id, name, mime }` |
-| `file:stored` | после записи | файл с `size` и `sha256`; `throw reject()` откатывает и строку, и файл |
+| `file:upload` | **до** записи байт в R2 | `{ id, item_id, name, mime }` |
+| `file:stored` | после записи | файл с `size` и `sha256`; `throw reject()` откатывает и строку, и объект |
 | `file:delete` | после удаления | файл |
 
-`reject(reason)` из `lib/plugins.mjs` помечает ошибку как намеренный отказ;
+`reject(reason)` из `worker/src/plugins.js` помечает ошибку как намеренный отказ;
 любая другая ошибка тоже превращается в отказ, но с пометкой `plugin error`.
-Возвращённый объект заменяет значение для следующих плагинов. Хуки
-выполняются по алфавиту имён файлов. Ошибка в одном плагине не роняет запрос —
-все отказы собираются в поле `reasons` ответа.
+Возвращённый объект заменяет значение для следующих плагинов. Хуки выполняются
+в порядке регистрации. Ошибка в одном плагине не роняет запрос — все отказы
+собираются в поле `reasons` ответа.
 
 Что уже установлено:
 
@@ -180,67 +260,77 @@ export default {
 
 ```html
 <div class="cheatlab-embed" data-title="Мой скрипт">код, который хочу опубликовать</div>
-<script src="https://cheatlab.example/embed.js"
-        data-api="https://cheatlab.example"
+<script src="https://tatarhost.github.io/cheatlab/embed.js"
+        data-api="https://cheatlab.example.workers.dev"
+        data-site="https://tatarhost.github.io/cheatlab"
         data-language="luau"
         defer></script>
 ```
 
-Атрибуты: `data-api` (обязателен), `data-target` (селектор контейнера),
-`data-language`, `data-label`, а на самом контейнере — `data-title` и
-`data-content` для предзаполнения. Виджет берёт тот же `client id` из
-`localStorage`, сохраняет выданный ключ рядом с ключами сайта и показывает
-ссылку на публикацию.
+Атрибуты: `data-api` (обязателен), `data-site` (хост сайта, если он отличается
+от API), `data-target` (селектор контейнера), `data-language`, `data-label`, а на
+самом контейнере — `data-title` и `data-content` для предзаполнения. Виджет
+берёт тот же `client id` из `localStorage`, сохраняет выданный ключ рядом с
+ключами сайта и показывает ссылку на публикацию.
 
 ---
 
 ## Хранилище
 
-Файлы адресуются по содержимому: `data/blobs/<aa>/<bb>/<sha256>`. Одинаковые
-байты хранятся один раз, удаление публикации убирает файл, только если на эти
+Файлы адресуются по содержимому: ключ R2 — `blobs/<aa>/<bb>/<sha256>`. Одинаковые
+байты хранятся один раз, удаление публикации убирает объект, только если на эти
 байты не ссылается больше ни одна строка.
 
-Чтобы унести файлы в S3, CDN или bucket, реализуйте те же четыре метода, что у
-`BlobStore` в `lib/blobs.mjs`:
+Если понадобится другое хранилище, реализуйте те же четыре метода, что у
+`BlobStore` в `worker/src/blobs.js`:
 
 ```js
 put(readable, maxBytes)   // -> { sha, size, deduped }
-createReadStream(sha, range)
-readBuffer(sha)
+get(sha, range)           // -> ReadableStream
+head(sha)                 // -> { size, etag } | null
 remove(sha)
 ```
 
-База при этом остаётся SQLite.
+База при этом остаётся D1.
+
+### Резервная копия
+
+У D1 есть встроенный **Time Travel** — 30 дней истории, откат в пару кликов и без
+выгрузки:
+
+```bash
+# откатить метаданные на момент в прошлом (принимает unix-время или RFC3339)
+npx wrangler d1 time-travel restore cheatlab --timestamp=2026-09-01T08:46:42Z
+```
+
+Для переносимой копии — обычный дамп:
+
+```bash
+npx wrangler d1 export cheatlab --remote --output backup.sql
+```
+
+Файлы в R2 — через репликацию бакета: в панели Cloudflare у бакета `cheatlab`
+включается **Replication** на второй бакет. Трафик между бакетами R2 не
+тарифицируется, копия появляется автоматически. Wrangler умеет только
+`r2 object get/put/delete` для одиночных объектов, массовой выгрузки в нём нет —
+для разовых задач бакет подключают через S3-совместимый API (`rclone`, `aws s3`).
+
+Восстановление: создать пустой D1, выполнить `backup.sql`, затем положить объекты
+обратно в R2 тем же путём. Благодаря адресации по содержимому порядок не важен.
 
 ---
 
-## Развёртывание
+## Тесты
 
-За nginx или Caddy: статику можно отдать напрямую, `/api`, `/f`, `/r` — на
-Node. `server.keepAliveTimeout` и `headersTimeout` стоит поднять, если за
-прокси большие загрузки.
-
-systemd-юнит:
-
-```ini
-[Unit]
-Description=cheatlab
-After=network.target
-
-[Service]
-WorkingDirectory=/srv/cheatlab
-ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning server.mjs
-Environment=PORT=8787
-Environment=CL_MAX_FILE_MB=25
-Restart=always
-User=cheatlab
-
-[Install]
-WantedBy=multi-user.target
+```bash
+cd worker
+npm test
 ```
 
-Резервная копия — это каталог `data/`: остановить сервис, скопировать
-`cheatlab.db*` и `blobs/`, запустить обратно.
+142 проверки на локальных шимах: D1 эмулируется через `node:sqlite`, R2 — через
+in-memory binding с поддержкой `Range`. Реальный Cloudflare runtime проверяется
+только деплоем; тесты ловят логику, маршруты и дедупликацию, но не поведение
+платформы.
 
 ---
 
@@ -252,3 +342,9 @@ WantedBy=multi-user.target
 Ограничено: частота записи (30 в минуту на устройство), частота чтения
 (240 в минуту), размер файла, размер текста, число файлов на публикацию,
 структура имени файла и то, что разрешают плагины.
+
+---
+
+Иконки — [Lucide](https://lucide.dev) 1.38.0, лицензия ISC; геометрия перенесена
+в спрайт `public/index.html`, поэтому внешних загрузок нет и строгая CSP не
+нарушается.

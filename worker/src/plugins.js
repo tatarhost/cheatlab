@@ -1,33 +1,41 @@
-import { readdir } from 'node:fs/promises';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+export function reject(reason) {
+  const err = new Error(reason);
+  err.code = 'REJECT';
+  return err;
+}
+
+/**
+ * Static plugin registry.
+ *
+ * The original host scanned a directory on disk; Workers has no filesystem at
+ * request time, so plugins are registered with static imports instead. The hook
+ * contract is unchanged: a hook may return a replacement object, mutate nothing,
+ * or throw `reject(reason)` to veto the operation.
+ */
+const REGISTRY = [
+  { file: 'denylist.js', mod: () => import('../plugins/denylist.js') },
+  { file: 'upload-guard.js', mod: () => import('../plugins/upload-guard.js') },
+  { file: 'webhooks.js', mod: () => import('../plugins/webhooks.js') },
+];
 
 export class PluginHost {
-  constructor(dir) {
-    this.dir = dir;
+  constructor() {
     this.plugins = [];
     this.failed = [];
   }
 
-  async load() {
-    let entries = [];
-    try {
-      entries = await readdir(this.dir);
-    } catch {
-      return this;
-    }
-
-    for (const file of entries.filter((f) => f.endsWith('.mjs')).sort()) {
-      const full = join(this.dir, file);
+  async load(env) {
+    for (const entry of REGISTRY) {
       try {
-        const mod = await import(pathToFileURL(full).href);
+        const mod = await entry.mod();
         const plugin = mod.default || mod.plugin;
         if (!plugin || typeof plugin.name !== 'string' || typeof plugin.hooks !== 'object') {
           throw new Error('expected default export { name, hooks }');
         }
-        this.plugins.push({ file, name: plugin.name, description: plugin.description || '', hooks: plugin.hooks });
+        const describe = typeof plugin.describe === 'function' ? plugin.describe(env) : plugin.description || '';
+        this.plugins.push({ file: entry.file, name: plugin.name, description: describe, hooks: plugin.hooks });
       } catch (err) {
-        this.failed.push({ file, error: err.message });
+        this.failed.push({ file: entry.file, error: err.message });
       }
     }
     return this;
@@ -65,10 +73,4 @@ export class PluginHost {
 
     return { value: current, rejections };
   }
-}
-
-export function reject(reason) {
-  const err = new Error(reason);
-  err.code = 'REJECT';
-  return err;
 }

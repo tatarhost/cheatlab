@@ -1,0 +1,19 @@
+{
+  "name": "cheatlab-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "CHEATLAB API — Cloudflare Worker, D1 metadata, R2 blobs",
+  "scripts": {
+    "test": "node --experimental-sqlite test/worker.test.mjs",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create cheatlab",
+    "db:init": "wrangler d1 execute cheatlab --file=./migrations/0001_init.sql --remote",
+    "db:init:local": "wrangler d1 execute cheatlab --file=./migrations/0001_init.sql --local",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

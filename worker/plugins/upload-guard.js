@@ -1,5 +1,11 @@
-import { reject } from '../lib/plugins.mjs';
+import { reject } from '../src/plugins.js';
 
+/**
+ * Rejects malformed upload names before any bytes are written to R2.
+ *
+ * Kept in the upload path (rather than relying on `safeFilename` alone) so the
+ * rejection reason reaches the client verbatim.
+ */
 export default {
   name: 'upload-guard',
   description: 'rejects malformed upload names before any bytes are stored',

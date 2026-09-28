@@ -1,8 +1,11 @@
 const KEY_STORE = 'cheatlab.keys';
 const ID_STORE = 'cheatlab.client';
 
-const TYPE_ICON = { script: 'code', app: 'box', paste: 'clip' };
-const TYPE_LABEL = { script: 'Скрипт', app: 'Приложение', paste: 'Паста' };
+const TYPE_ICON = { script: 'code', app: 'box', paste: 'clip', image: 'image', video: 'video', file: 'file' };
+const TYPE_LABEL = {
+  script: 'Скрипт', app: 'Приложение', paste: 'Паста',
+  image: 'Изображение', video: 'Видео', file: 'Файл',
+};
 const LANG_LABEL = {
   luau: 'Luau', lua: 'Lua', python: 'Python', javascript: 'JavaScript', typescript: 'TypeScript',
   csharp: 'C#', cpp: 'C++', c: 'C', java: 'Java', kotlin: 'Kotlin', swift: 'Swift',
@@ -12,7 +15,7 @@ const LANG_LABEL = {
 
 const $view = document.getElementById('view');
 const $toast = document.getElementById('toast');
-let config = { types: ['script', 'app', 'paste'], languages: ['text'], limits: { maxFileBytes: 25 * 1024 * 1024 } };
+let config = { types: ['script', 'app', 'paste', 'image', 'video', 'file'], languages: ['text'], limits: { maxFileBytes: 25 * 1024 * 1024 } };
 
 // ---------------------------------------------------------------- utilities
 
@@ -102,11 +105,28 @@ function clientId() {
 }
 const CLIENT = clientId();
 
+/**
+ * API base URL.
+ *
+ * The site is static on GitHub Pages while the API is a Cloudflare Worker, so
+ * requests need an absolute base. It is read from a meta tag so the same files
+ * still work unchanged when both sit behind one origin.
+ */
+const API = ((document.querySelector('meta[name="cheatlab-api"]') || {}).content || '').replace(/\/+$/, '');
+
+const fileUrl = (id) => `${API}/f/${id}`;
+const rawFileUrl = (id) => `${API}/f/${id}/raw`;
+const mediaUrl = (id) => `${API}/m/${id}`;
+const textUrl = (id) => `${API}/r/${id}`;
+const isImageFile = (f) => /^image\//.test(f.mime || '');
+const isVideoFile = (f) => /^video\//.test(f.mime || '');
+const isAudioFile = (f) => /^audio\//.test(f.mime || '');
+
 async function api(path, { method = 'GET', body, secret, signal } = {}) {
   const headers = { 'x-cheatlab-client': CLIENT };
   if (secret) headers['x-cheatlab-secret'] = secret;
   if (body !== undefined) headers['content-type'] = 'application/json';
-  const res = await fetch(path, {
+  const res = await fetch(API + path, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -127,7 +147,7 @@ async function api(path, { method = 'GET', body, secret, signal } = {}) {
 function uploadFile(itemId, file, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `/api/items/${itemId}/files`);
+    xhr.open('POST', `${API}/api/items/${itemId}/files`);
     xhr.setRequestHeader('x-cheatlab-client', CLIENT);
     xhr.setRequestHeader('x-filename', encodeURIComponent(file.name));
     xhr.upload.addEventListener('progress', (e) => {
@@ -215,8 +235,13 @@ function typeRow(item) {
         item.tags.map((t) => h('a', { class: 'tag', href: `/search?tag=${encodeURIComponent(t)}`, text: `#${t}` })))
     : null;
 
+  // first image gets a thumbnail so media feeds are browsable as a gallery
+  const thumb = item.files.find((f) => isImageFile(f) && f.size);
+
   return h('a', { class: 'row', href: `/i/${item.id}` },
-    h('span', { class: 'row-mark' }, icon(TYPE_ICON[item.type] || 'clip', 'i i-sm')),
+    thumb
+      ? h('span', { class: 'row-thumb' }, h('img', { src: mediaUrl(thumb.id), alt: '', loading: 'lazy', decoding: 'async' }))
+      : h('span', { class: 'row-mark' }, icon(TYPE_ICON[item.type] || 'clip', 'i i-sm')),
     h('span', {},
       h('span', { class: 'row-title', text: item.title }),
       meta,
@@ -248,17 +273,45 @@ function sortTabs(current, base) {
 
 // ---------------------------------------------------------------- views
 
+const FEED_TYPE = {
+  '/scripts': 'script',
+  '/apps': 'app',
+  '/pastes': 'paste',
+  '/images': 'image',
+  '/videos': 'video',
+  '/files': 'file',
+};
+
+const FEED_TITLE = {
+  script: 'Скрипты', app: 'Приложения', paste: 'Пасты',
+  image: 'Изображения', video: 'Видео', file: 'Файлы',
+};
+
+const FEED_BLURB = {
+  script: 'Luau, Lua, Python и всё, что запускают через эксплойты и локальные редакторы.',
+  app: 'Файлы и сборки: apk, dll, so, архивы. Каждый файл хранится с SHA-256.',
+  paste: 'Короткие тексты, конфиги, команды. Ссылка ведёт на чистый текст без интерфейса.',
+  image: 'Картинки и скриншоты с превью прямо в ленте.',
+  video: 'Клипы с перемоткой: видео отдаётся диапазонами, поэтому не нужно ждать загрузку целиком.',
+  file: 'Любые другие файлы: архивы, документы, сборки. Скачивание идёт напрямую из хранилища.',
+};
+
+const FEED_PATH = {
+  script: '/scripts',
+  app: '/apps',
+  paste: '/pastes',
+  image: '/images',
+  video: '/videos',
+  file: '/files',
+};
+
 async function viewFeed(path, url) {
-  const type = { '/scripts': 'script', '/apps': 'app', '/pastes': 'paste' }[path] || '';
+  const type = FEED_TYPE[path] || '';
   const q = url.searchParams.get('q') || '';
   const tag = url.searchParams.get('tag') || '';
   const sort = url.searchParams.get('sort') === 'hot' ? 'hot' : 'new';
-  const title = { script: 'Скрипты', app: 'Приложения', paste: 'Пасты' }[type] || 'Публикации';
-  const blurb = {
-    script: 'Luau, Lua, Python и всё, что запускают через эксплойты и локальные редакторы.',
-    app: 'Файлы и сборки: apk, dll, so, архивы. Каждый файл хранится с SHA-256.',
-    paste: 'Короткие тексты, конфиги, команды. Ссылка ведёт на чистый текст без интерфейса.',
-  }[type] || 'Всё, что опубликовали пользователи.';
+  const title = FEED_TITLE[type] || 'Публикации';
+  const blurb = FEED_BLURB[type] || 'Всё, что опубликовали пользователи.';
 
   $view.replaceChildren(
     h('div', { class: 'page-head' },
@@ -269,7 +322,7 @@ async function viewFeed(path, url) {
       h('div', { class: 'spacer' }),
       sortTabs(sort, q || tag
         ? (tag ? `/search?tag=${encodeURIComponent(tag)}` : `/search?q=${encodeURIComponent(q)}`)
-        : (type ? `/${type}s` : '/')),
+        : (type ? FEED_PATH[type] : '/')),
     ),
   );
 
@@ -298,6 +351,58 @@ async function viewItem(id) {
   const { item } = await api(`/api/items/${id}`);
   const secret = keyFor(id);
 
+  /**
+   * Media previews. Rendered above the file table so an image or video post
+   * reads as media at a glance instead of as a download link. Video relies on
+   * the API's byte-range support, and `preload="metadata"` keeps large clips
+   * from being fetched in full.
+   */
+  const mediaFiles = item.files.filter((f) => isImageFile(f) || isVideoFile(f) || isAudioFile(f));
+  const media = mediaFiles.length
+    ? h('div', { class: 'media' }, mediaFiles.map((f) => {
+        if (isImageFile(f)) {
+          return h('figure', { class: 'media-item' },
+            h('img', {
+              class: 'media-img',
+              src: mediaUrl(f.id),
+              alt: f.name,
+              loading: 'lazy',
+              decoding: 'async',
+            }),
+            h('figcaption', {},
+              h('a', { href: mediaUrl(f.id), target: '_blank', rel: 'noopener', text: f.name }),
+              h('span', { class: 'spacer' }),
+              h('a', { class: 'btn btn-sm btn-ghost', href: fileUrl(f.id) }, icon('download', 'i i-sm'), 'Скачать'),
+            ),
+          );
+        }
+        if (isVideoFile(f)) {
+          return h('figure', { class: 'media-item' },
+            h('video', {
+              class: 'media-video',
+              src: mediaUrl(f.id),
+              controls: true,
+              preload: 'metadata',
+              playsinline: true,
+            }),
+            h('figcaption', {},
+              h('a', { href: mediaUrl(f.id), target: '_blank', rel: 'noopener', text: f.name }),
+              h('span', { class: 'spacer' }),
+              h('a', { class: 'btn btn-sm btn-ghost', href: fileUrl(f.id) }, icon('download', 'i i-sm'), 'Скачать'),
+            ),
+          );
+        }
+        return h('figure', { class: 'media-item' },
+          h('audio', { class: 'media-audio', src: mediaUrl(f.id), controls: true, preload: 'metadata' }),
+          h('figcaption', {},
+            h('a', { href: mediaUrl(f.id), target: '_blank', rel: 'noopener', text: f.name }),
+            h('span', { class: 'spacer' }),
+            h('a', { class: 'btn btn-sm btn-ghost', href: fileUrl(f.id) }, icon('download', 'i i-sm'), 'Скачать'),
+          ),
+        );
+      }))
+    : null;
+
   const files = item.files.length
     ? h('table', { class: 'files' },
         h('thead', {}, h('tr', {},
@@ -311,9 +416,9 @@ async function viewItem(id) {
           h('td', { class: 'name', style: 'color:var(--mute)', text: f.sha256 || '' }),
           h('td', { class: 'num', text: bytes(f.size) }),
           h('td', { class: 'act' },
-            h('a', { class: 'btn btn-sm', href: `/f/${f.id}` }, icon('download', 'i i-sm'), 'Скачать'),
+            h('a', { class: 'btn btn-sm', href: fileUrl(f.id) }, icon('download', 'i i-sm'), 'Скачать'),
             ' ',
-            h('a', { class: 'btn btn-sm btn-ghost', href: `/f/${f.id}/raw`, target: '_blank', rel: 'noopener' }, icon('eye', 'i i-sm'), 'Открыть'),
+            h('a', { class: 'btn btn-sm btn-ghost', href: rawFileUrl(f.id), target: '_blank', rel: 'noopener' }, icon('eye', 'i i-sm'), 'Открыть'),
           ),
         ))),
       )
@@ -326,7 +431,7 @@ async function viewItem(id) {
           h('span', { class: 'spacer' }),
           h('span', { text: `${item.body.split('\n').length} строк` }),
           h('button', { class: 'btn btn-sm btn-ghost', onclick: () => copy(item.body, 'Код скопирован') }, icon('copy', 'i i-sm'), 'Копировать'),
-          h('a', { class: 'btn btn-sm btn-ghost', href: `/r/${item.id}`, target: '_blank', rel: 'noopener' }, icon('link', 'i i-sm'), 'Сырой'),
+          h('a', { class: 'btn btn-sm btn-ghost', href: textUrl(item.id), target: '_blank', rel: 'noopener' }, icon('link', 'i i-sm'), 'Сырой'),
         ),
         h('pre', { class: 'code' }, h('code', { text: item.body })),
       )
@@ -381,6 +486,7 @@ async function viewItem(id) {
       h('div', {},
         h('div', { class: 'pill pill-mute' }, icon(TYPE_ICON[item.type], 'i i-sm'), TYPE_LABEL[item.type]),
         h('h1', { style: 'margin:8px 0 0', text: item.title }),
+        media,
         files,
         body,
       ),
@@ -410,16 +516,35 @@ function editorForm(initial) {
   const tagsInput = h('input', { class: 'input', id: 'f-tags', value: state.tags, placeholder: 'aimbot, executor, roblox', oninput: (e) => { state.tags = e.target.value; } });
   const langSel = h('select', { class: 'select', id: 'f-lang', onchange: (e) => { state.language = e.target.value; } },
     config.languages.map((l) => h('option', { value: l, selected: l === state.language, text: LANG_LABEL[l] || l })));
+  const langField = h('label', { class: 'field' }, h('span', { class: 'label', text: 'Язык' }), langSel);
   const unlisted = h('input', { type: 'checkbox', onchange: (e) => { state.visibility = e.target.checked ? 'unlisted' : 'public'; } });
   if (state.visibility === 'unlisted') unlisted.checked = true;
 
+  /**
+   * Keeps the type tab, the body placeholder and the language hint in step.
+   * Media types carry no code, so the language selector becomes meaningless.
+   */
+  const MEDIA_TYPES = new Set(['image', 'video', 'file']);
+  function setType(next) {
+    state.type = next;
+    for (const b of typeBar.children) {
+      b.setAttribute('aria-selected', b.dataset.type === next);
+    }
+    const media = MEDIA_TYPES.has(next);
+    if (langField) langField.hidden = media;
+    bodyInput.placeholder = next === 'app'
+      ? 'Описание, инструкция, список функций'
+      : media
+        ? 'Подпись к публикации (необязательно)'
+        : 'Вставь код или текст';
+  }
+
   const typeBar = h('div', { class: 'tabs' }, config.types.map((t) => h('button', {
-    class: 'tab', type: 'button', role: 'tab', 'aria-selected': t === state.type,
-    onclick: (e) => {
-      state.type = t;
-      for (const b of typeBar.children) b.setAttribute('aria-selected', b === e.currentTarget);
+    class: 'tab', type: 'button', role: 'tab', dataset: { type: t }, 'aria-selected': t === state.type,
+    onclick: () => {
       if (t === 'paste' && state.language !== 'text') { state.language = 'text'; langSel.value = 'text'; }
       if (t === 'script' && state.language === 'text') { state.language = 'luau'; langSel.value = 'luau'; }
+      setType(t);
     },
   }, icon(TYPE_ICON[t], 'i i-sm'), TYPE_LABEL[t])));
 
@@ -445,6 +570,11 @@ function editorForm(initial) {
       );
       queue.append(row);
       f._ui = { bar: bar.firstChild, row };
+    }
+    // dropping a picture or a clip should not also require picking the right tab
+    if (!MEDIA_TYPES.has(state.type)) {
+      const first = list.find((f) => /^image\//.test(f.type) || /^video\//.test(f.type));
+      if (first) setType(/^image\//.test(first.type) ? 'image' : 'video');
     }
   }
 
@@ -488,7 +618,7 @@ function editorForm(initial) {
           ? h('div', { class: 'panel' },
               h('div', { class: 'panel-title', text: 'Уже загружено' }),
               initial.files.map((f) => h('div', { class: 'queue-row' },
-                h('a', { href: `/f/${f.id}`, text: f.name }),
+                h('a', { href: fileUrl(f.id), text: f.name }),
                 h('span', { class: 'spacer' }),
                 h('span', { text: bytes(f.size) }),
               )),
@@ -500,7 +630,7 @@ function editorForm(initial) {
       h('div', { class: 'panel' },
         h('div', { class: 'panel-title', text: 'Публикация' }),
         h('div', { style: 'display:flex; flex-direction:column; gap:14px' },
-          h('label', { class: 'field' }, h('span', { class: 'label', text: 'Язык' }), langSel),
+          langField,
           h('label', { class: 'toggle' }, unlisted, h('span', { text: 'Не показывать в ленте' })),
           h('div', { class: 'actions' }, submit),
           initial.id ? h('a', { class: 'btn btn-sm btn-ghost', href: `/i/${initial.id}` }, 'Отмена') : null,
@@ -649,7 +779,7 @@ async function viewMe() {
           h('div', { class: 'panel-title', text: 'Мои файлы' }),
           files.length
             ? h('div', {}, files.map((f) => h('div', { class: 'queue-row' },
-                h('a', { href: `/f/${f.id}`, text: f.name, style: 'overflow:hidden;text-overflow:ellipsis' }),
+                h('a', { href: fileUrl(f.id), text: f.name, style: 'overflow:hidden;text-overflow:ellipsis' }),
                 h('span', { class: 'spacer' }),
                 h('span', { text: bytes(f.size) }),
               )))
@@ -716,7 +846,7 @@ async function route() {
   $view.replaceChildren(h('p', { class: 'hint', text: 'Загрузка...' }));
 
   try {
-    if (path === '/' || path === '/scripts' || path === '/apps' || path === '/pastes' || path === '/search') {
+    if (path === '/' || path === '/search' || FEED_TYPE[path]) {
       await viewFeed(path, url);
     } else if (path === '/new') {
       await viewNew(url);
@@ -742,6 +872,10 @@ async function route() {
 }
 
 async function boot() {
+  // the footer link must point at the API origin, not at the static site
+  const apiLink = document.getElementById('apiLink');
+  if (apiLink) apiLink.href = `${API}/api/stats`;
+
   try {
     config = await api('/api/config');
   } catch {
