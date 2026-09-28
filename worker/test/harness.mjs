@@ -3,8 +3,8 @@
  *
  * Workers cannot be run without `wrangler`, but the port can still be verified
  * end to end by standing in two bindings:
- *   - D1   -> node:sqlite with a statement-compatible adapter
- *   - R2   -> an in-memory bucket that honours offset/length ranges
+ *   - D1 -> node:sqlite with a statement-compatible adapter
+ *   - KV -> an in-memory namespace honouring prefix list and offset/length ranges
  *
  * This exercises the real fetch() handler and the real SQL, so route wiring,
  * rate limiting, secret checks and range serving are all covered.
@@ -49,36 +49,44 @@ class D1Shim {
   }
 }
 
-/* ------------------------------------------------------------------- R2 shim */
+/* -------------------------------------------------------------------- KV shim */
 
-class R2Shim {
+/**
+ * Mirrors the slice of the Workers KV surface BlobStore uses: put, delete,
+ * list-by-prefix and get, where get returns an ArrayBuffer and honours an
+ * offset/length range. Returning an ArrayBuffer rather than a stream is
+ * deliberate - it is what the shim hands to Response, so a body that works here
+ * works on the platform.
+ */
+class KvShim {
   constructor() {
     this.map = new Map();
-  }
-
-  static key(sha) {
-    return `blobs/${sha.slice(0, 2)}/${sha.slice(2, 4)}/${sha}`;
-  }
-
-  async head(key) {
-    const v = this.map.get(key);
-    return v ? { size: v.byteLength } : null;
   }
 
   async put(key, value) {
     this.map.set(key, new Uint8Array(value));
   }
 
-  async get(key, { range } = {}) {
-    const v = this.map.get(key);
-    if (!v) return null;
-    if (!range) return { body: v, size: v.byteLength };
-    const slice = v.subarray(range.offset, range.offset + range.length);
-    return { body: slice, size: slice.byteLength };
-  }
-
   async delete(key) {
     this.map.delete(key);
+  }
+
+  async list({ prefix = '', limit } = {}) {
+    const keys = [];
+    for (const name of this.map.keys()) {
+      if (name.startsWith(prefix)) keys.push({ name });
+    }
+    keys.sort();
+    return { keys: limit ? keys.slice(0, limit) : keys };
+  }
+
+  async get(key, opts) {
+    const v = this.map.get(key);
+    if (!v) return null;
+    const range = opts && typeof opts === 'object' ? opts.range : null;
+    if (!range) return v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength);
+    const slice = v.subarray(range.offset, range.offset + range.length);
+    return slice.buffer.slice(slice.byteOffset, slice.byteOffset + slice.byteLength);
   }
 }
 
@@ -87,8 +95,8 @@ class R2Shim {
 export function makeEnv(overrides = {}) {
   return {
     DB: new D1Shim(),
-    BUCKET: new R2Shim(),
-    MAX_FILE_MB: '25',
+    BUCKET: new KvShim(),
+    MAX_FILE_MB: '24',
     MAX_TEXT_KB: '256',
     MAX_FILES: '20',
     TITLE_MAX: '120',

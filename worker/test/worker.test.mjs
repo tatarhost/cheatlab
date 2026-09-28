@@ -477,7 +477,7 @@ await t('stats and plugins', async (env) => {
 
   const config = await call(worker, env, '/api/config');
   check('config advertises media types', ['image', 'video', 'file'].every((x) => config.json?.types?.includes(x)), JSON.stringify(config.json?.types));
-  check('config exposes limits', config.json?.limits?.maxFileBytes === 25 * 1024 * 1024, `${config.json?.limits?.maxFileBytes}`);
+  check('config exposes limits', config.json?.limits?.maxFileBytes === 24 * 1024 * 1024, `${config.json?.limits?.maxFileBytes}`);
 });
 
 /* ------------------------------------------------------------------- plugins */

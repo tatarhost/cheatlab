@@ -10,16 +10,18 @@ database_name = "cheatlab"
 database_id = "579a8d6f-42d7-42ca-8700-84538742a4b7"
 migrations_dir = "migrations"
 
-# Uploaded files, images and video. Egress is not billed.
-[[r2_buckets]]
+# Uploaded files, images and video. KV keeps the plan card-free: it is part of
+# the free Workers tier, while R2 must be enabled in the dashboard with a
+# payment method. Max value size is 25 MiB, hence the 24 MB upload cap below.
+[[kv_namespaces]]
 binding = "BUCKET"
-bucket_name = "cheatlab"
+id = "6394a31d96044562996c00ea83b2f889"
 
 [triggers]
 crons = ["17 * * * *"]
 
 [vars]
-MAX_FILE_MB = "25"
+MAX_FILE_MB = "24"
 MAX_TEXT_KB = "256"
 MAX_FILES = "20"
 TITLE_MAX = "120"
