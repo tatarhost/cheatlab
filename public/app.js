@@ -944,7 +944,35 @@ async function route() {
   window.scrollTo(0, 0);
 }
 
+const THEME_KEY = 'cheatlab.theme';
+
+/** Dark is the default; the choice is remembered per browser. */
+function currentTheme() {
+  return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+}
+
+function applyTheme(next) {
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem(THEME_KEY, next); } catch { /* private mode */ }
+  const icon = document.getElementById('themeIcon');
+  const label = document.getElementById('themeLabel');
+  if (icon) icon.setAttribute('href', next === 'dark' ? '#i-moon' : '#i-sun');
+  if (label) label.textContent = next === 'dark' ? 'Светлая тема' : 'Тёмная тема';
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', next === 'dark' ? '#0b0b0b' : '#ffffff');
+}
+
+function initTheme() {
+  const btn = document.getElementById('themeToggle');
+  applyTheme(currentTheme());
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    applyTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+  });
+}
+
 async function boot() {
+  initTheme();
   // the footer link must point at the API origin, not at the static site
   const apiLink = document.getElementById('apiLink');
   if (apiLink) apiLink.href = `${API}/api/stats`;

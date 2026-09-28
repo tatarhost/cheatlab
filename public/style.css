@@ -1,13 +1,28 @@
-:root {
+/*
+ * Theme is driven entirely by these six variables; the rest of the stylesheet
+ * never names a colour, so switching is a single block. Dark is the default.
+ * Set before first paint in the inline head script to avoid a white flash.
+ */
+:root,
+:root[data-theme="dark"] {
+  --ink: #ededed;
+  --paper: #0b0b0b;
+  --fog: #161616;
+  --fog-2: #202020;
+  --line: #333333;
+  --mute: #8f8f8f;
+  --sans: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: "SFMono-Regular", "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  --rail: 236px;
+}
+
+:root[data-theme="light"] {
   --ink: #0b0b0b;
   --paper: #ffffff;
   --fog: #f2f2f2;
   --fog-2: #e8e8e8;
   --line: #d4d4d4;
   --mute: #6f6f6f;
-  --sans: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --mono: "SFMono-Regular", "Cascadia Mono", Consolas, "Liberation Mono", monospace;
-  --rail: 236px;
 }
 
 * { box-sizing: border-box; }
@@ -74,6 +89,16 @@ p { margin: 0; }
 .rail-foot { margin-top: auto; padding-top: 24px; border-top: 1px solid var(--line); }
 .rail-note { font-size: 12px; line-height: 1.5; color: var(--mute); }
 .rail-stat { display: inline-block; margin-top: 12px; font: 12px var(--mono); color: var(--ink); }
+
+/* The theme control is a real button, so it needs the button resets plus the
+   hover affordance the sibling link already has. */
+.theme-toggle {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0; border: 0; background: none;
+  font: inherit; color: inherit; cursor: pointer; text-align: left;
+}
+.theme-toggle:hover { text-decoration: underline; }
+.theme-toggle .i { width: 14px; height: 14px; }
 
 .main { display: flex; flex-direction: column; min-width: 0; }
 
@@ -219,9 +244,12 @@ p { margin: 0; }
 .notice + .notice { margin-top: 10px; }
 .notice code { font: 12px var(--mono); word-break: break-all; }
 
+/* Inverted against --ink so a code block stays readable when the theme flips. */
+.on-ink { color: var(--paper); }
+
 /* ---- code ---- */
 .code {
-  margin: 0; border: 1px solid var(--ink); background: var(--ink); color: #ededed;
+  margin: 0; border: 1px solid var(--ink); background: var(--ink); color: var(--paper);
   font: 13px/1.7 var(--mono); overflow: auto;
 }
 .code-bar {
