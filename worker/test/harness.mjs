@@ -108,25 +108,95 @@ export function makeEnv(overrides = {}) {
     DENY_EXT: '',
     DENY_SHA: '',
     WEBHOOK_URL: '',
+    // Signs captcha handles. Set as a Worker secret in production; present here
+    // so the tests exercise the real signed path rather than the fallback.
+    CAPTCHA_SECRET: 'test-captcha-secret',
+    // Tests must not pay 4M hashes per proof of work. 8 bits is ~256 hashes, so
+    // the same code path runs and the assertions still mean something. The
+    // production value lives in wrangler.toml.
+    POW_BITS: '8',
+    // The shipped daily caps. A suite that publishes many items raises these
+    // explicitly so an unrelated test is not blocked by the anti-abuse policy.
+    ANON_NEW_ITEMS_PER_DAY: '1',
+    REG_NEW_ITEMS_PER_DAY: '4',
     ...overrides,
   };
 }
 
 const clientId = 'testclient0123456789abcdef';
 
-export function request(path, { method = 'GET', body, headers = {}, id = clientId, secret } = {}) {
+export function request(path, opts = {}) {
+  const { method = 'GET', body, headers = {}, id, client, secret, session } = opts;
   const h = new Headers(headers);
-  if (id) h.set('x-cheatlab-client', id);
+  // `client` reads better at call sites that create a second identity; `id` is
+  // the historical name. An explicit `id: null` means "send no client header",
+  // which several tests rely on, so a present-but-falsy value must not fall back
+  // to the default client.
+  const clientHeader = 'id' in opts ? id : (client || clientId);
+  if (clientHeader) h.set('x-cheatlab-client', clientHeader);
   if (secret) h.set('x-cheatlab-secret', secret);
+  if (session) h.set('x-cheatlab-session', session);
   return new Request(`https://api.cheatlab.test${path}`, {
     method,
     headers: h,
-    body: body === undefined ? undefined : (typeof body === 'string' ? body : new Uint8Array(body)),
+    // An object body is JSON-encoded here, matching how the app sends one. Only
+    // fall back to raw bytes for callers passing a binary payload (uploads).
+    body: body === undefined
+      ? undefined
+      : typeof body === 'string'
+        ? body
+        : body instanceof Uint8Array || body instanceof ArrayBuffer
+          ? new Uint8Array(body)
+          : JSON.stringify(body),
   });
 }
 
-export async function call(worker, env, path, opts) {
-  const res = await worker.fetch(request(path, opts), env);
+/**
+ * Solves the arithmetic question the server actually asked.
+ *
+ * The answer is no longer in the token - the Worker keeps it in D1 - so a test
+ * that wants to publish anonymously has to do the same work a person does. This
+ * is also the check that the CAPTCHA still means something: if the questions
+ * become non-arithmetic, this fails loudly rather than silently passing.
+ */
+export function answerQuestion(q) {
+  const m = /(\d+)\s*\*\s*(\d+)\s*([+-])\s*(\d+)/.exec(q);
+  if (m) {
+    const [, a, b, op, c] = m;
+    const product = Number(a) * Number(b);
+    return String(op === '+' ? product + Number(c) : product - Number(c));
+  }
+  const letters = /«(.+)»/.exec(q);
+  if (letters) return String([...letters[1]].length);
+  throw new Error(`cannot solve captcha question: ${q}`);
+}
+
+/**
+ * Fetches a captcha and returns the token plus the answer the Worker expects.
+ * Exported so suites that are not testing the captcha itself can still publish
+ * anonymously, and so the auth suite can assert on the real challenge.
+ */
+export async function solveCaptcha(worker, env, opts = {}) {
+  const res = await call(worker, env, '/api/auth/captcha', opts);
+  if (res.status !== 200) throw new Error(`captcha endpoint returned ${res.status}`);
+  const { token, q } = res.json;
+  return { token, answer: answerQuestion(q), question: q };
+}
+
+/**
+ * With `autoCaptcha`, a POST that carries no captcha token gets one solved and
+ * attached before the request goes out. Used by the pre-existing suite, whose
+ * subject is media and range serving rather than the anti-abuse policy, so it
+ * does not have to re-implement the challenge for every publish.
+ */
+export async function call(worker, env, path, opts = {}) {
+  let body = opts.body;
+  if (opts.autoCaptcha && (opts.method || 'GET') === 'POST' && !opts.session) {
+    const c = await solveCaptcha(worker, env, opts);
+    const parsed = typeof body === 'string' ? JSON.parse(body || '{}') : { ...(body || {}) };
+    body = { ...parsed, captchaToken: c.token, captchaAnswer: c.answer };
+  }
+  const res = await worker.fetch(request(path, { ...opts, body }), env);
   const text = await res.text();
   let json = null;
   try { json = JSON.parse(text); } catch { /* not a json endpoint */ }

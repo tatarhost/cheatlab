@@ -35,10 +35,21 @@ export const secretHash = (secret) => sha256(enc.encode(String(secret)));
 export async function secretMatches(secret, expectedHash) {
   if (typeof secret !== 'string' || !secret) return false;
   if (typeof expectedHash !== 'string' || expectedHash.length !== 64) return false;
-  const got = await secretHash(secret);
-  if (got.length !== expectedHash.length) return false;
+  return hexEquals(await secretHash(secret), expectedHash);
+}
+
+/**
+ * Constant-time comparison of two hashes that are *already* hashed.
+ *
+ * `secretMatches` hashes its first argument, so it cannot compare two digests -
+ * doing that silently double-hashes one side and always fails. Signatures that
+ * travel alongside their payload need this instead.
+ */
+export function hexEquals(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a.length !== b.length) return false;
   let diff = 0;
-  for (let i = 0; i < got.length; i++) diff |= got.charCodeAt(i) ^ expectedHash.charCodeAt(i);
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
 }
 

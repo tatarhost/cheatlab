@@ -1,8 +1,36 @@
 /**
  * Worker behaviour tests. Run with: node worker/test/worker.test.mjs
  */
-import { makeEnv, call, request } from './harness.mjs';
+import { makeEnv, call as rawCall, solveCaptcha, request } from './harness.mjs';
 import worker from '../src/index.js';
+
+/**
+ * Anonymous publishing now requires a captcha (see auth.test.mjs). This suite
+ * covers media, ranges and storage, not the anti-abuse policy, so rather than
+ * hand a captcha to every call site, `call` here solves one automatically for
+ * anonymous POSTs to /api/items. The auth suite calls the harness directly and
+ * therefore still sees the real 403.
+ */
+async function call(worker_, env_, path, opts = {}) {
+  const method = opts.method || 'GET';
+  const needsCaptcha =
+    method === 'POST' && path === '/api/items' && !opts.session && !opts.captchaToken;
+  if (!needsCaptcha) return rawCall(worker_, env_, path, opts);
+  // Only the identity headers may carry over: forwarding the call's own method
+  // or body would turn this into POST /api/auth/captcha, which is not a route.
+  const c = await solveCaptcha(worker_, env_, { client: opts.client, id: opts.id });
+  // A body that does not parse is the point of some tests (malformed JSON), so
+  // it is passed through untouched rather than throwing here.
+  let parsed = null;
+  try {
+    parsed = JSON.parse(typeof opts.body === 'string' ? opts.body || '{}' : JSON.stringify(opts.body || {}));
+  } catch { /* deliberately malformed */ }
+  if (parsed === null) return rawCall(worker_, env_, path, opts);
+  return rawCall(worker_, env_, path, {
+    ...opts,
+    body: { ...parsed, captchaToken: c.token, captchaAnswer: c.answer },
+  });
+}
 
 let pass = 0;
 let fail = 0;
@@ -15,7 +43,11 @@ function check(name, cond, detail = '') {
 }
 
 async function t(name, fn) {
-  const env = makeEnv();
+  // These tests publish many items on purpose (listing, dedup, range serving).
+  // The shipped anonymous cap is one item a day, which would make them untestable
+  // for reasons unrelated to what they check, so the cap is raised here. The cap
+  // itself is asserted in auth.test.mjs at its real default.
+  const env = makeEnv({ ANON_NEW_ITEMS_PER_DAY: '500' });
   try {
     await fn(env);
   } catch (err) {

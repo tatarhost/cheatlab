@@ -34,5 +34,24 @@ DENY_EXT = ""
 DENY_SHA = ""
 WEBHOOK_URL = ""
 
+# Anti-abuse tuning. These are the values most likely to change after launch, so
+# they live here rather than in source.
+#
+# POW_BITS is the proof-of-work difficulty in leading zero bits, 8-30. 22 is
+# ~4.2M hashes: tens of milliseconds in a browser, seconds for a naive bot.
+POW_BITS = "22"
+# Daily item caps. Defaults ship as 1 anonymous / 4 registered; the registered
+# one is meant to be raised once the account flood settles.
+ANON_NEW_ITEMS_PER_DAY = "1"
+REG_NEW_ITEMS_PER_DAY = "4"
+
+# CAPTCHA_SECRET is NOT set here on purpose: it is a secret, not a var. Create
+# it once with:
+#
+#   npx wrangler secret put CAPTCHA_SECRET --config wrangler.toml
+#
+# Without it the Worker logs a warning and uses a public fallback key, which
+# lets a caller mint captcha handles for challenge ids it guesses.
+
 [observability]
 enabled = true
