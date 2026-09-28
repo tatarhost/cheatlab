@@ -444,7 +444,7 @@ function renderAccountChip() {
 
   slot.replaceChildren(h('a', { class: 'rail-stat', href: '/auth' },
     icon('user', 'i i-sm'),
-    h('span', { text: signedIn() ? 'Профиль' : 'Войти' }),
+    h('span', { text: signedIn() ? 'Профиль' : 'Войти · Регистрация' }),
   ));
   if (note) {
     note.textContent = signedIn()
@@ -938,6 +938,11 @@ async function viewItem(id) {
 }
 
 function editorForm(initial) {
+  // Editing passes the full item, so `initial.files` exists there; a new
+  // publication passes just `{ type }` and has no files yet. Normalise once so
+  // neither the existing-file list nor the upload cap can hit `.length` on an
+  // undefined array.
+  const existing = initial.files || [];
   const state = {
     type: initial.type || 'script',
     language: initial.language || (initial.type === 'script' ? 'luau' : 'text'),
@@ -997,7 +1002,7 @@ function editorForm(initial) {
 
   function addFiles(list) {
     for (const f of list) {
-      if (pending.length + initial.files.length >= (config.limits.maxFilesPerItem || 20)) {
+      if (pending.length + existing.length >= (config.limits.maxFilesPerItem || 20)) {
         toast('Лимит файлов на публикацию исчерпан', true);
         break;
       }
@@ -1056,10 +1061,10 @@ function editorForm(initial) {
         h('span', { class: 'label', text: 'Файлы' }),
         drop,
         queue,
-        initial.files.length
+        existing.length
           ? h('div', { class: 'panel' },
               h('div', { class: 'panel-title', text: 'Уже загружено' }),
-              initial.files.map((f) => h('div', { class: 'queue-row' },
+              existing.map((f) => h('div', { class: 'queue-row' },
                 h('a', { href: fileUrl(f.id), text: f.name }),
                 h('span', { class: 'spacer' }),
                 h('span', { text: bytes(f.size) }),
@@ -1080,7 +1085,7 @@ function editorForm(initial) {
       ),
       h('div', { class: 'panel' },
         h('div', { class: 'panel-title', text: 'Как это работает' }),
-        h('p', { class: 'hint', text: 'Аккаунт не создаётся. При публикации сервер выдаёт ключ редактирования — он остаётся в этом браузере. Секрет нужен, чтобы изменить или удалить запись.' }),
+        h('p', { class: 'hint', text: 'При публикации сервер выдаёт ключ редактирования — он остаётся в этом браузере. Секрет нужен, чтобы изменить или удалить запись. Анонимно — одна публикация в сутки с проверкой, с аккаунтом — четыре и без проверки.' }),
       ),
     ),
   );

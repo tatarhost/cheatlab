@@ -94,10 +94,11 @@ p { margin: 0; }
    which drops .rail-foot entirely, can still reach sign-in. */
 .rail-account { margin-top: 18px; }
 .rail-account .rail-stat {
-  display: flex; align-items: center; gap: 8px; width: 100%; margin-top: 0;
-  padding: 8px 10px; border: 1px solid var(--line); text-decoration: none;
+  display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin-top: 0;
+  padding: 8px 10px; border: 1px solid var(--ink); background: var(--ink); color: var(--paper);
+  text-decoration: none;
 }
-.rail-account .rail-stat:hover { border-color: var(--ink); background: var(--fog); text-decoration: none; }
+.rail-account .rail-stat:hover { background: var(--paper); color: var(--ink); text-decoration: none; }
 .rail-account .spacer { flex: 1; }
 
 /* The theme control is a real button, so it needs the button resets plus the
