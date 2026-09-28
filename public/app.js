@@ -455,11 +455,11 @@ function renderAccountChip() {
 
 /* ---------------------------------------------------------------- auth view */
 
-/** Label + input, matching the shape the editor already uses. */
-function field(name, props = {}) {
+/** Label + the given input, matching the shape the editor already uses. */
+function field(name, input) {
   return h('label', { class: 'field' },
     h('span', { class: 'label', text: name }),
-    h('input', { class: 'input', name, ...props }),
+    input,
   );
 }
 
@@ -469,10 +469,12 @@ async function viewAuth(url) {
   const nick = h('input', {
     class: 'input', name: 'nick', autocomplete: 'username', required: true,
     minlength: 3, maxlength: 24, spellcheck: false, autocapitalize: 'off',
+    placeholder: '3–24 символа, латиница и цифры',
   });
   const password = h('input', {
     class: 'input', name: 'password', type: 'password', required: true,
     minlength: 10, autocomplete: mode === 'register' ? 'new-password' : 'current-password',
+    placeholder: 'минимум 10 символов',
   });
   const submit = h('button', { class: 'btn btn-primary', type: 'submit' },
     mode === 'register' ? 'Создать аккаунт' : 'Войти');
@@ -517,8 +519,8 @@ async function viewAuth(url) {
     h('p', { class: 'page-sub', text: mode === 'register'
       ? 'Ник, пароль, никакой почты. Восстановить пароль нельзя — запомните его.'
       : 'Войдите, чтобы публиковать без проверки и следить за своим профилем.' }),
-    field('Ник', { placeholder: '3–24 символа, латиница и цифры' }),
-    field('Пароль', { placeholder: 'минимум 10 символов' }),
+    field('Ник', nick),
+    field('Пароль', password),
     notice,
     status,
     h('div', { class: 'field-row' },

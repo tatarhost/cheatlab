@@ -82,6 +82,7 @@ p { margin: 0; }
   padding: 8px 10px; margin-left: -10px;
   font-size: 14px; color: var(--mute);
   border-left: 2px solid transparent;
+  transition: color 0.14s ease, background 0.14s ease, border-color 0.14s ease;
 }
 .nav-link:hover { color: var(--ink); background: var(--fog); text-decoration: none; }
 .nav-link[aria-current="page"] { color: var(--ink); font-weight: 600; border-left-color: var(--ink); }
@@ -97,8 +98,10 @@ p { margin: 0; }
   display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin-top: 0;
   padding: 8px 10px; border: 1px solid var(--ink); background: var(--ink); color: var(--paper);
   text-decoration: none;
+  transition: background 0.14s ease, color 0.14s ease, transform 0.08s ease;
 }
 .rail-account .rail-stat:hover { background: var(--paper); color: var(--ink); text-decoration: none; }
+.rail-account .rail-stat:active { transform: translateY(1px); }
 .rail-account .spacer { flex: 1; }
 
 /* The theme control is a real button, so it needs the button resets plus the
@@ -147,8 +150,10 @@ p { margin: 0; }
   background: var(--paper); color: var(--ink);
   font: 500 12px/1 var(--sans); letter-spacing: 0.04em; text-transform: uppercase;
   cursor: pointer; white-space: nowrap;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease, transform 0.08s ease;
 }
 .btn:hover { background: var(--ink); color: var(--paper); text-decoration: none; }
+.btn:active:not(:disabled) { transform: translateY(1px); }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn:disabled:hover { background: var(--paper); color: var(--ink); }
 .btn-primary { background: var(--ink); color: var(--paper); }
@@ -186,8 +191,9 @@ p { margin: 0; }
 .tab {
   padding: 8px 14px; margin-bottom: -1px; font-size: 13px; color: var(--mute);
   border-bottom: 2px solid transparent;
+  transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
 }
-.tab:hover { color: var(--ink); text-decoration: none; }
+.tab:hover { color: var(--ink); text-decoration: none; background: var(--fog); }
 .tab[aria-selected="true"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--ink); }
 
 .split { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 40px; align-items: start; }
@@ -208,6 +214,7 @@ p { margin: 0; }
   display: grid; grid-template-columns: 26px minmax(0, 1fr) auto;
   gap: 14px; align-items: baseline;
   padding: 15px 4px; border-bottom: 1px solid var(--line);
+  transition: background 0.14s ease;
 }
 .row:hover { background: var(--fog); }
 .row-mark { color: var(--mute); padding-top: 2px; }
@@ -346,14 +353,36 @@ p { margin: 0; }
   display: flex; align-items: center; gap: 9px;
   padding: 11px 15px; border: 1px solid var(--ink); background: var(--paper);
   font: 12px var(--mono); max-width: 420px;
+  animation: toast-in 0.18s ease-out;
 }
 .toast.is-bad { border-width: 2px; }
+
+/* ---- motion ---- */
 
 .spin { animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* Each routing pass replaces the children of .view, so the animation runs on
+   every navigation - a page switch is a page change, not a paint job. */
+.view > * { animation: view-in 0.22s ease-out; }
+@keyframes view-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(0.97) translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .spin { animation: none; }
+  .spin, .view > *, .toast, .modal-backdrop, .modal-backdrop .auth-card { animation: none; }
+  .btn, .nav-link, .tab, .row { transition: none; }
 }
 
 /* ---- accounts, profiles, captcha ---- */
@@ -389,8 +418,9 @@ a.stat-box:hover .stat-label { color: var(--ink); }
   position: fixed; inset: 0; z-index: 40;
   display: flex; align-items: center; justify-content: center;
   padding: 20px; background: rgba(0, 0, 0, 0.55);
+  animation: fade-in 0.15s ease-out;
 }
-.modal-backdrop .auth-card { width: 100%; margin: 0; background: var(--paper); }
+.modal-backdrop .auth-card { width: 100%; margin: 0; background: var(--paper); animation: pop-in 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
 .captcha-answer { flex: 1 1 120px; min-width: 0; }
 .modal-backdrop .btn-ghost { margin-top: 14px; }
 
