@@ -37,9 +37,11 @@ WEBHOOK_URL = ""
 # Anti-abuse tuning. These are the values most likely to change after launch, so
 # they live here rather than in source.
 #
-# POW_BITS is the proof-of-work difficulty in leading zero bits, 8-30. 22 is
-# ~4.2M hashes: tens of milliseconds in a browser, seconds for a naive bot.
-POW_BITS = "22"
+# POW_BITS is the proof-of-work difficulty in leading zero bits, 8-30. 18 is
+# ~260k hashes: a few seconds in a browser, and a bot pays it per throwaway
+# account. Do not raise it much - 22 measures 60s+ here, which just makes people
+# abandon registration.
+POW_BITS = "18"
 # Daily item caps. Defaults ship as 1 anonymous / 4 registered; the registered
 # one is meant to be raised once the account flood settles.
 ANON_NEW_ITEMS_PER_DAY = "1"

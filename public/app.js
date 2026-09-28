@@ -95,16 +95,114 @@ function rememberKey(id, secret) {
   saveKeys(keys);
 }
 
+/**
+ * A stable per-browser id, used for quota accounting and to bind sessions to
+ * this browser.
+ *
+ * Generated once and kept in localStorage. If storage is unavailable - private
+ * mode, blocked cookies - the id falls back to memory for this page load, which
+ * is worse for the user's quota but far better than throwing: this runs at module
+ * scope, so an exception here would take the whole page down before it rendered.
+ * Sessions need the same id, so a fallback id also means not being signed in
+ * across reloads, which is the correct trade.
+ */
 function clientId() {
-  let id = localStorage.getItem(ID_STORE);
-  if (!id || !/^[A-Za-z0-9_-]{16,64}$/.test(id)) {
-    const bytesRaw = crypto.getRandomValues(new Uint8Array(24));
-    id = btoa(String.fromCharCode(...bytesRaw)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    localStorage.setItem(ID_STORE, id);
+    let id = null;
+    try {
+      id = localStorage.getItem(ID_STORE);
+      if (!id || !/^[A-Za-z0-9_-]{16,64}$/.test(id)) {
+        id = makeClientId();
+        localStorage.setItem(ID_STORE, id);
+      }
+    } catch {
+      id = makeClientId();
+    }
+    return id;
   }
-  return id;
-}
+
+  function makeClientId() {
+    const bytesRaw = crypto.getRandomValues(new Uint8Array(24));
+    // 24 bytes base64url-encoded: 32 characters, matching the server's
+    // /^[A-Za-z0-9_-]{16,64}$/ requirement for a client id.
+    return btoa(String.fromCharCode(...bytesRaw)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
 const CLIENT = clientId();
+
+/* ------------------------------------------------------------------ session */
+
+/**
+ * Signed-in account state.
+ *
+ * The token is a bearer credential, so it is kept in localStorage like the edit
+ * keys already are. That is a deliberate trade: it survives a reload and works
+ * offline, but any script that can run on this origin can read it. The server
+ * limits the damage by binding each session to the client id that created it,
+ * so a stolen token is useless from another browser, and there is no password or
+ * recovery question stored client-side to go with it.
+ */
+const SESSION_STORE = 'cheatlab.session';
+
+let session = readSession();
+let account = null; // populated by /api/auth/me on boot
+
+function readSession() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SESSION_STORE) || 'null');
+    if (raw && typeof raw.token === 'string' && raw.token.length >= 20) return raw;
+  } catch { /* corrupt or absent */ }
+  return null;
+}
+
+function saveSession(next) {
+  session = next && next.token ? next : null;
+  try {
+    if (session) localStorage.setItem(SESSION_STORE, JSON.stringify(session));
+    else localStorage.removeItem(SESSION_STORE);
+  } catch { /* private mode; the session simply will not persist */ }
+  renderAccountChip();
+}
+
+const signedIn = () => Boolean(session);
+
+/* -------------------------------------------------------------- proof of work */
+
+/**
+ * Solves the registration proof of work.
+ *
+ * The server wants a nonce where sha256(`${challenge}.${nonce}`) starts with
+ * POW_BITS zero bits. This is a busy loop on purpose: it is the work the server
+ * is charging for, and yielding every few thousand tries keeps the tab from
+ * being declared unresponsive without meaningfully slowing it down.
+ */
+/**
+ * Finds a nonce whose sha256(`${challenge}.${nonce}`) starts with `bits` zero
+ * bits - the same definition the server checks, counted bit by bit.
+ *
+ * Kept deliberately readable: it is the piece of client code whose correctness
+ * decides whether registration is possible at all, so it must match the server
+ * exactly rather than approximately.
+ */
+async function solvePow(challenge, bits, onProgress) {
+    const enc = new TextEncoder();
+    let nonce = 0;
+    for (;;) {
+      const digest = new Uint8Array(
+        await crypto.subtle.digest('SHA-256', enc.encode(`${challenge}.${nonce}`)),
+      );
+      let zeros = 0;
+      for (let i = 0; i < digest.length && digest[i] === 0; i++) zeros += 8;
+      if (zeros < digest.length * 8 && digest[zeros >> 3]) {
+        zeros += Math.clz32(digest[zeros >> 3]) - 24;
+      }
+      if (zeros >= bits) return String(nonce);
+      nonce++;
+      if (onProgress && nonce % 20000 === 0) {
+        onProgress(nonce);
+        // Yield so paint and input still work while the loop runs.
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }
+  }
 
 /**
  * API base URL.
@@ -130,9 +228,13 @@ const isImageFile = (f) => /^image\//.test(f.mime || '');
 const isVideoFile = (f) => /^video\//.test(f.mime || '');
 const isAudioFile = (f) => /^audio\//.test(f.mime || '');
 
-async function api(path, { method = 'GET', body, secret, signal } = {}) {
+async function api(path, { method = 'GET', body, secret, signal, noAuth, headers: extra } = {}) {
   const headers = { 'x-cheatlab-client': CLIENT };
   if (secret) headers['x-cheatlab-secret'] = secret;
+  Object.assign(headers, extra || {});
+  // Sent on everything except the endpoints that establish or end a session, so
+  // a stale token cannot make a fresh login look signed-in.
+  if (session && !noAuth) headers['x-cheatlab-session'] = session.token;
   if (body !== undefined) headers['content-type'] = 'application/json';
   const res = await fetch(API + path, {
     method,
@@ -163,9 +265,276 @@ async function api(path, { method = 'GET', body, secret, signal } = {}) {
     const err = new Error(data.error || `HTTP ${res.status}`);
     err.status = res.status;
     err.reasons = data.reasons;
+    // The whole payload, so callers can react to a captcha challenge, a daily
+    // limit or a hint without a second round trip.
+    err.data = data;
+    // A token the server no longer accepts (expired, revoked, or issued to a
+    // different browser) is dropped here rather than on every call site.
+    if (res.status === 401 && session && !noAuth) saveSession(null);
     throw err;
   }
   return data;
+}
+
+/* -------------------------------------------------------------- account API */
+
+/** Server-advertised proof-of-work difficulty, from /api/config. */
+const powBits = () => Math.min(30, Math.max(8, Number(config?.powBits) || 18));
+
+/**
+ * Registers, paying the proof of work first.
+ *
+ * Registration is the only place the challenge is strictly required, and it is
+ * also the one place a bot most wants, so the work is done before the request
+ * rather than after a rejection.
+ */
+async function registerAccount({ nick, password }, onProgress) {
+  const { challenge } = await api('/api/auth/pow', { noAuth: true });
+  const nonce = await solvePow(challenge, powBits(), onProgress);
+  // The proof travels in headers, not the body: powGate reads it from there so a
+  // body field can never be replayed as if it were the verified work.
+  return api('/api/auth/register', {
+    method: 'POST',
+    noAuth: true,
+    body: { nick, password },
+    headers: { 'x-cheatlab-pow': challenge, 'x-cheatlab-pow-nonce': nonce },
+  });
+}
+
+async function loginAccount({ nick, password }) {
+  return api('/api/auth/login', { method: 'POST', noAuth: true, body: { nick, password } });
+}
+
+async function logoutAccount() {
+  try {
+    await api('/api/auth/logout', { method: 'POST' });
+  } catch {
+    // A failed logout still clears the local token: the user asked to be signed
+    // out, and keeping a credential we could not revoke is the worse outcome.
+  }
+  saveSession(null);
+  account = null;
+  renderAccountChip();
+}
+
+/** Refreshes the cached account from the server. Cheap, and called on boot. */
+async function refreshAccount() {
+  if (!signedIn()) {
+    account = null;
+    // Still render: a first-time visitor has no session, and the rail has to
+    // offer them the way in. Returning before this leaves it blank.
+    renderAccountChip();
+    return null;
+  }
+  try {
+    const me = await api('/api/auth/me');
+    account = me.user;
+    if (!me.user) saveSession(null); // token rejected upstream
+  } catch {
+    account = null;
+  }
+  renderAccountChip();
+  return account;
+}
+
+/* ------------------------------------------------------------------ captcha */
+
+/**
+ * Asks the anonymous user the challenge the server returned.
+ *
+ * Anonymous publishing is capped and captcha-gated, so this is the difference
+ * between "publishing still works without an account" and "publishing is
+ * broken". Resolves to `{ captchaToken, captchaAnswer }` or null if cancelled.
+ *
+ * The answer is computed by the person reading `q`; `token` is an opaque
+ * handle, so nothing here can be replayed to pre-empt it.
+ */
+function askCaptcha(challenge) {
+  return new Promise((resolve) => {
+    const answer = h('input', {
+      class: 'input captcha-answer', type: 'text', inputmode: 'numeric', autocomplete: 'off',
+      placeholder: 'ответ', 'aria-label': 'Ответ на вопрос',
+    });
+    const error = h('p', { class: 'form-error', role: 'alert' });
+    const done = (value) => { backdrop.remove(); resolve(value); };
+    const submit = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Ответить');
+
+    const form = h('form', {
+      class: 'panel auth-card',
+      onsubmit: (e) => {
+        e.preventDefault();
+        const value = answer.value.trim();
+        if (!value) {
+          error.textContent = 'Введите ответ.';
+          answer.focus();
+          return;
+        }
+        done({ captchaToken: challenge.token, captchaAnswer: value });
+      },
+    },
+      h('h2', { text: 'Подтвердите публикацию' }),
+      h('p', { class: 'page-sub', text: String(challenge.q ?? '') }),
+      h('div', { class: 'field-row' }, answer, submit),
+      error,
+      h('button', {
+        class: 'btn btn-ghost', type: 'button',
+        onclick: () => { done(null); navigate('/auth?mode=register'); },
+      }, 'Создать аккаунт вместо этого'),
+    );
+
+    const backdrop = h('div', {
+      class: 'modal-backdrop',
+      onclick: (e) => { if (e.target === backdrop) done(null); },
+    }, form);
+
+    document.body.appendChild(backdrop);
+    answer.focus();
+    form.addEventListener('keydown', (e) => { if (e.key === 'Escape') done(null); });
+  });
+}
+
+/**
+ * Runs `attempt` and, if the server answers with a captcha challenge, collects
+ * an answer once and retries with it.
+ *
+ * Only one retry: a challenge is consumed by its first correct answer, so a
+ * second failure means the answer was wrong and asking again would just be a
+ * way to brute-force through the UI.
+ */
+async function withCaptcha(attempt) {
+  try {
+    return await attempt(null);
+  } catch (err) {
+    const challenge = err?.data?.captcha;
+    if (err?.status !== 403 || !challenge?.token || !challenge?.q) throw err;
+    const answer = await askCaptcha(challenge);
+    if (!answer) throw new Error('Публикация отменена: не решена проверка.');
+    return attempt(answer);
+  }
+}
+
+/* ------------------------------------------------------------- account chip */
+
+/**
+ * The sign-in / account control in the rail.
+ *
+ * Rendered from scratch on every auth state change rather than toggling CSS, so
+ * it cannot drift out of sync with the session it is meant to reflect.
+ */
+function renderAccountChip() {
+  const slot = document.getElementById('accountSlot');
+  if (!slot) return;
+  const note = document.getElementById('railNote');
+
+  if (account) {
+    slot.replaceChildren(h('a', {
+      class: 'rail-stat', href: `/u/${account.id}`,
+      title: `@${account.nick}`,
+    },
+      icon('user', 'i i-sm'),
+      h('span', { text: account.nick }),
+      h('span', { class: 'spacer' }),
+      h('span', { text: `${account.posts ?? 0}` }),
+    ));
+    if (note) {
+      note.textContent = 'Ключ редактирования хранится в этом браузере. Аккаунт привязан к нему: вход с другого устройства потребует пароля.';
+    }
+    return;
+  }
+
+  slot.replaceChildren(h('a', { class: 'rail-stat', href: '/auth' },
+    icon('user', 'i i-sm'),
+    h('span', { text: signedIn() ? 'Профиль' : 'Войти' }),
+  ));
+  if (note) {
+    note.textContent = signedIn()
+      ? 'Сессия не подтверждена сервером.'
+      : 'Анонимно доступна одна публикация в сутки. С аккаунтом — четыре, без проверки.';
+  }
+}
+
+/* ---------------------------------------------------------------- auth view */
+
+/** Label + input, matching the shape the editor already uses. */
+function field(name, props = {}) {
+  return h('label', { class: 'field' },
+    h('span', { class: 'label', text: name }),
+    h('input', { class: 'input', name, ...props }),
+  );
+}
+
+async function viewAuth(url) {
+  const mode = url.searchParams.get('mode') === 'register' ? 'register' : 'login';
+  const notice = h('p', { class: 'form-error', role: 'alert' });
+  const nick = h('input', {
+    class: 'input', name: 'nick', autocomplete: 'username', required: true,
+    minlength: 3, maxlength: 24, spellcheck: false, autocapitalize: 'off',
+  });
+  const password = h('input', {
+    class: 'input', name: 'password', type: 'password', required: true,
+    minlength: 10, autocomplete: mode === 'register' ? 'new-password' : 'current-password',
+  });
+  const submit = h('button', { class: 'btn btn-primary', type: 'submit' },
+    mode === 'register' ? 'Создать аккаунт' : 'Войти');
+  const status = h('p', { class: 'hint' });
+
+  const form = h('form', {
+    class: 'panel auth-card',
+    onsubmit: async (e) => {
+      e.preventDefault();
+      notice.textContent = '';
+      status.textContent = '';
+      const body = { nick: nick.value.trim(), password: password.value };
+      if (!body.nick || !body.password) {
+        notice.textContent = 'Заполните оба поля.';
+        return;
+      }
+      submit.disabled = true;
+      try {
+        if (mode === 'register') {
+          // Registration is the one gated action: the browser does the
+          // proof-of-work first, so the user sees progress instead of a refusal.
+          status.textContent = 'Проверка…';
+          submit.textContent = 'Проверка…';
+          const res = await registerAccount(body, (n) => { status.textContent = `Проверка… ${n.toLocaleString('ru')}`; });
+          saveSession({ token: res.token });
+        } else {
+          const res = await loginAccount(body);
+          saveSession({ token: res.token });
+        }
+        await refreshAccount();
+        toast(mode === 'register' ? 'Аккаунт создан' : 'Вход выполнен');
+        navigate(account ? `/u/${account.id}` : '/');
+      } catch (err) {
+        notice.textContent = err.message;
+        submit.disabled = false;
+        submit.textContent = mode === 'register' ? 'Создать аккаунт' : 'Войти';
+        status.textContent = '';
+      }
+    },
+  },
+    h('h1', { text: mode === 'register' ? 'Регистрация' : 'Вход' }),
+    h('p', { class: 'page-sub', text: mode === 'register'
+      ? 'Ник, пароль, никакой почты. Восстановить пароль нельзя — запомните его.'
+      : 'Войдите, чтобы публиковать без проверки и следить за своим профилем.' }),
+    field('Ник', { placeholder: '3–24 символа, латиница и цифры' }),
+    field('Пароль', { placeholder: 'минимум 10 символов' }),
+    notice,
+    status,
+    h('div', { class: 'field-row' },
+      submit,
+      h('a', {
+        class: 'btn btn-ghost',
+        href: mode === 'register' ? '/auth' : '/auth?mode=register',
+      }, mode === 'register' ? 'Уже есть аккаунт — войти' : 'Нет аккаунта — создать'),
+    ),
+    signedIn() ? h('button', {
+      class: 'btn btn-ghost', type: 'button',
+      onclick: async () => { await logoutAccount(); toast('Вышли'); navigate('/'); },
+    }, 'Выйти из текущего аккаунта') : null,
+  );
+
+  $view.replaceChildren(form);
 }
 
 function uploadFile(itemId, file, onProgress) {
@@ -411,7 +780,7 @@ async function viewFeed(path, url) {
   if (!items.length) {
     $view.append(emptyState(
       q || tag ? 'Ничего не нашлось' : 'Пока пусто',
-      q || tag ? 'Попробуй другой запрос или сними фильтр.' : 'Опубликуй первым — регистрация не нужна.',
+        q || tag ? 'Попробуй другой запрос или сними фильтр.' : 'Опубликуй первым — регистрация не обязательна.',
       '/new', 'Опубликовать',
     ));
     return;
@@ -737,10 +1106,17 @@ function editorForm(initial) {
         await api(`/api/items/${id}`, { method: 'PATCH', body: payload, secret: keyFor(id) });
         toast('Сохранено');
       } else {
-        const res = await api('/api/items', { method: 'POST', body: payload });
+        // Anonymous publishing is captcha-gated, so a 403 here is expected for
+        // signed-out users rather than a failure: ask the question and retry.
+        // Signed-in users are exempt and never see the dialog.
+        const res = await withCaptcha((answer) => api('/api/items', {
+          method: 'POST', body: answer ? { ...payload, ...answer } : payload,
+        }));
         id = res.item.id;
         rememberKey(id, res.secret);
-        toast(`Опубликовано. Ключ: ${res.secret}`);
+        toast(res.registered
+          ? `Опубликовано от имени ${account ? account.nick : 'аккаунта'}. Ключ: ${res.secret}`
+          : `Опубликовано. Ключ: ${res.secret}`);
       }
 
       let failed = 0;
@@ -771,7 +1147,12 @@ function editorForm(initial) {
 async function viewNew(url) {
   const type = url.searchParams.get('type') || 'script';
   $view.replaceChildren(
-    h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Новая публикация' }), h('p', { class: 'page-sub', text: 'Без регистрации. Ключ редактирования выдаст сервер.' }))),
+      h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Новая публикация' }), h('p', {
+        class: 'page-sub',
+        text: signedIn()
+          ? 'Публикуете от имени аккаунта. Ключ редактирования выдаст сервер.'
+          : 'Анонимно доступна одна публикация в сутки и потребуется проверка. Ключ выдаст сервер.',
+      }))),
     editorForm({ type }),
   );
 }
@@ -863,6 +1244,114 @@ async function viewMe() {
   );
 }
 
+async function viewProfile(id) {
+  const data = await api(`/api/users/${encodeURIComponent(id)}`);
+  const u = data.user;
+  const isMe = Boolean(account && account.id === u.id);
+  const notice = h('p', { class: 'form-error', role: 'alert' });
+
+  const bio = h('input', {
+    class: 'input', name: 'bio', maxlength: 280,
+    value: u.bio || '', placeholder: 'Пара слов о себе',
+  });
+  const followBtn = h('button', {
+    class: 'btn', type: 'button', disabled: isMe,
+    onclick: async () => {
+      followBtn.disabled = true;
+      try {
+        const res = await api(`/api/users/${u.id}/follow`, { method: data.isFollowing ? 'DELETE' : 'POST' });
+        data.isFollowing = res.following;
+        followBtn.textContent = res.following ? 'Отписаться' : 'Подписаться';
+        const n = document.getElementById('followCount');
+        if (n) n.textContent = String(u.followers + (res.following ? 1 : -1));
+      } catch (err) {
+        notice.textContent = err.message;
+        followBtn.disabled = false;
+      }
+    },
+  }, data.isFollowing ? 'Отписаться' : 'Подписаться');
+
+  const stat = (label, value) => h('div', { class: 'stat-box' },
+    h('span', { class: 'stat-value', text: String(value) }),
+    h('span', { class: 'stat-label', text: label }),
+  );
+
+  const followersLink = h('a', {
+    class: 'stat-box', href: `/u/${u.id}/followers`,
+  },
+    h('span', { class: 'stat-value', id: 'followCount', text: String(u.followers) }),
+    h('span', { class: 'stat-label', text: 'подписчиков' }),
+  );
+
+  $view.replaceChildren(
+    h('div', { class: 'page-head' },
+      h('div', {},
+        h('h1', { text: u.nick }),
+        h('p', { class: 'page-sub', text: `@${u.nick} · с ${new Date(u.createdAt).toLocaleDateString('ru')}` }),
+      ),
+      h('div', { class: 'field-row' },
+        signedIn() && !isMe ? followBtn : null,
+        isMe ? h('button', {
+          class: 'btn btn-ghost', type: 'button',
+          onclick: async () => { await logoutAccount(); toast('Вышли'); navigate('/'); },
+        }, 'Выйти') : null,
+        signedIn() && !isMe ? h('a', { class: 'btn btn-ghost', href: '/auth' }, 'Сменить аккаунт') : null,
+      ),
+    ),
+    h('div', { class: 'panel' },
+      h('div', { class: 'stats-row' },
+        stat('публикаций', u.posts),
+        followersLink,
+        stat('подписок', u.following),
+      ),
+    ),
+    u.bio && !isMe ? h('p', { class: 'page-sub', text: u.bio }) : null,
+    isMe ? h('form', {
+      class: 'card',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        try {
+          const res = await api('/api/auth/me', { method: 'PATCH', body: { bio: bio.value.trim() } });
+          account = res.user;
+          toast('Профиль обновлён');
+          navigate(`/u/${u.id}`);
+        } catch (err) { notice.textContent = err.message; }
+      },
+    },
+      h('h2', { text: 'О себе' }),
+      bio,
+      notice,
+      h('div', { class: 'field-row' }, h('button', { class: 'btn btn-primary', type: 'submit' }, 'Сохранить')),
+    ) : null,
+    notice,
+    h('div', { class: 'panel' },
+      h('div', { class: 'panel-title', text: 'Публикации' }),
+      data.items.length
+        ? h('div', { class: 'rows' }, data.items.map((it) => typeRow(it)))
+        : h('p', { class: 'hint', text: 'Пока ничего не опубликовано.' }),
+    ),
+  );
+}
+
+async function viewFollowers(id) {
+  const data = await api(`/api/users/${encodeURIComponent(id)}/followers`);
+  $view.replaceChildren(
+    h('div', { class: 'page-head' },
+      h('h1', { text: 'Подписчики' }),
+      h('a', { class: 'btn btn-ghost', href: `/u/${id}` }, 'К профилю'),
+    ),
+    data.users.length
+      ? h('div', { class: 'panel' }, h('div', { class: 'rows' },
+        data.users.map((u) => h('a', { class: 'row', href: `/u/${u.id}` },
+          icon('user', 'i i-sm'),
+          h('span', { text: u.nick }),
+          h('span', { class: 'spacer' }),
+          h('span', { class: 'hint', text: `${u.posts ?? 0} публикаций` }),
+        ))))
+      : h('p', { class: 'hint', text: 'Пока никто не подписан.' }),
+  );
+}
+
 async function viewStats() {
   const s = await api('/api/stats');
   const p = await api('/api/plugins');
@@ -925,9 +1414,15 @@ async function route() {
       await viewNew(url);
     } else if (path === '/me') {
       await viewMe();
-    } else if (path === '/stats') {
-      await viewStats();
-    } else if (/^\/i\/[A-Za-z0-9]{4,16}$/.test(path)) {
+      } else if (path === '/stats') {
+        await viewStats();
+      } else if (path === '/auth') {
+        await viewAuth(url);
+      } else if (/^\/u\/[A-Za-z0-9_-]{3,32}$/.test(path)) {
+        await viewProfile(path.slice(3));
+      } else if (/^\/u\/[A-Za-z0-9_-]{3,32}\/followers$/.test(path)) {
+        await viewFollowers(path.slice(3, -'/followers'.length));
+      } else if (/^\/i\/[A-Za-z0-9]{4,16}$/.test(path)) {
       await viewItem(path.slice(3));
     } else if (/^\/edit\/[A-Za-z0-9]{4,16}$/.test(path)) {
       await viewEdit(path.slice(6));
@@ -1015,6 +1510,9 @@ async function boot() {
     document.getElementById('statItems').textContent = String(stats.items);
     document.getElementById('footStats').textContent = `${stats.items} публикаций · ${bytes(stats.bytes)}`;
   }
+  // Before the first route, so the rail shows the right control on arrival and a
+  // stored token is validated rather than assumed.
+  await refreshAccount();
   await route();
 }
 

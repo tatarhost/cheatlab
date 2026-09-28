@@ -145,11 +145,19 @@ export async function newSession() {
  * Rejects a session unless it is unexpired and was issued to this client id.
  * The client check is what makes a leaked token useless if it is replayed from
  * a different browser than the one that created it.
+ *
+ * A request that carries no usable client id is rejected rather than allowed
+ * through. Treating "no client id" as "cannot be wrong" looks permissive but
+ * defeats the whole check: whoever holds a stolen token also controls the
+ * request, so the one header they cannot guess is the only thing standing
+ * between a leak and a takeover. The browser always sends this header, from a
+ * value it generated, so requiring it costs an honest user nothing.
  */
 export async function sessionValid(row, clientId) {
   if (!row?.token_hash) return false;
   if (Number(row.expires_at) <= now()) return false;
-  if (row.client_id && clientId && row.client_id !== clientId) return false;
+  if (!clientId) return false;
+  if (row.client_id && row.client_id !== clientId) return false;
   return true;
 }
 

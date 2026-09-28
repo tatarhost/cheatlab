@@ -18,15 +18,23 @@ import { newId, now, secretHash, hexEquals } from './util.js';
 const enc = new TextEncoder();
 
 /**
- * Difficulty in leading zero *bits* of the digest. 22 bits is ~4.2M hashes:
- * tens of milliseconds in a browser, seconds in a naive server-side loop, which
- * is the asymmetry that makes it a filter.
+ * Difficulty in leading zero *bits* of the digest.
+ *
+ * 18 bits is ~260k SHA-256 calls: measured at roughly 10s in Node and a few
+ * seconds in a browser. The cost is paid once, by a person who chose to register,
+ * and shown with a progress count - so it is tuned to be obviously progressing
+ * rather than obviously stalled.
+ *
+ * The earlier default of 22 bits was ~4.2M calls, which measured 60s+ on this
+ * machine: an unusable wait behind a button with no way to tell it was working.
+ * Cost here is bounded by the user's patience, not by the attacker's budget, so a
+ * difficulty that stalls registration defeats its own purpose.
  *
  * Read from env so the cost can be tuned per deployment - and so the test suite
  * can run at a difficulty that does not take minutes. It is clamped to a range
  * that still means something: low enough to be solvable, high enough to cost.
  */
-export const DEFAULT_POW_BITS = 22;
+export const DEFAULT_POW_BITS = 18;
 
 export function powBits(env = {}) {
   const n = Number(env?.POW_BITS);
@@ -42,16 +50,33 @@ export function powBits(env = {}) {
 export async function checkPow(challenge, nonce, env = {}) {
   if (typeof challenge !== 'string' || typeof nonce !== 'string') return false;
   if (!challenge || !nonce) return false;
-  const bits = powBits(env);
   const digest = await crypto.subtle.digest('SHA-256', enc.encode(`${challenge}.${nonce}`));
-  const bytes = new Uint8Array(digest);
-  const full = Math.floor(bits / 4);
-  for (let i = 0; i < full; i++) {
-    if (bytes[i] !== 0) return false;
+  return meetsDifficulty(new Uint8Array(digest), powBits(env));
+}
+
+/**
+ * True when `bytes` starts with at least `bits` zero bits.
+ *
+ * The bit is the unit here, literally, on both sides of the wire. An earlier
+ * version of this checked whole bytes plus a leftover nibble, which quietly meant
+ * 8 * floor(bits/4) + bits%4 bits of work - so POW_BITS=22 asked for 42 bits and
+ * no browser could ever finish it, while the test suite at POW_BITS=8 asked for
+ * 16 and sailed past the mistake. `countLeadingZeroBits` is exported so the
+ * reference solver and the test suite assert against the same definition the
+ * client implements.
+ */
+export function countLeadingZeroBits(bytes) {
+  let n = 0;
+  for (let i = 0; i < bytes.length; i++) {
+    if (bytes[i] === 0) { n += 8; continue; }
+    n += Math.clz32(bytes[i]) - 24; // 32 - 8, i.e. zeros before the top set bit
+    break;
   }
-  const rem = bits % 4;
-  if (rem && (bytes[full] >> (4 - rem)) !== 0) return false;
-  return true;
+  return n;
+}
+
+export function meetsDifficulty(bytes, bits) {
+  return countLeadingZeroBits(bytes) >= bits;
 }
 
 export const newPowChallenge = () => newId(12);

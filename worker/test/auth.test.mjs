@@ -11,11 +11,11 @@ import { makeEnv, call, request, answerQuestion, solveCaptcha } from './harness.
 import worker from '../src/index.js';
 import {
   passwordProblems, nickProblems, nickKey, hashPassword, verifyPassword,
-  PBKDF2_ITERATIONS,
+  sessionValid, PBKDF2_ITERATIONS,
 } from '../src/accounts.js';
 import {
   checkPow, solvePow, powBits, newPowChallenge, issueCaptcha, verifyCaptcha,
-  quotaFor, QUOTA,
+  quotaFor, countLeadingZeroBits, meetsDifficulty, DEFAULT_POW_BITS, QUOTA,
 } from '../src/abuse.js';
 
 let pass = 0;
@@ -105,8 +105,10 @@ await t('proof of work accepts only real work', async () => {
 });
 
 await t('proof of work difficulty is clamped', async () => {
-  check('missing env uses the production default', powBits({}) === 22, `got ${powBits({})}`);
-  check('nonsense falls back', powBits({ POW_BITS: 'abc' }) === 22, `got ${powBits({ POW_BITS: 'abc' })}`);
+  // The default is asserted against the constant rather than a literal, so a
+  // deliberate retune is a one-line change here instead of a silent contradiction.
+  check('missing env uses the production default', powBits({}) === DEFAULT_POW_BITS, `got ${powBits({})}`);
+  check('nonsense falls back', powBits({ POW_BITS: 'abc' }) === DEFAULT_POW_BITS, `got ${powBits({ POW_BITS: 'abc' })}`);
   check('too low is raised', powBits({ POW_BITS: '0' }) === 8, `got ${powBits({ POW_BITS: '0' })}`);
   check('absurdly high is capped', powBits({ POW_BITS: '999' }) === 30, `got ${powBits({ POW_BITS: '999' })}`);
   check('in-range is honoured', powBits({ POW_BITS: '16' }) === 16);
@@ -637,12 +639,181 @@ await t('config advertises the tiers so the client can render them', async (env)
   check('anonymous quota advertised', r.json?.quota?.anonymous?.newItemsPerDay === 1, JSON.stringify(r.json?.quota));
   check('registered quota advertised', r.json?.quota?.registered?.newItemsPerDay === 4);
   check('auth modes advertised', Array.isArray(r.json?.authModes) && r.json.authModes.includes('device'));
+  // The browser solves a proof of work to register, so it must be told the
+  // difficulty. Without this field the client would guess and either stall or
+  // hand the server an answer the server never asked for.
+  check('pow difficulty advertised', r.json?.powBits === 8, `got ${r.json?.powBits}`);
+  check('captcha requirement advertised', r.json?.captchaRequired === true);
+  // The advertised caps must be the enforced ones, env overrides included.
+  const tuned = makeEnv({ ANON_NEW_ITEMS_PER_DAY: '11', REG_NEW_ITEMS_PER_DAY: '12' });
+  const t2 = await call(worker, tuned, '/api/config');
+  check('advertised anonymous cap follows the env override', t2.json?.quota?.anonymous?.newItemsPerDay === 11,
+    `got ${t2.json?.quota?.anonymous?.newItemsPerDay}`);
+  check('advertised registered cap follows the env override', t2.json?.quota?.registered?.newItemsPerDay === 12,
+    `got ${t2.json?.quota?.registered?.newItemsPerDay}`);
+  check('registered edits serialise as null, not Infinity',
+    t2.json?.quota?.registered?.editsPerDay === null, `${t2.json?.quota?.registered?.editsPerDay}`);
 });
 
 await t('captcha endpoint is throttled', async (env) => {
   let last;
   for (let i = 0; i < 22; i++) last = await call(worker, env, '/api/auth/captcha');
   check('429 after the cap', last.status === 429, `got ${last.status}`);
+});
+
+/* ------------------------------------------------------------- pow shape -- */
+
+// The difficulty used to be checked as whole bytes plus a leftover nibble, so a
+// POW_BITS of 22 quietly meant 42 bits of work. The test environment runs at
+// POW_BITS=8, which under that reading was only 16 bits and passed instantly, so
+// nothing in the suite noticed. These assert the unit is a bit, literally.
+
+await t('a session is only valid for the browser it was issued to', async () => {
+  const row = { token_hash: 'h'.repeat(64), user_id: 'u_1', client_id: 'clientaaaaaaaaaaaa', expires_at: Date.now() + 60_000 };
+  check('the issuing client is accepted', await sessionValid(row, 'clientaaaaaaaaaaaa'));
+  check('a different client is refused', !(await sessionValid(row, 'clientbbbbbbbbbbbb')));
+  // The case that made the binding cosmetic: a request with no usable client id.
+  // Whoever holds a stolen token also controls the request, so "cannot be wrong"
+  // is not a safe default - it is the one header they control.
+  check('no client id is refused', !(await sessionValid(row, null)));
+  check('undefined client id is refused', !(await sessionValid(row, undefined)));
+  check('an empty client id is refused', !(await sessionValid(row, '')));
+  check('an expired session is refused', !(await sessionValid({ ...row, expires_at: Date.now() - 1 }, 'clientaaaaaaaaaaaa')));
+  check('a missing row is refused', !(await sessionValid(null, 'clientaaaaaaaaaaaa')));
+  // A session stored before client binding existed has no client_id; it is
+  // accepted only from a real client, and never from nobody.
+  const legacy = { token_hash: 'h'.repeat(64), user_id: 'u_1', expires_at: Date.now() + 60_000 };
+  check('a legacy row still works for a client', await sessionValid(legacy, 'clientaaaaaaaaaaaa'));
+  check('a legacy row does not work for nobody', !(await sessionValid(legacy, null)));
+});
+
+await t('proof-of-work difficulty counts leading zero bits, not bytes', () => {
+  // Crafted digests, so the expectation is exact arithmetic and not "it passed".
+  const cases = [
+    [[0x00, 0x00], 16],
+    [[0x00, 0x0f], 12],
+    [[0x80], 0],
+    [[0x01], 7],
+    [[0x10], 3],
+    [[0x00, 0x00, 0x00, 0x00], 32],
+    [[0x00, 0x00, 0x00, 0x00, 0x01], 39],
+  ];
+  for (const [bytes, want] of cases) {
+    const got = countLeadingZeroBits(new Uint8Array(bytes));
+    check(`zeros of ${bytes.map((b) => b.toString(16))} is ${want}`, got === want, `got ${got}`);
+  }
+  check('threshold is inclusive', meetsDifficulty(new Uint8Array([0x00, 0x0f]), 12) === true);
+  check('one bit over is rejected', meetsDifficulty(new Uint8Array([0x00, 0x0f]), 13) === false);
+});
+
+await t('shipped default difficulty is one a browser can actually finish', async (env) => {
+  // 18 bits is ~260k hashes and measured ~10s here. 22 bits measured 60s+,
+  // which is not a wait any person completes in front of a button.
+  check('default is 18 bits', DEFAULT_POW_BITS === 18, `got ${DEFAULT_POW_BITS}`);
+  check('clamp lower bound', powBits({ POW_BITS: '1' }) === 8);
+  check('clamp upper bound', powBits({ POW_BITS: '99' }) === 30);
+  check('garbage falls back to the default', powBits({ POW_BITS: 'lots' }) === DEFAULT_POW_BITS);
+  // A 16-bit solve, cheap enough to run here, must be accepted at 16. Whether it
+  // is accepted at 17 depends on the digest by chance, so assert consistency with
+  // the measured bit count instead of a fixed answer that flakes half the time.
+  const ch = newPowChallenge();
+  const nonce = await solvePow(ch, { POW_BITS: '16' }, 5e6);
+  check('16-bit nonce exists', typeof nonce === 'string', `got ${nonce}`);
+  check('accepted at 16 bits', await checkPow(ch, nonce, { POW_BITS: '16' }));
+  const enc = new TextEncoder();
+  const zeros = countLeadingZeroBits(
+    new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(`${ch}.${nonce}`))),
+  );
+  check('measured at least 16 bits', zeros >= 16, `got ${zeros}`);
+  for (const bits of [1, 8, 16, 17, 24]) {
+    check(`accepted at ${bits} iff digest has >= ${bits} zeros`,
+      (await checkPow(ch, nonce, { POW_BITS: String(bits) })) === (zeros >= bits),
+      `zeros ${zeros}, bits ${bits}`);
+  }
+  check('a tampered nonce is refused', !(await checkPow(ch, `${nonce}x`, { POW_BITS: '16' })));
+});
+
+await t('a browser-style solver produces a nonce the server accepts', async (env) => {
+  // Mirrors public/app.js solvePow: count zeros byte by byte, then add the
+  // partial byte. If the client and server ever disagree about the bit count,
+  // this fails where the real client would hang forever.
+  const env16 = makeEnv({ POW_BITS: '16' });
+  const challenge = (await call(worker, env16, '/api/auth/pow')).json.challenge;
+  const enc = new TextEncoder();
+  let found = null;
+  for (let n = 0; n < 5e6; n++) {
+    const d = new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(`${challenge}.${n}`)));
+    let zeros = 0;
+    for (let i = 0; i < d.length && d[i] === 0; i++) zeros += 8;
+    if (zeros < d.length * 8 && d[zeros >> 3]) zeros += Math.clz32(d[zeros >> 3]) - 24;
+    if (zeros >= 16) { found = String(n); break; }
+  }
+  check('client algorithm found a nonce', found !== null);
+  const reg = await call(worker, env16, '/api/auth/register', {
+    method: 'POST',
+    body: { nick: 'clientpow', password: 'Tr0ub4dor-and-3-ducks' },
+    headers: { 'x-cheatlab-pow': challenge, 'x-cheatlab-pow-nonce': found },
+  });
+  check('server accepted the client-style proof', reg.status === 201, `got ${reg.status} ${reg.text.slice(0, 160)}`);
+});
+
+await t('the proof of work is only accepted in headers, never in the body', async (env) => {
+  // The body variant is what the client shipped for a while: it looks right, and
+  // the server correctly ignores it, so registration simply never worked.
+  const challenge = (await call(worker, env, '/api/auth/pow')).json.challenge;
+  const nonce = await solvePow(challenge, env);
+  const inBody = await call(worker, env, '/api/auth/register', {
+    method: 'POST',
+    body: { nick: 'bodypow', password: 'Tr0ub4dor-and-3-ducks', challenge, nonce },
+  });
+  check('body proof refused', inBody.status === 403, `got ${inBody.status}`);
+  check('and the answer is to solve the work', inBody.json?.error === 'solve the proof of work first',
+    JSON.stringify(inBody.json));
+
+  const inHeaders = await call(worker, env, '/api/auth/register', {
+    method: 'POST',
+    body: { nick: 'bodypow', password: 'Tr0ub4dor-and-3-ducks' },
+    headers: { 'x-cheatlab-pow': challenge, 'x-cheatlab-pow-nonce': nonce },
+  });
+  check('header proof accepted', inHeaders.status === 201, `got ${inHeaders.status} ${inHeaders.text.slice(0, 160)}`);
+});
+
+/* ------------------------------------------------------------------- cors -- */
+
+// The site and the API are on different hosts, so every request that carries a
+// custom header is preflighted. The harness calls the worker directly and never
+// runs a preflight, so nothing else in this suite can catch a header that the
+// browser would refuse to send. Assert the allow-list against the headers the
+// client actually sets.
+
+await t('preflight allows every header the client sends', async (env) => {
+  const res = await worker.fetch(new Request('https://api.cheatlab.test/api/auth/me', {
+    method: 'OPTIONS',
+    headers: {
+      origin: 'https://tatarhost.github.io',
+      'access-control-request-method': 'POST',
+      'access-control-request-headers': 'content-type, x-cheatlab-session',
+    },
+  }), env);
+  check('preflight answers 204', res.status === 204, `got ${res.status}`);
+  const allowed = (res.headers.get('access-control-allow-headers') || '').toLowerCase();
+  // Keep this list in step with the headers public/app.js sets in api().
+  for (const header of [
+    'content-type',
+    'x-cheatlab-client',
+    'x-cheatlab-secret',
+    'x-cheatlab-session',
+    'x-cheatlab-pow',
+    'x-cheatlab-pow-nonce',
+    'x-filename',
+  ]) {
+    check(`preflight allows ${header}`, allowed.includes(header), `allowed: ${allowed}`);
+  }
+  const methods = (res.headers.get('access-control-allow-methods') || '').toUpperCase();
+  for (const method of ['GET', 'POST', 'PATCH', 'DELETE']) {
+    check(`preflight allows ${method}`, methods.includes(method), `allowed: ${methods}`);
+  }
+  check('origin echoed', res.headers.get('access-control-allow-origin') !== null);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

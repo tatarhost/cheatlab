@@ -90,6 +90,16 @@ p { margin: 0; }
 .rail-note { font-size: 12px; line-height: 1.5; color: var(--mute); }
 .rail-stat { display: inline-block; margin-top: 12px; font: 12px var(--mono); color: var(--ink); }
 
+/* The account control sits between the nav and the footer so the mobile layout,
+   which drops .rail-foot entirely, can still reach sign-in. */
+.rail-account { margin-top: 18px; }
+.rail-account .rail-stat {
+  display: flex; align-items: center; gap: 8px; width: 100%; margin-top: 0;
+  padding: 8px 10px; border: 1px solid var(--line); text-decoration: none;
+}
+.rail-account .rail-stat:hover { border-color: var(--ink); background: var(--fog); text-decoration: none; }
+.rail-account .spacer { flex: 1; }
+
 /* The theme control is a real button, so it needs the button resets plus the
    hover affordance the sibling link already has. */
 .theme-toggle {
@@ -345,6 +355,44 @@ p { margin: 0; }
   .spin { animation: none; }
 }
 
+/* ---- accounts, profiles, captcha ---- */
+
+/* Rows of controls that belong together: a primary action and its escape
+   hatch, or an input and its submit button. */
+.field-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.field-row .btn { flex: 0 0 auto; }
+.auth-card { max-width: 460px; margin-top: 8px; }
+.auth-card h1 { margin-bottom: 6px; }
+.auth-card .field { margin-top: 16px; }
+.auth-card .field-row { margin-top: 18px; }
+
+/* Empty by default: a collapsed element must not leave a gap above the submit. */
+.form-error {
+  margin: 12px 0 0; min-height: 0; font-size: 12px; line-height: 1.5; color: var(--ink);
+}
+.form-error:empty { display: none; }
+.form-error:not(:empty) {
+  padding: 8px 10px; border-left: 2px solid var(--ink); background: var(--fog);
+}
+
+/* Profile counters, sized like the feed's row rhythm rather than as hero
+   numbers - a profile is a list, not a landing page. */
+.stats-row { display: flex; flex-wrap: wrap; gap: 28px; }
+.stat-box { display: flex; flex-direction: column; gap: 2px; text-decoration: none; }
+a.stat-box:hover .stat-label { color: var(--ink); }
+.stat-value { font: 20px var(--mono); letter-spacing: -0.02em; color: var(--ink); }
+.stat-label { font-size: 11px; color: var(--mute); transition: color 0.12s linear; }
+.rows { display: block; }
+
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px; background: rgba(0, 0, 0, 0.55);
+}
+.modal-backdrop .auth-card { width: 100%; margin: 0; background: var(--paper); }
+.captcha-answer { flex: 1 1 120px; min-width: 0; }
+.modal-backdrop .btn-ghost { margin-top: 14px; }
+
 /* ---- responsive ---- */
 @media (max-width: 900px) {
   .app { grid-template-columns: 1fr; }
@@ -355,6 +403,8 @@ p { margin: 0; }
   .nav { flex-direction: row; flex-wrap: wrap; margin-top: 14px; gap: 4px; }
   .nav-link { border-left: 0; border-bottom: 2px solid transparent; padding: 6px 8px; }
   .nav-link[aria-current="page"] { border-bottom-color: var(--ink); }
+  .rail-account { margin-top: 12px; }
+  .rail-account .rail-stat { width: auto; }
   .rail-foot { display: none; }
   .topbar { padding: 12px 18px; }
   .view { padding: 24px 18px 48px; }

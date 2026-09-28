@@ -11,7 +11,7 @@ import {
 } from './accounts.js';
 import {
   checkPow, newPowChallenge, issueCaptcha, verifyCaptcha,
-  quotaFor, storageUsed, QUOTA, DAY_MS,
+  quotaFor, storageUsed, powBits, QUOTA, DAY_MS,
 } from './abuse.js';
 
 const TYPES = new Set(['script', 'paste', 'app', 'image', 'video', 'file']);
@@ -248,9 +248,16 @@ route('GET', /^\/api\/config$/, async (request, env) => {
     // The client renders limits from this rather than hard-coding them, so the
     // numbers here and the numbers the server enforces cannot drift apart.
     authModes: ['device', 'account'],
+    // The browser has to solve a proof of work to register, so it needs the
+    // difficulty. Sent here rather than hard-coded for the same reason.
+    powBits: powBits(env),
+    captchaRequired: QUOTA.anonymous.captchaOnPost,
     quota: {
-      anonymous: { ...QUOTA.anonymous, editsPerDay: QUOTA.anonymous.editsPerDay },
-      registered: { ...QUOTA.registered, editsPerDay: null },
+      // Resolved through quotaFor so the env overrides the server enforces are
+      // the ones the client is shown. `null` for Infinity: JSON has no
+      // Infinity, and null reads as "no limit" without inventing a number.
+      anonymous: { ...quotaFor(null, env), editsPerDay: QUOTA.anonymous.editsPerDay },
+      registered: { ...quotaFor({ id: 'preview' }, env), editsPerDay: null },
     },
     plugins: env.PLUGINS.describe(),
   });
@@ -491,7 +498,7 @@ route('GET', /^\/api\/users$/, async (request, env, _m, url) => {
   return json({ users: rows.map(publicUser) });
 });
 
-route('GET', /^\/api\/users\/([A-Za-z0-9_-]{3,32})$$/, async (request, env, m) => {
+route('GET', /^\/api\/users\/([A-Za-z0-9_-]{3,32})$/, async (request, env, m) => {
   const viewer = await identity(request, env);
   const row = await env.STORE.getUser(m[1]);
   if (!row) return fail(404, 'no such user');
@@ -1007,8 +1014,14 @@ route('GET', /^\/$/, async (_r, env) => json({
  * Custom request headers the site and the embed widget send. A cross-origin
  * request carrying any of these is preflighted, so the preflight response has to
  * echo them back or every write is rejected before it reaches a handler.
+ *
+ * The session and proof-of-work headers have to be listed here too: the site is
+ * served from GitHub Pages and the API from a Worker, so every authenticated call
+ * is cross-origin and preflighted. Omitting one does not fail the request in
+ * tests - the test harness calls the worker directly and never goes through a
+ * preflight - it just fails in a real browser, as a CORS error with no explanation.
  */
-const ALLOWED_HEADERS = 'content-type, x-cheatlab-client, x-cheatlab-secret, x-filename';
+const ALLOWED_HEADERS = 'content-type, x-cheatlab-client, x-cheatlab-secret, x-cheatlab-session, x-cheatlab-pow, x-cheatlab-pow-nonce, x-filename';
 const ALLOWED_METHODS = 'GET, HEAD, POST, PATCH, DELETE, OPTIONS';
 
 function withCors(response, origin, preflight) {

@@ -11,7 +11,7 @@
 <base href="/cheatlab/">
 
 <title>CHEATLAB — скрипты, пасты, медиа и файлы</title>
-<meta name="description" content="CHEATLAB — анонимная публикация скриптов, кода, изображений, видео и любых файлов. Без регистрации, без входа, без ограничений по региону.">
+<meta name="description" content="CHEATLAB — публикация скриптов, кода, изображений, видео и любых файлов. Анонимно или с аккаунтом, без ограничений по региону.">
 
 <!-- API origin. Empty means same origin, which is what you want when the Worker
      is mounted on the same domain. Set it to the workers.dev URL when the site
@@ -21,7 +21,7 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="CHEATLAB">
 <meta property="og:title" content="CHEATLAB — анонимная публикация скриптов и медиа">
-<meta property="og:description" content="Скрипты, код, картинки, видео и любые файлы. Без регистрации и входа.">
+<meta property="og:description" content="Скрипты, код, картинки, видео и любые файлы. Анонимно или с аккаунтом.">
 <meta property="og:image" content="https://tatarhost.github.io/cheatlab/og.png">
 <meta property="og:image:width" content="1280">
 <meta property="og:image:height" content="640">
@@ -100,12 +100,16 @@
       <a class="nav-link" href="./me"><svg class="i"><use href="#i-user"/></svg>Мои загрузки</a>
     </nav>
 
+    <!-- Own row rather than inside .rail-foot, which the mobile layout hides:
+         signing in has to stay reachable on a phone, not just on a desktop rail. -->
+    <div class="rail-account" id="accountSlot"></div>
+
     <div class="rail-foot">
       <button class="rail-stat theme-toggle" id="themeToggle" type="button" aria-label="Сменить тему">
         <svg class="i" aria-hidden="true"><use href="#i-moon" id="themeIcon"/></svg>
         <span id="themeLabel">Светлая тема</span>
       </button>
-      <p class="rail-note">Без регистрации и входа. Ключ редактирования выдаётся при публикации и хранится в этом браузере.</p>
+      <p class="rail-note" id="railNote">Анонимно доступна одна публикация в сутки. С аккаунтом — четыре, без проверки.</p>
       <a class="rail-stat" href="./stats"><span id="statItems">0</span> публикаций</a>
     </div>
   </aside>
