@@ -115,6 +115,13 @@ const CLIENT = clientId();
  */
 const API = ((document.querySelector('meta[name="cheatlab-api"]') || {}).content || '').replace(/\/+$/, '');
 
+// The static host is not the API. When the meta tag is empty, relative requests
+// leave the site, reach a host that has nothing at that path and come back as
+// someone else's HTML error page. Detect that up front so the UI can say what
+// is actually wrong instead of surfacing a confusing failed fetch.
+const STATIC_HOSTS = /(\.|^)(github\.io|githubusercontent\.com|pages\.dev|netlify\.app|vercel\.app)$/i;
+const API_UNSET = !API && STATIC_HOSTS.test(location.hostname);
+
 const fileUrl = (id) => `${API}/f/${id}`;
 const rawFileUrl = (id) => `${API}/f/${id}/raw`;
 const mediaUrl = (id) => `${API}/m/${id}`;
@@ -942,6 +949,22 @@ async function boot() {
   const apiLink = document.getElementById('apiLink');
   if (apiLink) apiLink.href = `${API}/api/stats`;
 
+  if (API_UNSET) {
+    $view.replaceChildren(h('div', { class: 'notice' },
+      icon('alert'),
+      h('div', {},
+        h('strong', { text: 'API не задан' }),
+        h('p', { style: 'margin:8px 0 12px' },
+          'Сайт открыт, но адрес бэкенда не прописан, поэтому публикации недоступны. '
+          + 'Проверка идёт по адресу ' + location.origin + '/api/config — это статический хостинг, он отвечает HTML-страницей ошибки, а не API.'),
+        h('p', { style: 'margin:0 0 6px' }, 'Впишите адрес Worker и задеплойте сайт:'),
+        h('pre', { style: 'margin:0;white-space:pre-wrap' },
+          'node scripts/set-api-url.mjs https://<ваш-worker>.workers.dev'),
+      ),
+    ));
+    return;
+  }
+
   try {
     config = await api('/api/config');
   } catch (err) {
@@ -951,7 +974,7 @@ async function boot() {
       $view.replaceChildren(h('div', { class: 'notice' },
         icon('alert'),
         h('div', {},
-          h('strong', { text: 'API не настроен' }),
+          h('strong', { text: 'API недоступен' }),
           h('p', { style: 'margin:8px 0 0', text: err.message }),
         ),
       ));
