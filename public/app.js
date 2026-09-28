@@ -134,8 +134,24 @@ async function api(path, { method = 'GET', body, secret, signal } = {}) {
     signal,
   });
   const text = await res.text();
-  let data = {};
-  try { data = text ? JSON.parse(text) : {}; } catch { data = { error: text.slice(0, 200) }; }
+  let data = null;
+  try { data = text ? JSON.parse(text) : {}; } catch { data = null; }
+
+  // The API lives on its own host. If it was never configured, the request goes
+  // to the static site instead and comes back as an HTML error page, which would
+  // otherwise surface as a bare "server unavailable".
+  if (data === null) {
+    const err = new Error(
+      API
+        ? `${API} ответил не JSON (${res.status}). Проверьте, что по этому адресу развёрнут Worker.`
+        : 'Не задан адрес API. Впишите его в <meta name="cheatlab-api"> в index.html — например командой '
+          + '`node scripts/set-api-url.mjs https://<ваш-worker>.workers.dev`, затем задеплойте сайт.',
+    );
+    err.status = res.status;
+    err.misconfigured = true;
+    throw err;
+  }
+
   if (!res.ok) {
     const err = new Error(data.error || `HTTP ${res.status}`);
     err.status = res.status;
@@ -928,7 +944,19 @@ async function boot() {
 
   try {
     config = await api('/api/config');
-  } catch {
+  } catch (err) {
+    // A misconfigured API origin makes every view fail with the same message.
+    // Say so once, in full, instead of a transient toast nobody can act on.
+    if (err.misconfigured) {
+      $view.replaceChildren(h('div', { class: 'notice' },
+        icon('alert'),
+        h('div', {},
+          h('strong', { text: 'API не настроен' }),
+          h('p', { style: 'margin:8px 0 0', text: err.message }),
+        ),
+      ));
+      return;
+    }
     toast('сервер недоступен', true);
   }
   const stats = await api('/api/stats').catch(() => null);
