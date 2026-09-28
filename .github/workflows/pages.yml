@@ -29,6 +29,14 @@ jobs:
 
       - uses: actions/configure-pages@v5
 
+      # Pages serves 404.html for any path it does not have on disk, and the app
+      # is a single page that routes on the client. Copying index.html there is
+      # what makes a shared link like /cheatlab/i/a1b2c3d4 open the publication
+      # instead of a 404. Generated here rather than committed so the two files
+      # cannot drift apart.
+      - name: Generate SPA fallback
+        run: cp public/index.html public/404.html
+
       - name: Upload static site
         uses: actions/upload-pages-artifact@v3
         with:

@@ -23,12 +23,13 @@ function h(tag, props, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(props || {})) {
     if (v === null || v === undefined || v === false) continue;
-    if (k === 'class') el.className = v;
-    else if (k === 'text') el.textContent = v;
-    else if (k === 'dataset') Object.assign(el.dataset, v);
-    else if (k.startsWith('on')) el.addEventListener(k.slice(2).toLowerCase(), v);
-    else if (v === true) el.setAttribute(k, '');
-    else el.setAttribute(k, String(v));
+        if (k === 'class') el.className = v;
+        else if (k === 'text') el.textContent = v;
+        else if (k === 'dataset') Object.assign(el.dataset, v);
+        else if (k.startsWith('on')) el.addEventListener(k.slice(2).toLowerCase(), v);
+        else if (k === 'href') el.setAttribute('href', appPath(String(v)));
+        else if (v === true) el.setAttribute(k, '');
+        else el.setAttribute(k, String(v));
   }
   for (const kid of kids.flat(4)) {
     if (kid === null || kid === undefined || kid === false || kid === '') continue;
@@ -165,12 +166,57 @@ function uploadFile(itemId, file, onProgress) {
   });
 }
 
+// ---------------------------------------------------------------- base path
+
+/**
+ * On GitHub Pages the site is served from a subpath, e.g.
+ * https://user.github.io/cheatlab/, so "/" is not the app root. index.html
+ * carries a <base href> for that prefix, which makes every relative asset
+ * resolve from the right place no matter how deep the current URL is. App
+ * routes are pushed with history.pushState as absolute paths, so they need the
+ * same prefix applied by hand.
+ *
+ * Everything below keeps treating routes as root-relative ("/scripts") and only
+ * translates at the two edges: navigating in, and reading the current route.
+ */
+const BASE = new URL('.', document.baseURI).pathname.replace(/\/+$/, '');
+
+/**
+ * The API's own paths. They are never app routes, so they must not pick up the
+ * base prefix when the API is mounted on the same origin at the domain root.
+ */
+const API_PREFIXES = ['/api', '/f', '/m', '/r'];
+
+function isApiPath(pathname) {
+  return API_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + '/'));
+}
+
+/** Root-relative route ("/scripts") -> absolute, base-prefixed path. */
+function appPath(href) {
+  if (!BASE || !href || !href.startsWith('/') || href.startsWith('//')) return href;
+  if (isApiPath(href)) return href;
+  if (href === BASE || href.startsWith(BASE + '/')) return href;
+  return BASE + href;
+}
+
+/** Absolute, already-resolved pathname -> does it belong to the app? */
+function isAppLink(pathname) {
+  if (isApiPath(pathname)) return false;
+  if (!BASE) return true;
+  return pathname === BASE || pathname.startsWith(BASE + '/');
+}
+
+function stripBase(pathname) {
+  if (!BASE || !pathname.startsWith(BASE)) return pathname;
+  return pathname.slice(BASE.length) || '/';
+}
+
 // ---------------------------------------------------------------- chrome
 
 function markNav() {
-  const path = location.pathname;
+  const path = stripBase(location.pathname);
   for (const link of document.querySelectorAll('.nav-link')) {
-    const href = new URL(link.href).pathname;
+    const href = stripBase(new URL(link.href).pathname);
     const on = href === '/' ? path === '/' : path.startsWith(href);
     if (on) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
@@ -184,20 +230,24 @@ document.getElementById('searchForm').addEventListener('submit', (e) => {
   navigate(q ? `/search?q=${encodeURIComponent(q)}` : '/');
 });
 searchInput.addEventListener('input', () => {
-  if (searchInput.value === '' && location.pathname === '/search') navigate('/');
+  if (searchInput.value === '' && stripBase(location.pathname) === '/search') navigate('/');
 });
 
 document.addEventListener('click', (e) => {
   const a = e.target.closest('a');
-  if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+  if (!a || e.metaKey || e.ctrlKey || e.shiftKey || a.target || a.hasAttribute('download')) return;
   const href = a.getAttribute('href');
-  if (!href || !href.startsWith('/') || href.startsWith('//')) return;
+  if (!href || href.startsWith('#') || /^[a-z][a-z0-9+.-]*:/i.test(href)) return;
+  if (a.origin !== location.origin) return;
+  // Route links only. API paths are left to the browser, which is what keeps
+  // downloads and raw media views working on a same-origin deployment.
+  if (!isAppLink(a.pathname)) return;
   e.preventDefault();
-  navigate(href);
+  navigate(a.pathname + a.search + a.hash);
 });
 
 function navigate(href) {
-  history.pushState({}, '', href);
+  history.pushState({}, '', appPath(href));
   route();
 }
 
@@ -838,7 +888,7 @@ function notFound() {
 let renderToken = 0;
 async function route() {
   const token = ++renderToken;
-  const path = location.pathname;
+  const path = stripBase(location.pathname);
   const url = new URL(location.href);
   markNav();
   if (path === '/search') searchInput.value = url.searchParams.get('q') || '';
