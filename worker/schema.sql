@@ -89,6 +89,14 @@ CREATE TABLE IF NOT EXISTS user (
   logo          TEXT NOT NULL DEFAULT '',
   accent        TEXT NOT NULL DEFAULT '',
   bg            TEXT NOT NULL DEFAULT '',
+  -- `avatar_id` is a server-minted id served from KV through /a/<id>; it is
+  -- separate from `logo` (an https URL) so an uploaded avatar can never be a
+  -- third-party tracking pixel. `role` only ever holds 'user' or 'moderator':
+  -- full admin is the ADMIN_IDS env var, not a row anyone can write.
+  avatar_id     TEXT NOT NULL DEFAULT '',
+  avatar_mime   TEXT NOT NULL DEFAULT '',
+  role          TEXT NOT NULL DEFAULT 'user',
+  popular       INTEGER NOT NULL DEFAULT 0,
   -- Cached counts, kept in step after each follow/unfollow and post.
   followers     INTEGER NOT NULL DEFAULT 0,
   following     INTEGER NOT NULL DEFAULT 0,
@@ -176,3 +184,44 @@ CREATE TABLE IF NOT EXISTS captcha (
   used_at    INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_captcha_expires ON captcha(expires_at);
+
+/* ------------------------------------------------------------- moderation --
+ * Mirrors migrations/0004_moderation.sql. See that file for the reasoning; the
+ * short version is that every moderation action leaves a row naming who did it
+ * and when, because "we removed it" is only useful if it can be evidenced.
+ */
+CREATE TABLE IF NOT EXISTS ban (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  until_at   INTEGER NOT NULL,
+  reason     TEXT NOT NULL DEFAULT '',
+  by_user_id TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  lifted_at  INTEGER,
+  lifted_by  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ban_user ON ban(user_id, until_at DESC);
+
+CREATE TABLE IF NOT EXISTS nick_block (
+  nick_key   TEXT PRIMARY KEY,
+  nick       TEXT NOT NULL,
+  reason     TEXT NOT NULL DEFAULT '',
+  by_user_id TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS report (
+  id          TEXT PRIMARY KEY,
+  target_type TEXT NOT NULL,
+  target_id   TEXT NOT NULL,
+  reason      TEXT NOT NULL,
+  details     TEXT NOT NULL DEFAULT '',
+  by_user_id  TEXT NOT NULL DEFAULT '',
+  by_client   TEXT NOT NULL DEFAULT '',
+  status      TEXT NOT NULL DEFAULT 'open',
+  created_at  INTEGER NOT NULL,
+  resolved_at INTEGER,
+  resolved_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_report_status ON report(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_report_target ON report(target_type, target_id);

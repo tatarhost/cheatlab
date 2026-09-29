@@ -55,4 +55,30 @@ export class BlobStore {
   async remove(sha) {
     await this.kv.delete(BlobStore.key(sha));
   }
+
+  /* --------------------------------------------------------------- avatars --
+   * Not content-addressed, unlike files. An avatar is addressed by the id
+   * already on the profile row, so putting a new one must overwrite that exact
+   * key rather than accumulate a digest nobody references. The cost is that two
+   * people uploading the same picture cost two writes, which is a rounding
+   * error next to the 256px cap on the thing being uploaded.
+   */
+
+  static avatarKey(id) {
+    return `avatars/${id}`;
+  }
+
+  async putAvatar(id, buffer) {
+    await this.kv.put(BlobStore.avatarKey(id), buffer);
+    return { size: buffer.byteLength };
+  }
+
+  async getAvatar(id) {
+    const body = await this.kv.get(BlobStore.avatarKey(id), 'arrayBuffer');
+    return body === null ? null : { body };
+  }
+
+  async removeAvatar(id) {
+    await this.kv.delete(BlobStore.avatarKey(id));
+  }
 }

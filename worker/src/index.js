@@ -7,7 +7,7 @@ import {
 } from './util.js';
 import {
   hashPassword, verifyPassword, passwordProblems, nickProblems, nickKey,
-  newUserId, newSession, sessionValid, publicUser, SESSION_TTL_MS,
+  newUserId, newSession, sessionValid, publicUser, adminOf, SESSION_TTL_MS,
 } from './accounts.js';
 import {
   checkPow, newPowChallenge, issueCaptcha, verifyCaptcha,
@@ -138,7 +138,15 @@ async function itemView(store, row, { full = false, unlocked = true, ownerId = n
     if (owner) {
       base.ownerId = owner.id;
       base.authorLabel = owner.nick;
-      base.owner = { id: owner.id, nick: owner.nick };
+      // The two flags a post needs next to its author line: the avatar, so the
+      // feed and the item page agree with the profile, and the popular mark, so
+      // it is visible on the publication and not only on the author's page.
+      base.owner = {
+        id: owner.id,
+        nick: owner.nick,
+        popular: !!owner.popular,
+        avatar: owner.avatar_id ? `/a/${owner.avatar_id}` : '',
+      };
     }
   }
   return base;
@@ -227,13 +235,70 @@ async function identity(request, env) {
   const user = await STORE.getUser(row.user_id);
   if (!user) return null;
 
+  // A ban blocks the account, not the token: the session survives so the user
+  // keeps their uploads and can read the reason when the ban lifts. Routes that
+  // write call requireUnbanned() explicitly, because a banned user may still
+  // legitimately need to read their own profile or download their own files.
+  const ban = await STORE.activeBan(user.id);
+
   env.waitUntil?.(
     Promise.all([
       STORE.touchSession(row.token_hash),
       STORE.updateUser(user.id, { last_seen_at: now() }),
     ]).catch(() => {}),
   );
-  return { user, token, tokenHash: row.token_hash };
+  return { user, token, tokenHash: row.token_hash, ban };
+}
+
+/**
+ * Guard for every write by a signed-in account. Returns a 403 with the reason
+ * and the moment it lapses, so the client can show a ban as a countdown rather
+ * than an unexplained failure.
+ */
+function requireUnbanned(who) {
+  if (!who?.ban) return null;
+  return fail(403, 'banned', {
+    reason: who.ban.reason || '',
+    until: who.ban.until_at,
+  });
+}
+
+/**
+ * The ban in force for whoever is making this write to a post they own.
+ *
+ * A post can be changed with the edit secret alone, without a session, so the
+ * session is not always enough to name the account. Falling back to the post's
+ * own owner closes that gap: otherwise a banned author could still edit, delete
+ * and re-upload by dropping the session and keeping the secret, which would make
+ * a ban a speed bump rather than a ban. Ownership is checked first by every
+ * caller, so this only ever runs for the account that actually owns the post.
+ */
+async function banOnItemWriter(request, env, itemId) {
+  const who = await identity(request, env);
+  if (who) return who.ban || null;
+  const ownerId = await env.STORE.ownerOfItem(itemId);
+  return ownerId ? await env.STORE.activeBan(ownerId) : null;
+}
+
+/** The 403 body a banned writer is given, in the same shape everywhere. */
+function bannedResponse(ban) {
+  return fail(403, 'banned', { reason: ban?.reason || '', until: ban?.until_at });
+}
+
+/**
+ * Full admin, or a moderator. `level` is 'admin' for the few things only the
+ * operator may do (roles, blocked nicks, lifts) and 'moderator' for the ones a
+ * helper may also do (bans and post removal).
+ */
+async function requireRole(request, env, level = 'moderator') {
+  const who = await identity(request, env);
+  if (!who) return { error: fail(401, 'sign in required') };
+  const admin = adminOf(env, who.user.id);
+  if (admin) return { who, admin: true };
+  if (level === 'moderator' && (await env.STORE.roleOf(who.user.id)) === 'moderator') {
+    return { who, admin: false };
+  }
+  return { error: fail(403, 'not allowed') };
 }
 
 /** Where a user's quota and storage are accounted. */
@@ -348,7 +413,25 @@ route('GET', /^\/api\/config$/, async (request, env) => {
   });
 });
 
-route('GET', /^\/api\/stats$/, async (_r, env) => json(await env.STORE.stats()));
+/**
+ * Public counters. `?series=1` adds the daily visitor/registration series, which
+ * is deliberately opt-in: it is a heavier read and the public page only needs
+ * the totals.
+ */
+route('GET', /^\/api\/stats$/, async (request, env, _m, url) => {
+  // This is the one endpoint every visitor hits, the public page calls it on
+  // load. Counting the client here is what makes the "visitors" figure mean
+  // people who came, rather than people who happened to publish - which is all
+  // the other write paths would ever count.
+  const client = clientOf(request);
+  if (client) await env.STORE.touchClient(client);
+
+  const stats = await env.STORE.stats();
+  if (url?.searchParams?.get('series')) {
+    stats.series = await env.STORE.dailySeries(Number(url.searchParams.get('series')) || 30);
+  }
+  return json(stats);
+});
 
 /* ------------------------------------------------------------- accounts -- */
 
@@ -409,6 +492,12 @@ route('POST', /^\/api\/auth\/register$/, async (request, env) => {
   if (passProblems.length) return fail(400, passProblems[0], { problems: passProblems });
 
   const key = nickKey(nick);
+  // The operator's own block list, on top of the built-in weak-nick floor in
+  // accounts.js. Checked against the folded key, so blocking one casing blocks
+  // all of them. Existing accounts are deliberately not affected - see the note
+  // on the admin route: a blocked nick stops new registrations, and an account
+  // that already holds it is handled by a ban if that is what is wanted.
+  if (await STORE.nickBlocked(key)) return fail(403, 'that nick is not available');
   if (await STORE.getUserByNickKey(key)) return fail(409, 'that nick is already taken');
 
   const { passHash, passSalt, iterations } = await hashPassword(payload.password);
@@ -508,6 +597,8 @@ route('GET', /^\/api\/auth\/me$/, async (request, env) => {
 route('PATCH', /^\/api\/auth\/me$/, async (request, env) => {
   const id = await identity(request, env);
   if (!id) return fail(401, 'login required');
+  const banned = requireUnbanned(id);
+  if (banned) return banned;
   const c = config(env);
 
   let payload;
@@ -524,6 +615,9 @@ route('PATCH', /^\/api\/auth\/me$/, async (request, env) => {
     const problems = nickProblems(nick);
     if (problems.length) return fail(400, problems[0], { problems });
     const key = nickKey(nick);
+    // Someone cannot rename themselves onto a nick the operator has blocked,
+    // which would be a way around blocking it at registration.
+    if (await env.STORE.nickBlocked(key)) return fail(403, 'that nick is not available');
     const clash = await env.STORE.getUserByNickKey(key);
     if (clash && clash.id !== id.user.id) return fail(409, 'that nick is already taken');
     patch.nick = nick;
@@ -575,7 +669,390 @@ route('PATCH', /^\/api\/auth\/me$/, async (request, env) => {
   return json({ user: publicUser(row, env) });
 });
 
-/* ---------------------------------------------------------------- social -- */
+/* --------------------------------------------------------------- avatars --
+ * An avatar is uploaded from the user's own device, resized in the browser
+ * before it ever leaves the page, and stored in KV under a server-minted id.
+ * There is deliberately no "paste a link" path here: that exists separately as
+ * `logo`, and keeping upload and URL apart means an avatar can never be a
+ * tracking pixel on a third-party host.
+ */
+
+const AVATAR_MAX_BYTES = 512 * 1024;
+// The browser is told to emit one of these; the server re-checks the declared
+// type against this list rather than trusting the header, so a crafted upload
+// cannot get `text/html` stored and later served as a same-origin document.
+const AVATAR_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+
+route('POST', /^\/api\/auth\/avatar$/, async (request, env) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  const banned = requireUnbanned(who);
+  if (banned) return banned;
+
+  const client = clientOf(request) || 'anon';
+  if (!(await env.STORE.throttle(client, 'avatar', { cap: 10, windowMs: 60 * 60 * 1000 }))) {
+    return fail(429, 'too many avatar uploads, try later');
+  }
+
+  const declared = str(request.headers.get('content-type'), 80).split(';')[0].trim().toLowerCase();
+  if (!AVATAR_TYPES.has(declared)) {
+    return fail(415, 'avatar must be png, jpeg, webp or gif');
+  }
+
+  const declaredLength = Number(request.headers.get('content-length') || 0);
+  if (declaredLength > AVATAR_MAX_BYTES) return fail(413, 'avatar is too large', { maxBytes: AVATAR_MAX_BYTES });
+
+  let buffer;
+  try {
+    buffer = await request.arrayBuffer();
+  } catch {
+    return fail(413, 'avatar is too large', { maxBytes: AVATAR_MAX_BYTES });
+  }
+  // A 0-byte or truncated upload is rejected here rather than stored: an avatar
+  // that fails to decode is worse than no avatar at all.
+  if (buffer.byteLength < 64) return fail(400, 'avatar is empty');
+  if (buffer.byteLength > AVATAR_MAX_BYTES) return fail(413, 'avatar is too large', { maxBytes: AVATAR_MAX_BYTES });
+
+  const id = newId(16);
+  await env.BLOBS.putAvatar(id, buffer);
+  const { user, previous } = await env.STORE.setAvatar(who.user.id, id, declared);
+  // Replace, not accumulate: the old blob has no remaining referrer.
+  if (previous && previous !== id) await env.BLOBS.removeAvatar(previous);
+
+  return json({ user: publicUser(user, env), avatar: `/a/${id}`, size: buffer.byteLength });
+});
+
+route('DELETE', /^\/api\/auth\/avatar$/, async (request, env) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  const banned = requireUnbanned(who);
+  if (banned) return banned;
+
+  const previous = who.user.avatar_id;
+  const { user } = await env.STORE.setAvatar(who.user.id, '', '');
+  if (previous) await env.BLOBS.removeAvatar(previous);
+  return json({ user: publicUser(user, env) });
+});
+
+/**
+ * Serves an avatar.
+ *
+ * Public and unguessable-id-gated: the id is 16 characters of a 32-symbol
+ * alphabet, so it is not enumerable, and an avatar is not private data - it is
+ * shown on a public profile. Cached hard because the id changes whenever the
+ * picture does, which is exactly the invalidation rule a content-addressed URL
+ * would give for free.
+ */
+route('GET', /^\/a\/([A-Za-z0-9]{16})$/, async (request, env, m) => {
+  const row = await env.STORE.db
+    .prepare('SELECT avatar_mime FROM user WHERE avatar_id = ?')
+    .bind(m[1])
+    .first();
+  if (!row) return fail(404, 'not found');
+  const found = await env.BLOBS.getAvatar(m[1]);
+  if (!found) return fail(404, 'not found');
+  const mime = AVATAR_TYPES.has(row.avatar_mime) ? row.avatar_mime : 'application/octet-stream';
+  return new Response(found.body, {
+    headers: {
+      'Content-Type': mime,
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      ...SECURITY_HEADERS,
+    },
+  });
+});
+
+/* --------------------------------------------------------------- reports --
+ * The report queue is the part of the operator's position that is actually
+ * checkable. A disclaimer says "you agree to this"; a report channel with a
+ * status column says "we were told, and here is what we did". Both are needed,
+ * and this is the second one.
+ */
+
+const REPORT_REASONS = new Set([
+  'spam', 'abuse', 'illegal', 'violence', 'porn', 'copyright',
+  'impersonation', 'harassment', 'other',
+]);
+
+route('POST', /^\/api\/reports$/, async (request, env) => {
+  const c = config(env);
+  const client = clientOf(request);
+  if (!client) return fail(401, 'missing client id');
+  if (!(await env.STORE.throttle(client, 'report', { cap: 10, windowMs: 60 * 60 * 1000 }))) {
+    return fail(429, 'too many reports, try later');
+  }
+
+  let payload;
+  try {
+    payload = await readJson(request, c.maxTextBytes);
+  } catch (err) {
+    return fail(err.code === 'TOO_LARGE' ? 413 : 400, err.message);
+  }
+
+  const targetType = str(payload.targetType, 12);
+  if (!['item', 'user', 'comment'].includes(targetType)) return fail(400, 'unknown target');
+  const targetId = str(payload.targetId, 40);
+  if (!/^[A-Za-z0-9_-]{3,40}$/.test(targetId)) return fail(400, 'unknown target');
+
+  const reason = str(payload.reason, 24);
+  if (!REPORT_REASONS.has(reason)) return fail(400, 'pick a reason');
+
+  // Reports are accepted without an account on purpose: the person who wants a
+  // post taken down often has no reason to register first, and requiring
+  // registration to complain is the fastest way to guarantee no complaints.
+  // The trade is spam, which the throttle above bounds.
+  const who = await identity(request, env);
+
+  const id = newId(12);
+  const made = await env.STORE.createReport({
+    id,
+    targetType,
+    targetId,
+    reason,
+    details: str(payload.details, 1000),
+    byUserId: who?.user.id || '',
+    byClient: client,
+  });
+  return json({ id: made.id, status: made.status, ok: true }, 201);
+});
+
+/* ----------------------------------------------------------------- admin --
+ * Two levels, and the split is about blast radius rather than trust:
+ *
+ *   moderator - delete a post, ban an account for up to 7 days, resolve a
+ *               report, mark a popular author. Cannot change roles, cannot edit
+ *               the blocked-nick list, and cannot lift a ban.
+ *   admin     - everything above, plus roles, nicks and unlimited bans.
+ *
+ * A moderator can still hurt an admin, so the one rule that is never relaxed is
+ * that nobody but an admin may act on an account that is a full admin.
+ */
+
+const MOD_BAN_MAX = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * One report, as the console reads it.
+ *
+ * Both the overview counter and the queue render these rows, and the view layer
+ * speaks camelCase. Returning the raw table row from one route and a mapped row
+ * from the other is how the queue ends up with an undefined target and no
+ * takedown button, so the shape is defined once, here.
+ */
+function reportView(r) {
+  return {
+    id: r.id,
+    targetType: r.target_type,
+    targetId: r.target_id,
+    reason: r.reason,
+    details: r.details || '',
+    status: r.status,
+    // Empty rather than null for a complaint filed without an account, which is
+    // the normal case: the reporter is anonymous by design.
+    byUserId: r.by_user_id || '',
+    byClient: r.by_client || '',
+    createdAt: r.created_at,
+    resolvedAt: r.resolved_at || 0,
+    resolvedBy: r.resolved_by || '',
+  };
+}
+
+route('GET', /^\/api\/admin\/overview$/, async (request, env) => {
+  const gate = await requireRole(request, env, 'moderator');
+  if (gate.error) return gate.error;
+  return json({
+    stats: await env.STORE.stats(),
+    series: await env.STORE.dailySeries(30),
+    role: gate.admin ? 'admin' : 'moderator',
+    reports: (await env.STORE.listReports({ status: 'open', limit: 20 })).map(reportView),
+  });
+});
+
+route('GET', /^\/api\/admin\/users$/, async (request, env, _m, url) => {
+  const gate = await requireRole(request, env, 'moderator');
+  if (gate.error) return gate.error;
+  const rows = await env.STORE.adminSearchUsers(url.searchParams.get('q') || '', 50);
+  // One ban lookup per row rather than a join: a moderator's list is 50 rows
+  // and a second query per row is cheaper than widening every public user read
+  // to carry moderation state.
+  const users = await Promise.all(rows.map(async (r) => {
+    const ban = await env.STORE.activeBan(r.id);
+    return { ...publicUser(r, env), banned: !!ban, banUntil: ban?.until_at || 0 };
+  }));
+  return json({ users });
+});
+
+route('POST', /^\/api\/admin\/users\/([A-Za-z0-9_-]{3,40})\/ban$/, async (request, env, m) => {
+  const gate = await requireRole(request, env, 'moderator');
+  if (gate.error) return gate.error;
+  const { STORE } = env;
+
+  const target = await STORE.getUser(m[1]);
+  if (!target) return fail(404, 'not found');
+  if (adminOf(env, target.id)) return fail(403, 'cannot ban an administrator');
+
+  let payload = {};
+  try {
+    payload = await readJson(request, 4096);
+  } catch { /* an empty body means the default 24h */ }
+
+  const reason = str(payload.reason, 200);
+  // `hours: 0` means "until lifted": a distinct, deliberate case rather than a
+  // ban that silently expires and then looks like a bug.
+  const hours = clamp(Number(payload.hours ?? 24) || 0, 0, 24 * 365);
+  const untilAt = hours === 0 ? now() + 10 * 365 * 86400000 : now() + hours * 3600_000;
+  if (!gate.admin && untilAt > now() + MOD_BAN_MAX) {
+    return fail(403, 'moderators can ban for at most 7 days');
+  }
+
+  const ban = await STORE.createBan({
+    id: newId(12), userId: target.id, untilAt, reason, byUserId: gate.who.user.id,
+  });
+  return json(
+    { ok: true, user: publicUser(target, env), ban: { until: ban.until_at, reason: ban.reason } },
+    201,
+  );
+});
+
+route('DELETE', /^\/api\/admin\/users\/([A-Za-z0-9_-]{3,40})\/ban$/, async (request, env, m) => {
+  const gate = await requireRole(request, env, 'admin');
+  if (gate.error) return gate.error;
+  return json({ ok: true, lifted: await env.STORE.liftBans(m[1], gate.who.user.id) });
+});
+
+route('POST', /^\/api\/admin\/users\/([A-Za-z0-9_-]{3,40})\/role$/, async (request, env, m) => {
+  const gate = await requireRole(request, env, 'admin');
+  if (gate.error) return gate.error;
+  let payload = {};
+  try {
+    payload = await readJson(request, 1024);
+  } catch { /* an empty body means "drop back to user" */ }
+  const row = await env.STORE.setRole(m[1], str(payload.role, 20));
+  return json({ ok: true, user: publicUser(row, env) });
+});
+
+route('POST', /^\/api\/admin\/users\/([A-Za-z0-9_-]{3,40})\/popular$/, async (request, env, m) => {
+  const gate = await requireRole(request, env, 'moderator');
+  if (gate.error) return gate.error;
+  let payload = {};
+  try {
+    payload = await readJson(request, 1024);
+  } catch { /* absent means "off" */ }
+  const row = await env.STORE.setPopular(m[1], payload.popular === true);
+  return json({ ok: true, user: publicUser(row, env) });
+});
+
+route('GET', /^\/api\/admin\/nicks$/, async (request, env) => {
+  const gate = await requireRole(request, env, 'admin');
+  if (gate.error) return gate.error;
+  return json({ blocked: await env.STORE.listNickBlocks() });
+});
+
+route('POST', /^\/api\/admin\/nicks$/, async (request, env) => {
+  const gate = await requireRole(request, env, 'admin');
+  if (gate.error) return gate.error;
+  let payload;
+  try {
+    payload = await readJson(request, 2048);
+  } catch {
+    return fail(400, 'bad request');
+  }
+  const nick = str(payload.nick, 24);
+  if (!nick) return fail(400, 'nick is required');
+  const entry = await env.STORE.blockNick({
+    nickKey: nickKey(nick), nick, reason: str(payload.reason, 200), byUserId: gate.who.user.id,
+  });
+  return json({ ok: true, blocked: entry }, 201);
+});
+
+route('DELETE', /^\/api\/admin\/nicks\/([A-Za-z0-9_-]{3,32})$/, async (request, env, m) => {
+  const gate = await requireRole(request, env, 'admin');
+  if (gate.error) return gate.error;
+  return json({ ok: true, removed: await env.STORE.unblockNick(m[1]) });
+});
+
+route('GET', /^\/api\/admin\/reports$/, async (request, env, _m, url) => {
+  const gate = await requireRole(request, env, 'moderator');
+  if (gate.error) return gate.error;
+  const status = url.searchParams.get('status');
+  return json({ reports: (await env.STORE.listReports({ status: status || null, limit: 100 })).map(reportView) });
+});
+
+route('POST', /^\/api\/admin\/reports\/([A-Za-z0-9]{4,16})$/, async (request, env, m) => {
+  const gate = await requireRole(request, env, 'moderator');
+  if (gate.error) return gate.error;
+  let payload = {};
+  try {
+    payload = await readJson(request, 1024);
+  } catch { /* absent means "resolved" */ }
+  const status = str(payload.status, 20);
+  if (!['resolved', 'dismissed', 'open'].includes(status)) return fail(400, 'unknown status');
+
+  // The row is read first: the takedown below acts on what the complaint was
+  // about, and that is only knowable from the report itself.
+  const report = await env.STORE.getReport(m[1]);
+  if (!report) return fail(404, 'not found');
+  const done = await env.STORE.resolveReport({ id: m[1], status, byUserId: gate.who.user.id });
+  if (!done) return fail(404, 'not found');
+
+  // Upholding a complaint takes the content down, because the button that got
+  // here says "Снять" and the operator is promising the complainer it is gone.
+  // A complaint about an account is answered differently: that is a ban, and it
+  // is made from the account queue with a term and a reason, not by deleting
+  // somebody because someone wrote a complaint.
+  let removed = null;
+  if (status === 'resolved') {
+    if (report.target_type === 'item') {
+      removed = (await removeItemEverywhere(env, report.target_id, ctxOf(request, env))) ? 'item' : null;
+    } else if (report.target_type === 'comment') {
+      removed = (await env.STORE.deleteComment(report.target_id)) ? 'comment' : null;
+    }
+  }
+  return json({ ok: true, removed, targetType: report.target_type, removedBy: gate.who.user.id });
+});
+
+/** The moderation queue: recent posts from every author, newest first. */
+route('GET', /^\/api\/admin\/items$/, async (request, env, _m, url) => {
+  const gate = await requireRole(request, env, 'moderator');
+  if (gate.error) return gate.error;
+  const rows = await env.STORE.listRecentItems(clamp(Number(url.searchParams.get('limit')) || 50, 1, 200));
+  return json({ items: await Promise.all(rows.map((row) => itemView(env.STORE, row))) });
+});
+
+/**
+ * Removes any post without the edit secret. The secret check in the ordinary
+ * DELETE route is untouched, so this is an addition to the ownership rule rather
+ * than a replacement of it: the author still needs their secret, staff do not.
+ */
+/**
+ * Removes a post and everything hanging off it: its files, any blob no other
+ * post still points at, and the plugin hook. Shared by the moderation queue and
+ * the report queue so that "снять" means the same thing wherever it is clicked;
+ * a takedown that left a file in KV would leak storage and keep serving the
+ * attachment at /f/<sha> long after the post is gone.
+ *
+ * `ctx` is the plugin context of whoever triggered it, so the hook still records
+ * the actor rather than an anonymous takedown.
+ */
+async function removeItemEverywhere(env, id, ctx) {
+  const { STORE, BLOBS } = env;
+  const row = await STORE.getItem(id);
+  if (!row) return false;
+  const before = await itemView(STORE, row);
+  for (const f of await STORE.listFiles(id)) {
+    await STORE.deleteFile(f.id);
+    if ((await STORE.otherRefsToSha(f.sha256, f.id)) === 0) await BLOBS.remove(f.sha256);
+  }
+  await STORE.deleteItem(id);
+  await env.PLUGINS.run('item:delete', before, ctx);
+  return true;
+}
+
+route('DELETE', /^\/api\/admin\/items\/([A-Za-z0-9]{4,16})$/, async (request, env, m) => {
+  const gate = await requireRole(request, env, 'moderator');
+  if (gate.error) return gate.error;
+  const removed = await removeItemEverywhere(env, m[1], ctxOf(request, env));
+  if (!removed) return fail(404, 'not found');
+  return json({ ok: true, removedBy: gate.who.user.id, moderator: !gate.admin });
+});
 
 route('GET', /^\/api\/users$/, async (request, env, _m, url) => {
   const q = url.searchParams;
@@ -625,8 +1102,10 @@ route('GET', /^\/api\/users\/([A-Za-z0-9_-]{3,32})\/following$/, async (request,
  */
 route('POST', /^\/api\/users\/([A-Za-z0-9_-]{3,32})\/follow$/, async (request, env, m) => {
   const id = await identity(request, env);
-  if (!id) return fail(401, 'login required to add friends');
-  const target = await env.STORE.getUser(m[1]);
+    if (!id) return fail(401, 'login required to add friends');
+    const bannedFollow = requireUnbanned(id);
+    if (bannedFollow) return bannedFollow;
+    const target = await env.STORE.getUser(m[1]);
   if (!target) return fail(404, 'no such user');
 
   const r = await env.STORE.followUser(id.user.id, target.id);
@@ -636,10 +1115,12 @@ route('POST', /^\/api\/users\/([A-Za-z0-9_-]{3,32})\/follow$/, async (request, e
 
 route('DELETE', /^\/api\/users\/([A-Za-z0-9_-]{3,32})\/follow$/, async (request, env, m) => {
   const id = await identity(request, env);
-  if (!id) return fail(401, 'login required');
-  const target = await env.STORE.getUser(m[1]);
-  if (!target) return fail(404, 'no such user');
-  await env.STORE.unfollowUser(id.user.id, target.id);
+    if (!id) return fail(401, 'login required');
+    const bannedUnfollow = requireUnbanned(id);
+    if (bannedUnfollow) return bannedUnfollow;
+    const target = await env.STORE.getUser(m[1]);
+    if (!target) return fail(404, 'no such user');
+    await env.STORE.unfollowUser(id.user.id, target.id);
   const fresh = await env.STORE.getUser(target.id);
   return json({ ok: true, following: false, user: publicUser(fresh, env) });
 });
@@ -647,20 +1128,24 @@ route('DELETE', /^\/api\/users\/([A-Za-z0-9_-]{3,32})\/follow$/, async (request,
 /** Like is a toggle: POST likes, DELETE unlikes, both idempotent. */
 route('POST', /^\/api\/items\/([A-Za-z0-9]{4,16})\/like$/, async (request, env, m) => {
   const id = await identity(request, env);
-  if (!id) return fail(401, 'login required');
-  const item = await env.STORE.getItem(m[1]);
-  if (!item) return fail(404, 'not found');
-  await env.STORE.likeItem(item.id, id.user.id);
+    if (!id) return fail(401, 'login required');
+    const bannedLike = requireUnbanned(id);
+    if (bannedLike) return bannedLike;
+    const item = await env.STORE.getItem(m[1]);
+    if (!item) return fail(404, 'not found');
+    await env.STORE.likeItem(item.id, id.user.id);
   const fresh = await env.STORE.getItem(item.id);
   return json({ liked: true, likes: fresh.likes || 0 });
 });
 
 route('DELETE', /^\/api\/items\/([A-Za-z0-9]{4,16})\/like$/, async (request, env, m) => {
   const id = await identity(request, env);
-  if (!id) return fail(401, 'login required');
-  const item = await env.STORE.getItem(m[1]);
-  if (!item) return fail(404, 'not found');
-  await env.STORE.unlikeItem(item.id, id.user.id);
+    if (!id) return fail(401, 'login required');
+    const bannedUnlike = requireUnbanned(id);
+    if (bannedUnlike) return bannedUnlike;
+    const item = await env.STORE.getItem(m[1]);
+    if (!item) return fail(404, 'not found');
+    await env.STORE.unlikeItem(item.id, id.user.id);
   const fresh = await env.STORE.getItem(item.id);
   return json({ liked: false, likes: fresh.likes || 0 });
 });
@@ -678,13 +1163,19 @@ route('GET', /^\/api\/items\/([A-Za-z0-9]{4,16})\/comments$/, async (request, en
       userId: r.author_id,
       // Lets the UI decide whether to offer delete without a second request.
       canDelete: !!viewer && viewer.user.id === r.author_id,
+      // Same two fields the post carries, so a comment author's mark matches
+      // the one on their publications.
+      popular: !!r.popular,
+      avatar: r.avatar_id ? `/a/${r.avatar_id}` : '',
     })),
   });
 });
 
 route('POST', /^\/api\/items\/([A-Za-z0-9]{4,16})\/comments$/, async (request, env, m) => {
   const id = await identity(request, env);
-  if (!id) return fail(401, 'login required to comment');
+    if (!id) return fail(401, 'login required to comment');
+    const bannedComment = requireUnbanned(id);
+    if (bannedComment) return bannedComment;
   const { STORE } = env;
   const c = config(env);
   const client = clientOf(request);
@@ -713,8 +1204,10 @@ route('POST', /^\/api\/items\/([A-Za-z0-9]{4,16})\/comments$/, async (request, e
 
 route('DELETE', /^\/api\/comments\/([A-Za-z0-9]{4,16})$/, async (request, env, m) => {
   const id = await identity(request, env);
-  if (!id) return fail(401, 'login required');
-  const row = await env.STORE.getComment(m[1]);
+    if (!id) return fail(401, 'login required');
+    const bannedCommentDelete = requireUnbanned(id);
+    if (bannedCommentDelete) return bannedCommentDelete;
+    const row = await env.STORE.getComment(m[1]);
   if (!row) return fail(404, 'no such comment');
   // The author, or the owner of the item being discussed, may delete.
   const isAuthor = row.user_id === id.user.id;
@@ -782,8 +1275,10 @@ route('POST', /^\/api\/items$/, async (request, env) => {
   // The daily budget is the product rule: 1 new item per day anonymous, 4 per
   // day registered. Counted from items, not from the throttle table, so it
   // survives isolate restarts.
-  const who = await identity(request, env);
-  const quota = quotaFor(who?.user, env);
+    const who = await identity(request, env);
+    const bannedPost = who ? requireUnbanned(who) : null;
+    if (bannedPost) return bannedPost;
+    const quota = quotaFor(who?.user, env);
   const usedToday = await newItemQuota(STORE, who?.user.id, id);
   if (usedToday >= quota.newItemsPerDay) {
     return fail(429, who
@@ -920,11 +1415,13 @@ route('PATCH', /^\/api\/items\/([A-Za-z0-9]{4,16})$/, async (request, env, m) =>
   const { STORE } = env;
   const c = config(env);
   const row = await STORE.getItem(m[1]);
-  if (!row) return fail(404, 'not found');
-  if (!(await ownSecret(request, row))) return fail(403, 'edit secret required');
-  if (!(await STORE.throttle(clientOf(request) || 'anon', 'write', { cap: c.writeCap, windowMs: 60_000 }))) {
-    return fail(429, 'write limit reached, try later');
-  }
+    if (!row) return fail(404, 'not found');
+    if (!(await ownSecret(request, row))) return fail(403, 'edit secret required');
+    const ban = await banOnItemWriter(request, env, m[1]);
+    if (ban) return bannedResponse(ban);
+    if (!(await STORE.throttle(clientOf(request) || 'anon', 'write', { cap: c.writeCap, windowMs: 60_000 }))) {
+      return fail(429, 'write limit reached, try later');
+    }
 
   let payload;
   try {
@@ -971,6 +1468,8 @@ route('DELETE', /^\/api\/items\/([A-Za-z0-9]{4,16})$/, async (request, env, m) =
   const row = await STORE.getItem(m[1]);
   if (!row) return fail(404, 'not found');
   if (!(await ownSecret(request, row))) return fail(403, 'edit secret required');
+  const ban = await banOnItemWriter(request, env, m[1]);
+  if (ban) return bannedResponse(ban);
 
   // snapshot before the files are gone, so the plugin still sees the full item
   const before = await itemView(STORE, row);
@@ -989,9 +1488,11 @@ route('POST', /^\/api\/items\/([A-Za-z0-9]{4,16})\/files$/, async (request, env,
   const c = config(env);
   const row = await STORE.getItem(m[1]);
   if (!row) return fail(404, 'not found');
-  const client = clientOf(request);
-  if (row.author !== client) return fail(403, 'not the author');
-  if (!(await STORE.throttle(client || 'anon', 'write', { cap: c.writeCap, windowMs: 60_000 }))) {
+    const client = clientOf(request);
+    if (row.author !== client) return fail(403, 'not the author');
+    const ban = await banOnItemWriter(request, env, m[1]);
+    if (ban) return bannedResponse(ban);
+    if (!(await STORE.throttle(client || 'anon', 'write', { cap: c.writeCap, windowMs: 60_000 }))) {
     return fail(429, 'write limit reached, try later');
   }
   if ((await STORE.listFiles(m[1])).length >= c.maxFilesPerItem) {
@@ -1039,9 +1540,11 @@ route('DELETE', /^\/api\/files\/([A-Za-z0-9]{4,16})$/, async (request, env, m) =
   if (!file) return fail(404, 'not found');
   const row = await STORE.getItem(file.itemId);
   if (!row) return fail(404, 'not found');
-  if (!(await ownSecret(request, row))) return fail(403, 'edit secret required');
-
-  await STORE.deleteFile(m[1]);
+    if (!(await ownSecret(request, row))) return fail(403, 'edit secret required');
+    const ban = await banOnItemWriter(request, env, file.itemId);
+    if (ban) return bannedResponse(ban);
+  
+    await STORE.deleteFile(m[1]);
   if ((await STORE.otherRefsToSha(file.sha256, m[1])) === 0) await BLOBS.remove(file.sha256);
   await env.PLUGINS.run('file:delete', file, ctxOf(request, env));
   return json({ ok: true });
@@ -1241,7 +1744,9 @@ export default {
 
     const method = request.method === 'HEAD' ? 'GET' : request.method;
 
-    if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/f/') || url.pathname.startsWith('/r/') || url.pathname.startsWith('/m/') || url.pathname === '/') {
+    if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/f/')
+        || url.pathname.startsWith('/r/') || url.pathname.startsWith('/m/')
+        || url.pathname.startsWith('/a/') || url.pathname === '/') {
       for (const r of routes) {
         if (r.method !== method) continue;
         const m = r.pattern.exec(url.pathname);

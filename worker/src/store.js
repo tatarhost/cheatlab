@@ -361,7 +361,10 @@ export class Store {
 
   async listComments(itemId, { limit = 50, offset = 0 } = {}) {
     return this.rows(
-      `SELECT c.*, u.nick, u.id AS author_id FROM comment c
+      // popular/avatar_id ride along on the join: the comment list is at most
+      // 100 rows, and a second per-author query to decorate them would cost more
+      // than two extra columns.
+      `SELECT c.*, u.nick, u.id AS author_id, u.popular, u.avatar_id FROM comment c
          JOIN user u ON u.id = c.user_id
         WHERE c.item_id = ?
         ORDER BY c.created_at ASC
@@ -524,7 +527,280 @@ export class Store {
       files: await one('SELECT COUNT(*) AS n FROM files'),
       bytes: await one('SELECT COALESCE(SUM(size), 0) AS n FROM files'),
       clients: await one('SELECT COUNT(*) AS n FROM clients'),
+      users: await one('SELECT COUNT(*) AS n FROM user'),
+      openReports: await one("SELECT COUNT(*) AS n FROM report WHERE status = 'open'"),
+      // Not routed through `one`, which takes no bind parameters: an active ban
+      // is one whose window has not closed and which nobody has lifted.
+      activeBans: Number(
+        (await this.db
+          .prepare('SELECT COUNT(*) AS n FROM ban WHERE until_at > ? AND lifted_at IS NULL')
+          .bind(Date.now())
+          .first())?.n,
+      ) || 0,
     };
+  }
+
+  /**
+   * Daily visitors and registrations for the last `days` days.
+   *
+   * Derived from `clients.created_at` and `user.created_at` rather than kept in
+   * a rollup table: a visitor is a client row and a registration is a user row,
+   * both of which are already the source of truth, so a cached counter here
+   * could only ever disagree with them. `created_at` is milliseconds, hence the
+   * /1000 before strftime.
+   *
+   * The window is truncated in JavaScript rather than in SQL because the two
+   * tables are read separately and merging them needs a date string either way.
+   */
+  async dailySeries(days = 30) {
+    const wanted = new Set();
+    const today = new Date();
+    for (let i = 0; i < Math.min(Math.max(1, days | 0), 366); i++) {
+      const d = new Date(today.getTime() - i * 86400000);
+      wanted.add(d.toISOString().slice(0, 10));
+    }
+
+    const group = async (table) => {
+      const rows = await this.db
+        .prepare(
+          `SELECT date(created_at / 1000, 'unixepoch') AS day, COUNT(*) AS n
+             FROM ${table} GROUP BY day`,
+        )
+        .all();
+      const map = {};
+      for (const r of rows.results || []) {
+        if (wanted.has(r.day)) map[r.day] = Number(r.n) || 0;
+      }
+      return map;
+    };
+
+    const [visitors, registrations] = await Promise.all([group('clients'), group('user')]);
+    return [...wanted]
+      .sort()
+      .map((day) => ({ day, visitors: visitors[day] || 0, registrations: registrations[day] || 0 }));
+  }
+
+  /* ------------------------------------------------------------ moderation -- */
+
+  /**
+   * The account's standing, as stored. Returns 'moderator' or 'user' only:
+   * 'admin' is the ADMIN_IDS environment var and cannot be granted by writing
+   * a row, so a lifted database cannot hand out full admin.
+   */
+  async roleOf(userId) {
+    if (!userId) return 'user';
+    const row = await this.db
+      .prepare("SELECT role FROM user WHERE id = ? AND role = 'moderator'")
+      .bind(userId)
+      .first();
+    return row ? 'moderator' : 'user';
+  }
+
+  /**
+   * An active ban, or null.
+   *
+   * Only un-lifted rows whose window has not closed count. A ban with a past
+   * `until_at` is expired by arithmetic and needs no cleanup job to disappear,
+   * so a missed sweep can never leave someone locked out.
+   */
+  async activeBan(userId) {
+    if (!userId) return null;
+    return this.db
+      .prepare(
+        `SELECT id, user_id, until_at, reason, by_user_id, created_at FROM ban
+          WHERE user_id = ? AND lifted_at IS NULL AND until_at > ?
+          ORDER BY until_at DESC LIMIT 1`,
+      )
+      .bind(userId, Date.now())
+      .first();
+  }
+
+  async createBan({ id, userId, untilAt, reason = '', byUserId = '' }) {
+    await this.db
+      .prepare(
+        `INSERT INTO ban (id, user_id, until_at, reason, by_user_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(id, userId, untilAt, reason, byUserId, Date.now())
+      .run();
+    return this.activeBan(userId);
+  }
+
+  /** Lifts every active ban on a user and records who did it. */
+  async liftBans(userId, byUserId = '') {
+    const res = await this.db
+      .prepare(
+        `UPDATE ban SET lifted_at = ?, lifted_by = ?
+          WHERE user_id = ? AND lifted_at IS NULL`,
+      )
+      .bind(Date.now(), byUserId, userId)
+      .run();
+    return Number(res?.meta?.changes ?? 0) || 0;
+  }
+
+  async listBans(limit = 100) {
+    const { results } = await this.db
+      .prepare(
+        `SELECT b.*, u.nick FROM ban b LEFT JOIN user u ON u.id = b.user_id
+          ORDER BY b.until_at DESC LIMIT ?`,
+      )
+      .bind(limit)
+      .all();
+    return results || [];
+  }
+
+  /* ---------------------------------------------------------- blocked nicks */
+
+  /** True when a folded nick is on the operator's block list. */
+  async nickBlocked(nickKey) {
+    if (!nickKey) return false;
+    const row = await this.db
+      .prepare('SELECT 1 AS hit FROM nick_block WHERE nick_key = ?')
+      .bind(nickKey)
+      .first();
+    return !!row;
+  }
+
+  async blockNick({ nickKey, nick, reason = '', byUserId = '' }) {
+    await this.db
+      .prepare(
+        `INSERT INTO nick_block (nick_key, nick, reason, by_user_id, created_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(nick_key) DO UPDATE SET reason = excluded.reason, by_user_id = excluded.by_user_id`,
+      )
+      .bind(nickKey, nick, reason, byUserId, Date.now())
+      .run();
+    return { nickKey, nick, reason };
+  }
+
+  async unblockNick(nickKey) {
+    const res = await this.db.prepare('DELETE FROM nick_block WHERE nick_key = ?').bind(nickKey).run();
+    return Number(res?.meta?.changes ?? 0) || 0;
+  }
+
+  async listNickBlocks(limit = 200) {
+    const { results } = await this.db
+      .prepare('SELECT * FROM nick_block ORDER BY created_at DESC LIMIT ?')
+      .bind(limit)
+      .all();
+    return results || [];
+  }
+
+  /* ---------------------------------------------------------------- reports */
+
+  async createReport({ id, targetType, targetId, reason, details = '', byUserId = '', byClient = '' }) {
+    await this.db
+      .prepare(
+        `INSERT INTO report (id, target_type, target_id, reason, details, by_user_id, by_client, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)`,
+      )
+      .bind(id, targetType, targetId, reason, details, byUserId, byClient, Date.now())
+      .run();
+    return { id, status: 'open' };
+  }
+
+  async listReports({ status = null, limit = 100 } = {}) {
+    const { results } = status
+      ? await this.db
+          .prepare('SELECT * FROM report WHERE status = ? ORDER BY created_at DESC LIMIT ?')
+          .bind(status, limit)
+          .all()
+      : await this.db.prepare('SELECT * FROM report ORDER BY created_at DESC LIMIT ?').bind(limit).all();
+    return results || [];
+  }
+
+  /**
+   * One report, by id. The moderation console needs the target to act on it, so
+   * the row is read before the status changes: after a resolve the target is
+   * still there, but the question "what was this about?" no longer has an open
+   * report to ask.
+   */
+  async getReport(id) {
+    return this.db.prepare('SELECT * FROM report WHERE id = ?').bind(id).first();
+  }
+
+  async resolveReport({ id, status, byUserId = '' }) {
+    const res = await this.db
+      .prepare('UPDATE report SET status = ?, resolved_at = ?, resolved_by = ? WHERE id = ?')
+      .bind(status, Date.now(), byUserId, id)
+      .run();
+    return (Number(res?.meta?.changes ?? 0) || 0) > 0;
+  }
+
+  /* --------------------------------------------------------------- profiles */
+
+  /**
+   * Points a profile at an uploaded avatar, and reports the id it displaced so
+   * the caller can drop the orphaned blob. Passing an empty id clears the
+   * avatar, so removal needs no separate code path.
+   */
+  async setAvatar(userId, avatarId, mime = '') {
+    const previous = await this.db
+      .prepare('SELECT avatar_id FROM user WHERE id = ?')
+      .bind(userId)
+      .first();
+    await this.db
+      .prepare('UPDATE user SET avatar_id = ?, avatar_mime = ? WHERE id = ?')
+      .bind(avatarId || '', mime || '', userId)
+      .run();
+    return { user: await this.getUser(userId), previous: previous?.avatar_id || '' };
+  }
+
+  async setRole(userId, role) {
+    // Guarded to the two values the column may hold. 'admin' is not a value
+    // here on purpose: full admin is the env var, not a row.
+    const safe = role === 'moderator' ? 'moderator' : 'user';
+    await this.db.prepare('UPDATE user SET role = ? WHERE id = ?').bind(safe, userId).run();
+    return this.getUser(userId);
+  }
+
+  async setPopular(userId, on) {
+    await this.db
+      .prepare('UPDATE user SET popular = ? WHERE id = ?')
+      .bind(on ? 1 : 0, userId)
+      .run();
+    return this.getUser(userId);
+  }
+
+  /**
+   * Admin user search.
+   *
+   * Deliberately a different method from the public `searchUsers` above, not an
+   * option on it. The public one returns a narrow column list and hides the
+   * caller's own row; this one selects `*` so the moderation panel sees role,
+   * popular and avatar state, and it does not exclude the caller - an operator
+   * searching for themselves has to be able to find themselves.
+   */
+  async adminSearchUsers(q, limit = 50) {
+    const term = String(q || '').trim();
+    if (!term) {
+      const { results } = await this.db
+        .prepare('SELECT * FROM user ORDER BY created_at DESC LIMIT ?')
+        .bind(limit)
+        .all();
+      return results || [];
+    }
+    // Bound as a parameter, and LIKE wildcards inside the term are stripped so
+    // a search for "%%" is a literal search rather than a table scan.
+    const like = `%${term.replace(/[%_]/g, '')}%`;
+    const { results } = await this.db
+      .prepare(
+        `SELECT * FROM user
+          WHERE id = ? OR nick_key = ? OR lower(nick) LIKE lower(?)
+          ORDER BY created_at DESC LIMIT ?`,
+      )
+      .bind(term, term, like, limit)
+      .all();
+    return results || [];
+  }
+
+  /** Recent posts across every author, for the moderation queue. */
+  async listRecentItems(limit = 50) {
+    const { results } = await this.db
+      .prepare('SELECT * FROM items ORDER BY created_at DESC LIMIT ?')
+      .bind(limit)
+      .all();
+    return results || [];
   }
 
   /**

@@ -11,6 +11,7 @@
   --fog-2: #202020;
   --line: #333333;
   --mute: #8f8f8f;
+  --danger: #e2564a;
   --sans: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: "SFMono-Regular", "Cascadia Mono", Consolas, "Liberation Mono", monospace;
   --rail: 236px;
@@ -23,6 +24,7 @@
   --fog-2: #e8e8e8;
   --line: #d4d4d4;
   --mute: #6f6f6f;
+  --danger: #a3311f;
 }
 
 * { box-sizing: border-box; }
@@ -136,12 +138,15 @@ p { margin: 0; }
 .view { flex: 1; padding: 34px 32px 60px; max-width: 1080px; width: 100%; }
 
 .foot {
-  display: flex; gap: 18px; align-items: center;
+  display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: center;
   padding: 16px 32px; border-top: 1px solid var(--line);
   font: 12px var(--mono); color: var(--mute);
 }
 /* deslop-ignore-next-line 09 footer link, not decoration */
 .foot a { text-decoration: underline; text-underline-offset: 3px; }
+/* The legal documents are grouped, not strung across the row: they are read
+   once and referred to by name, and a word cloud in a footer is neither. */
+.foot-links { display: flex; flex-wrap: wrap; gap: 14px; margin-left: auto; }
 
 /* ---- controls ---- */
 .btn {
@@ -248,6 +253,8 @@ p { margin: 0; }
   font: 500 11px/1 var(--sans); letter-spacing: 0.07em; text-transform: uppercase;
 }
 .pill-mute { color: var(--mute); }
+/* A ban is the one status that must not read as decoration. */
+.pill-danger { color: var(--danger); }
 
 .empty { padding: 56px 0; text-align: left; }
 .empty h2 { margin-bottom: 8px; }
@@ -414,6 +421,41 @@ a.stat-box:hover .stat-label { color: var(--ink); }
 .stat-label { font-size: 11px; color: var(--mute); transition: color 0.12s linear; }
 .rows { display: block; }
 
+/* A moderation queue row carries text, then status, then the actions for that
+   one row. Actions sit at the end and wrap rather than being pinned to a fixed
+   column, because a narrow phone is the only place the queue gets read while
+   actually doing something about it. */
+.queue-row {
+  display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center;
+  padding: 12px 4px; border-bottom: 1px solid var(--line);
+}
+.queue-row:last-child { border-bottom: 0; }
+.queue-row p { margin: 4px 0 0; }
+.queue-row strong { font-weight: 500; }
+.queue-row .btn { flex: 0 0 auto; }
+
+/* Legal prose: a measure that stays readable and a section rhythm, since these
+   pages are read rather than scanned. */
+.legal { max-width: 68ch; }
+.legal section { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.legal h2 { margin: 0 0 8px; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.legal p { margin: 0 0 10px; color: var(--ink); }
+.legal .page-sub, .legal .hint { color: var(--mute); }
+
+/* Avatar preview next to its own file input. */
+.avatar-picker { flex: 0 0 auto; display: flex; align-items: center; }
+
+/* Comments sit at the end of the post column, separated by a rule rather than a
+   card: they are the tail of the publication, not a second document. */
+.textarea-short { min-height: 76px; }
+.comment-list { margin-top: 18px; border-top: 1px solid var(--line); }
+.comment { padding: 14px 4px; border-bottom: 1px solid var(--line); }
+.comment-head { display: inline-flex; align-items: center; gap: 8px; color: inherit; }
+.comment-head:hover { text-decoration: none; }
+.comment-head:hover .comment-nick { text-decoration: underline; text-underline-offset: 3px; }
+.comment-nick { font-weight: 500; }
+.comment-body { margin: 8px 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
 /* ---- locked publications ----
    The lock screen is deliberately not a modal: the title, tags and counters
    around it are public, and hiding them would break the feed-to-post link that
@@ -465,6 +507,16 @@ a.stat-box:hover .stat-label { color: var(--ink); }
   font: 11px var(--mono); text-transform: lowercase; color: var(--ink);
 }
 .admin-badge-sm { margin-left: 0; padding: 1px 4px; }
+
+/* The operator's editorial mark, kept visually distinct from "admin": one is a
+   claim about a person, the other is a claim about their access. */
+.popular-badge {
+  display: inline-flex; align-items: center; gap: 4px; vertical-align: middle;
+  margin-left: 6px; padding: 2px 7px; border: 1px dashed var(--mute);
+  font: 11px var(--mono); text-transform: lowercase; color: var(--mute);
+}
+.popular-badge-sm { margin-left: 0; padding: 1px 4px; }
+
 .design-row { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 14px; }
 .design-row .field { flex: 1 1 200px; margin-top: 0; }
 .design-row .label { display: inline-flex; align-items: center; gap: 6px; }

@@ -194,11 +194,16 @@ export function adminOf(env, id) {
 /** Public shape of a user. Never includes any credential material. */
 export function publicUser(row, env) {
   if (!row) return null;
+  const avatar = str(row.avatar_id, 32);
   return {
     id: row.id,
     nick: row.nick,
     bio: str(row.bio, 200),
     logo: str(row.logo, 300),
+    // An uploaded avatar is a server-minted id the client turns into /a/<id>.
+    // It is exposed separately from `logo` so the client can prefer it without
+    // having to tell an operator-controlled path from a third-party URL.
+    avatar: avatar ? `/a/${avatar}` : '',
     accent: str(row.accent, 16),
     bg: str(row.bg, 120),
     followers: Number(row.followers) || 0,
@@ -206,6 +211,11 @@ export function publicUser(row, env) {
     posts: Number(row.posts) || 0,
     createdAt: Number(row.created_at) || 0,
     admin: adminOf(env, row.id),
+    // 'moderator' or 'user'. Never 'admin': full admin is the env var above.
+    role: row.role === 'moderator' ? 'moderator' : 'user',
+    // Admin-set mark for a popular author. Not a claim of any kind the site
+    // verifies by itself - it says an operator picked this account out.
+    popular: Number(row.popular) === 1,
   };
 }
 

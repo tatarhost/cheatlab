@@ -74,6 +74,24 @@ class Element extends Node {
   querySelectorAll() { return []; }
   getBoundingClientRect() { return { top: 0, left: 0, width: 0, height: 0 }; }
   focus() {} blur() {} select() {} contains() { return false; }
+  /**
+   * A form control's value, the way a browser reports it.
+   *
+   * A SELECT with no selection answers with its first option, which is how
+   * every select in the app is meant to be read: the default is the first
+   * choice and the markup never marks one selected. Returning undefined here
+   * instead would make every select-driven form submit an empty value and fail
+   * for a reason that has nothing to do with the view under test.
+   */
+  get value() {
+    if (this._value !== undefined) return this._value;
+    if (this.tagName === 'SELECT') {
+      const first = this.children.find((c) => c && c.tagName === 'OPTION');
+      return first ? first.getAttribute('value') ?? '' : '';
+    }
+    return '';
+  }
+  set value(v) { this._value = String(v); }
 }
 class TextNode extends Node {
   constructor(t) { super(); this.nodeType = 3; this.textContent = String(t); }
@@ -209,6 +227,10 @@ await as('e2efan0000000001', `/api/users/${authorId}/follow`, { method: 'POST', 
 async function boot(route, { client, session, editKeys = {}, accessKeys = {} } = {}) {
   const [path, search = ''] = route.split('?');
   const view = new Element('main');
+  // Queued answers for window.prompt/confirm, drained in order. The moderation
+  // console asks for a ban length and a reason through prompts, and a stub that
+  // returned nothing would make those actions look inert rather than wrong.
+  const answers = [];
   const byId = new Map();
   for (const m of appHtml.matchAll(/\sid="([^"]+)"/g)) byId.set(m[1], new Element('div'));
   byId.set('app', new Element('body'));
@@ -245,16 +267,35 @@ async function boot(route, { client, session, editKeys = {}, accessKeys = {} } =
     visibilityState: 'visible',
   };
 
+  // `location` is mutable on purpose and `pushState` really moves it, because
+  // `navigate()` is pushState + route(). With a no-op stub, any redirect -
+  // a signed-out visitor sent to /auth, say - would re-render the same route and
+  // recurse until the stack runs out, which looks exactly like a bug in the view
+  // that did the redirecting.
+  const loc = {
+    href: `https://tatarhost.github.io/cheatlab${route}`,
+    pathname: `/cheatlab${path}`.replace(/\/+$/, '') || '/cheatlab',
+    search: search ? `?${search}` : '',
+    hash: '', origin: 'https://tatarhost.github.io',
+    assign(next) { this.href = next; route_(this); },
+    replace(next) { this.href = next; route_(this); },
+    reload() {},
+  };
+  function route_(l) {
+    const u = new URL(l.href, loc.origin);
+    l.pathname = u.pathname;
+    l.search = u.search;
+    l.hash = u.hash;
+  }
+
   const sandbox = {
     document, Node, Element,
-    location: {
-      href: `https://tatarhost.github.io/cheatlab${route}`,
-      pathname: `/cheatlab${path}`.replace(/\/+$/, '') || '/cheatlab',
-      search: search ? `?${search}` : '',
-      hash: '', origin: 'https://tatarhost.github.io',
-      assign() {}, replace() {}, reload() {},
+    location: loc,
+    history: {
+      state: null,
+      pushState(_s, _t, url) { if (url) route_(Object.assign(loc, { href: new URL(url, loc.origin + loc.pathname).href })); },
+      replaceState(_s, _t, url) { if (url) route_(Object.assign(loc, { href: new URL(url, loc.origin + loc.pathname).href })); },
     },
-    history: { pushState() {}, replaceState() {}, state: null },
     localStorage: {
       getItem: (k) => (local.has(k) ? local.get(k) : null),
       setItem: (k, v) => local.set(k, String(v)),
@@ -277,13 +318,22 @@ async function boot(route, { client, session, editKeys = {}, accessKeys = {} } =
       return res;
     },
     Response, Request, Headers, URL, URLSearchParams, TextEncoder, TextDecoder,
+    // Standard globals the app's upload path touches. Without them `api()` would
+    // throw on a reference rather than on a request, which is how a whole view
+    // can fail to render for a reason that has nothing to do with the view.
+    Blob, ArrayBuffer, Uint8Array, File, FormData,
+    // Browsers have all three; without them a view that asks the operator a
+    // question would throw a ReferenceError instead of asking it.
+    prompt: () => (answers.length ? answers.shift() : null),
+    confirm: () => (answers.length ? !!answers.shift() : false),
+    alert: () => {},
     setTimeout, clearTimeout, setInterval, clearInterval, queueMicrotask,
     crypto: globalThis.crypto,
     btoa: (s) => Buffer.from(s, 'binary').toString('base64'),
     // console.log/warn are muted because the app logs on every route; error is
     // left on, since a swallowed exception is how a click handler can fail to do
     // anything at all while every check still passes.
-    console: { ...console, log: () => {}, warn: () => {} },
+    console: { ...console, log: process.env.VIEWS_TRACE ? console.log : () => {}, warn: () => {} },
     performance: { now: () => 0 },
     matchMedia: () => ({ matches: false, addEventListener() {}, addListener() {} }),
     IntersectionObserver: class { observe() {} unobserve() {} disconnect() {} },
@@ -307,9 +357,14 @@ async function boot(route, { client, session, editKeys = {}, accessKeys = {} } =
   }
   return {
     text: textOf(view).join(' '),
+    // Re-reads the view after an action. `text` is a snapshot taken at boot, so
+    // it cannot see anything a click or a submit rendered afterwards.
+    read: () => textOf(view).join(' '),
     hrefs: hrefsOf(view),
     view,
     local,
+    /** Queues the answers the next prompt()/confirm() calls will receive. */
+    answer: (...v) => answers.push(...v),
     toast: () => textOf(byId.get('toast')).join(' '),
   };
 }
@@ -438,11 +493,168 @@ for (const [route, needle, why] of [
   ['/scripts', '', 'the scripts feed'],
   ['/pastes', 'открытая заметка', 'the pastes feed'],
   ['/images', '', 'an empty media feed'],
+  ['/rules', 'нарушающий закон', 'the rules page'],
+  ['/terms', 'без гарантий', 'the terms page'],
+  ['/privacy', 'Пароль не хранится', 'the privacy page'],
+  ['/report', 'Причина', 'the report page'],
 ]) {
   const page = await boot(route, { client: 'e2eguest000000001' });
   check(`${why} is not the 404 page`, !page.text.includes('Страница не найдена'), page.text.slice(0, 160));
   if (needle) check(`${why} shows its content`, page.text.includes(needle), page.text.slice(0, 200));
 }
+
+/* ------------------------------------------------------- legal and reports --
+ * The footer carries the documents, and the report form has to accept a
+ * complaint from a signed-out visitor, because that is the whole point of a
+ * takedown route: the person with the problem usually has no account. */
+
+// The footer is static markup in index.html, which the DOM stub does not parse,
+// so its links are asserted against the file itself rather than a render. They
+// have to be relative: <base href="/cheatlab/"> is what puts a leading-slash link
+// outside the project on GitHub Pages.
+for (const doc of ['rules', 'terms', 'privacy', 'report']) {
+  check(`index.html links to ${doc}`, appHtml.includes(`href="${doc}"`), 'no such href in index.html');
+}
+
+const guestReport = await boot('/report?id=' + openId, { client: 'e2eguest000000001' });
+const reportForm = findAll(guestReport.view, (el) => el.tagName === 'FORM')[0];
+check('the report form can be submitted without an account', Boolean(reportForm));
+// The id is pre-filled from ?id=, but the field is typed into the way a person
+// would, so the query string is not what makes this pass.
+const reportId = findAll(reportForm || new Element(), (el) => el.tagName === 'INPUT')[0];
+if (reportId) reportId.value = openId;
+if (reportForm) reportForm.submit();
+await new Promise((r) => setTimeout(r, 80));
+check('a guest complaint is accepted and numbered', guestReport.read().includes('Номер обращения'), guestReport.read().slice(0, 240));
+
+env.ADMIN_IDS = authorId;
+// The session is the author's, so the queue is read as the author: a session is
+// bound to its client, and borrowing it from another client is refused as signed
+// out rather than as unauthorised.
+const filed = await as('e2eauthor0000001', '/api/admin/reports', { session: token });
+check('and it lands in the moderation queue', filed.status === 200 && filed.json.reports.length > 0,
+  `${filed.status} ${filed.text.slice(0, 160)}`);
+
+// The same form has to be reachable from a post, because that is where the
+// reader is when they decide something is wrong.
+const postReport = await boot(`/i/${openId}`, { client: 'e2eguest000000001' });
+check('a post page offers the complaint action',
+  findAll(postReport.view, (el) => el.tagName === 'BUTTON'
+    && textOf(el).join(' ').includes('Пожаловаться')).length > 0,
+  postReport.text.slice(0, 240));
+
+/* ------------------------------------------------------------------ admin --
+ * The console is the part of Phase 1 a moderator actually uses, so it is booted
+ * as a moderator with a queued complaint rather than only checked for not
+ * throwing. */
+
+// Signed out, the console redirects to /auth rather than describing itself: the
+// stub's history now really moves, so this checks the redirect and not a loop.
+const signedOut = await boot('/admin', { client: 'e2eguest000000001' });
+check('a signed-out visitor is sent to the auth page', signedOut.text.includes('Войти'), signedOut.text.slice(0, 240));
+
+const denied = await boot('/admin', { client: 'e2efan0000000001', session: fan.json.token });
+check('a signed-in stranger is refused the console',
+  denied.text.includes('Модерация') && denied.text.includes('администраторам и модераторам'), denied.text.slice(0, 240));
+check('and is shown no queue', !denied.text.includes('Жалобы ('), denied.text.slice(0, 240));
+
+const modQueue = await boot('/admin', { client: 'e2eauthor0000001', session: token });
+check('an admin sees the reports queue', modQueue.text.includes('Жалобы ('), modQueue.text.slice(0, 300));
+check('and the queued complaint is in it', modQueue.text.includes('Жалобы (1)'), modQueue.text.slice(0, 300));
+check('with the capability summary for a full admin',
+  modQueue.text.includes('Полный доступ'), modQueue.text.slice(0, 300));
+check('the tabs are a tablist', findAll(modQueue.view, (el) => el.tagName === 'BUTTON'
+  && (el.attributes || {}).role === 'tab').length === 4, modQueue.text.slice(0, 200));
+
+for (const [route, needle, why] of [
+  ['/admin/items', 'Последние публикации', 'the moderation item queue'],
+  ['/admin/users', 'Поиск аккаунта', 'the account queue'],
+  ['/admin/nicks', 'Заблокированные ники', 'the nick block list'],
+]) {
+  const page = await boot(route, { client: 'e2eauthor0000001', session: token });
+  check(`${why} renders`, page.text.includes(needle) && !page.text.includes('Страница не найдена'), page.text.slice(0, 240));
+}
+
+// A moderator is not an admin, and the console has to say so rather than offer
+// a role button that the Worker will refuse. The fan is promoted first, so the
+// console is then booted as somebody who is genuinely a moderator and no admin.
+const promoted = await as('e2eauthor0000001', `/api/admin/users/${fan.json.user.id}/role`, {
+  method: 'POST', session: token, body: { role: 'moderator' },
+});
+check('the fan is now a moderator', promoted.status === 200 && promoted.json.user.role === 'moderator',
+  `${promoted.status} ${promoted.text.slice(0, 160)}`);
+
+env.ADMIN_IDS = '';
+const modNicks = await boot('/admin/nicks', { client: 'e2efan0000000001', session: fan.json.token });
+check('a moderator is told the nick block list is admin-only',
+  modNicks.text.includes('только администратору'), modNicks.text.slice(0, 240));
+const modUsers = await boot('/admin/users', { client: 'e2efan0000000001', session: fan.json.token });
+check('a moderator gets the account queue', modUsers.text.includes('Поиск аккаунта'), modUsers.text.slice(0, 240));
+check('and is offered no role control',
+  !findAll(modUsers.view, (el) => el.tagName === 'BUTTON'
+    && textOf(el).join(' ').includes('модератором')).length, modUsers.text.slice(0, 240));
+const modHome = await boot('/admin', { client: 'e2efan0000000001', session: fan.json.token });
+check('and sees the moderator scope, not the admin one',
+  modHome.text.includes('Модератор:') && !modHome.text.includes('Полный доступ'), modHome.text.slice(0, 300));
+
+/* ------------------------------------ banning through the console, end to end */
+
+// The ban is the only Phase 1 action with a real consequence for a person, so
+// it is driven from the queue rather than only asserted against the API.
+env.ADMIN_IDS = authorId;
+const banQueue = await boot('/admin/users', { client: 'e2eauthor0000001', session: token });
+const searchBox = findAll(banQueue.view, (el) => el.tagName === 'INPUT')[0];
+if (searchBox) searchBox.value = 'fan';
+buttonWithLabel(banQueue.view, 'Найти').click();
+await new Promise((r) => setTimeout(r, 60));
+const found = banQueue.read();
+check('the queue finds the account', found.includes('fan') && !found.includes('author'), found.slice(0, 300));
+
+// The console asks for the term and then the reason; both come from the queue.
+banQueue.answer('1', 'спам');
+buttonWithLabel(banQueue.view, 'Забанить').click();
+await new Promise((r) => setTimeout(r, 100));
+check('the account comes back marked as banned', banQueue.read().includes('забанен'), banQueue.read().slice(0, 300));
+const blockedWrite = await as('e2efan0000000001', '/api/items', {
+  method: 'POST', session: fan.json.token, body: { type: 'paste', title: 'после бана', body: 'x' },
+});
+check('and a banned account cannot publish', blockedWrite.status === 403, `${blockedWrite.status} ${blockedWrite.text.slice(0, 120)}`);
+check('with the reason shown to it', blockedWrite.text.includes('спам'), blockedWrite.text.slice(0, 200));
+
+const unban = await as('e2eauthor0000001', `/api/admin/users/${fan.json.user.id}/ban`, {
+  method: 'DELETE', session: token,
+});
+check('a ban can be lifted again', unban.status === 200 || unban.status === 204, `${unban.status} ${unban.text.slice(0, 160)}`);
+const afterUnban = await as('e2efan0000000001', '/api/items', {
+  method: 'POST', session: fan.json.token, body: { type: 'paste', title: 'после снятия бана', body: 'x' },
+});
+check('and the account publishes again', afterUnban.status === 201, `${afterUnban.status} ${afterUnban.text.slice(0, 160)}`);
+const fanItemId = afterUnban.json && afterUnban.json.item && afterUnban.json.item.id;
+
+// The popular mark has to be visible on the publication, not only in the queue
+// where it was set: it is a claim about an author, made to readers.
+const popular = await as('e2eauthor0000001', `/api/admin/users/${authorId}/popular`, {
+  method: 'POST', session: token, body: { popular: true },
+});
+check('the popular mark is set', popular.status === 200 && popular.json.user.popular === true,
+  `${popular.status} ${popular.text.slice(0, 160)}`);
+check('a post by a popular author carries the mark',
+  (await boot(`/i/${openId}`, { client: 'e2eguest000000001' })).text.includes('популярный'), openId);
+check('and a post by anyone else does not',
+  fanItemId ? !(await boot(`/i/${fanItemId}`, { client: 'e2eguest000000001' })).text.includes('популярный')
+    : 'the fan could not publish a post to check', fanItemId || 'no fan post');
+await as('e2eauthor0000001', `/api/admin/users/${authorId}/popular`, {
+  method: 'POST', session: token, body: { popular: false },
+});
+
+const resolveBtn = buttonWithLabel(modQueue.view, 'Снять');
+if (resolveBtn) resolveBtn.click();
+await new Promise((r) => setTimeout(r, 100));
+check('resolving a complaint takes the post down',
+  (await as('e2eguest000000001', `/api/items/${openId}`)).status === 404,
+  'the item is still there after the report was upheld');
+
+env.ADMIN_IDS = '';
 
 const unknown = await boot('/nope', { client: 'e2eguest000000001' });
 check('an unknown route really is the 404 page', unknown.text.includes('Страница не найдена'), unknown.text.slice(0, 160));

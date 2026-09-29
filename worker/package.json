@@ -5,9 +5,10 @@
   "type": "module",
   "description": "CHEATLAB API — Cloudflare Worker, D1 metadata, R2 blobs",
   "scripts": {
-    "test": "node --experimental-sqlite test/worker.test.mjs && node --experimental-sqlite test/auth.test.mjs && node --experimental-sqlite test/client.test.mjs && node --experimental-sqlite test/views.e2e.mjs",
+    "test": "node --experimental-sqlite test/worker.test.mjs && node --experimental-sqlite test/auth.test.mjs && node --experimental-sqlite test/moderation.test.mjs && node --experimental-sqlite test/client.test.mjs && node --experimental-sqlite test/views.e2e.mjs",
     "test:legacy": "node --experimental-sqlite test/worker.test.mjs",
     "test:auth": "node --experimental-sqlite test/auth.test.mjs",
+    "test:moderation": "node --experimental-sqlite test/moderation.test.mjs",
     "test:client": "node --experimental-sqlite test/client.test.mjs",
     "test:views": "node --experimental-sqlite test/views.e2e.mjs",
     "dev": "wrangler dev",

@@ -277,11 +277,20 @@ async function api(path, { method = 'GET', body, secret, key, signal, noAuth, he
   // Sent on everything except the endpoints that establish or end a session, so
   // a stale token cannot make a fresh login look signed-in.
   if (session && !noAuth) headers['x-cheatlab-session'] = session.token;
-  if (body !== undefined) headers['content-type'] = 'application/json';
+    // A Blob or ArrayBuffer is a file upload: it carries its own content-type in
+    // the blob's type, and JSON.stringify would turn the bytes into "[object
+    // Blob]". Only a plain value is JSON, and only then does the helper set a
+    // content-type, so an upload's declared type is what actually reaches the API.
+    // `typeof` guards rather than plain `instanceof`, because this helper also
+    // runs where the global is absent and a bare reference would throw before the
+    // request is even made.
+    const isBlob = (typeof Blob !== 'undefined' && body instanceof Blob)
+      || (typeof ArrayBuffer !== 'undefined' && body instanceof ArrayBuffer);
+  if (body !== undefined && !isBlob) headers['content-type'] = 'application/json';
   const res = await fetch(API + path, {
     method,
     headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: body === undefined ? undefined : isBlob ? body : JSON.stringify(body),
     signal,
   });
   const text = await res.text();
@@ -725,11 +734,16 @@ function avatarFor(user, size) {
     class: 'avatar',
     style: `width:${size}px;height:${size}px;font-size:${Math.round(size * 0.45)}px`,
   }, letter);
-  if (!user.logo) return box;
+  // An uploaded avatar is served by our own API rather than hotlinked from
+  // somewhere else, so it cannot be blocked or go away: the account's own bytes,
+  // on the same host as the profile. It wins over the `logo` URL field, which
+  // stays available for people pointing at an image they already host.
+  const src = user.avatar ? API + user.avatar : user.logo;
+  if (!src) return box;
   // The letter stays underneath and simply gets covered, so a failed load needs
   // no DOM change at all: a hotlinked logo can 404 or be blocked at any time.
   box.prepend(h('img', {
-    class: 'avatar-img', src: user.logo, alt: '', loading: 'lazy', decoding: 'async',
+    class: 'avatar-img', src, alt: '', loading: 'lazy', decoding: 'async',
   }));
   return box;
 }
@@ -1085,7 +1099,18 @@ async function viewItem(id) {
         h('a', { class: 'author-link', href: `/u/${owner.id}` },
           avatarFor(owner, 40),
           h('span', {},
-            h('span', { class: 'author-nick', text: owner.nick }),
+            h('span', { class: 'author-nick' },
+              h('span', { text: owner.nick }),
+              // The editorial mark sits next to the name, not in the sidebar:
+              // the reason someone is popular is who they are, and it should be
+              // visible where the post is read.
+              owner.popular
+                ? h('span', {
+                    class: 'popular-badge', title: 'Популярный автор',
+                    'aria-label': 'популярный автор',
+                  }, icon('star', 'i i-sm'), ' популярный')
+                : null,
+            ),
             h('span', { class: 'author-sub', text: 'автор публикации' }),
           ),
         ),
@@ -1152,6 +1177,13 @@ async function viewItem(id) {
             } catch (err) { toast(err.message, true); }
           },
         }, icon('trash', 'i i-sm'), 'Удалить') : null,
+        // Available to the author too: reporting your own post is how you ask
+        // for it to be taken down without deleting it, and a moderator acting on
+        // a report leaves the trail that makes the queue auditable.
+        h('button', {
+          class: 'btn btn-sm btn-ghost',
+          onclick: () => fileReport('item', item.id, `публикацию «${item.title}»`),
+        }, icon('alert', 'i i-sm'), 'Пожаловаться'),
       ),
       secret ? null : h('p', { class: 'hint', style: 'margin-top:12px', text: 'Публикация создана в другом браузере — ключ редактирования здесь недоступен.' }),
     ),
@@ -1174,10 +1206,122 @@ async function viewItem(id) {
         gated ? lockScreen() : media,
         gated ? null : files,
         gated ? null : body,
+        gated ? null : commentsPanel(item),
       ),
       sidebar,
     ),
   );
+}
+
+/**
+ * Comments. The API has had them for a while, but nothing rendered them, which
+ * left the report dialog's "комментарий" target with no ID to point at.
+ *
+ * Rendering it here rather than behind a tab keeps the reading position: a
+ * comment is part of the post, and a reader who has to go somewhere else to see
+ * that anyone replied has already lost the thread.
+ */
+function commentsPanel(item) {
+  const panel = h('section', { class: 'panel' });
+  const list = h('div', { class: 'comment-list' });
+  const count = h('span', { class: 'pill pill-mute' });
+
+  const load = async () => {
+    try {
+      const { comments } = await api(`/api/items/${item.id}/comments`);
+      count.textContent = String(comments.length);
+      list.replaceChildren(...(comments.length
+        ? comments.map((c) => h('div', { class: 'comment' },
+            h('a', { class: 'comment-head', href: c.userId ? `/u/${c.userId}` : null },
+              // avatarFor falls back to the letter tile, so a comment from a
+              // deleted account still renders as something rather than a gap.
+              avatarFor({ nick: c.nick, avatar: c.avatar }, 28),
+              h('span', { class: 'comment-nick', text: c.nick }),
+              c.popular
+                ? h('span', { class: 'popular-badge popular-badge-sm', title: 'Популярный автор' }, icon('star', 'i i-sm'))
+                : null,
+              h('span', { class: 'hint', text: ago(c.createdAt) }),
+            ),
+            h('p', { class: 'comment-body', text: c.body }),
+            h('div', { class: 'field-row' },
+              // Report, not delete: a reader cannot remove someone else's words,
+              // and a complaint is the only lever they have.
+              h('button', {
+                class: 'btn btn-sm btn-ghost',
+                onclick: () => fileReport('comment', c.id, `комментарий к «${item.title}»`),
+              }, icon('alert', 'i i-sm'), 'Пожаловаться'),
+              c.canDelete ? h('button', {
+                class: 'btn btn-sm btn-ghost',
+                onclick: async () => {
+                  try {
+                    await api(`/api/comments/${c.id}`, { method: 'DELETE' });
+                    toast('Комментарий удалён');
+                    await load();
+                  } catch (err) { toast(err.message, true); }
+                },
+              }, icon('trash', 'i i-sm'), 'Удалить') : null,
+            ),
+          ))
+        : [h('p', { class: 'empty', text: 'Комментариев пока нет.' })]));
+    } catch (err) {
+      list.replaceChildren(h('p', { class: 'empty', text: err.message }));
+    }
+  };
+
+  const form = (() => {
+    const textArea = h('textarea', { class: 'textarea textarea-short', rows: 3, maxlength: 2000, placeholder: 'По существу публикации.' });
+    const sendBtn = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Отправить');
+    const notice = h('p', { class: 'form-error', role: 'alert' });
+    if (!signedIn()) {
+      return h('p', { class: 'hint' },
+        'Чтобы комментировать, ',
+        h('a', { href: '/auth', text: 'войдите' }),
+        '.',
+      );
+    }
+    return h('form', {
+      class: 'field',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        const text = textArea.value.trim();
+        if (!text) return;
+        sendBtn.disabled = true;
+        notice.textContent = '';
+        try {
+          await api(`/api/items/${item.id}/comments`, { method: 'POST', body: { body: text } });
+          textArea.value = '';
+          toast('Комментарий отправлен');
+          await load();
+        } catch (err) {
+          // A ban surfaces here as well as on the publish page: the account can
+          // still read, and the reason belongs where the action was refused.
+          notice.textContent = err.message;
+        } finally { sendBtn.disabled = false; }
+      },
+    },
+      h('span', { class: 'label' }, 'Ваш комментарий'),
+      textArea,
+      h('div', { class: 'field-row' },
+        sendBtn,
+        h('span', { class: 'hint', text: 'Комментарий можно удалить только вам.' }),
+      ),
+      notice,
+    );
+  })();
+
+  panel.append(
+    // The heading is added here rather than with the panel above, because the
+    // count next to it only exists once the comments have loaded.
+    h('div', { class: 'field-row' },
+      h('div', { class: 'panel-title', style: 'margin:0' }, icon('hash', 'i i-sm'), ' Комментарии'),
+      h('span', { class: 'spacer' }),
+      count,
+    ),
+    form,
+    list,
+  );
+  load();
+  return panel;
 }
 
 function editorForm(initial) {
@@ -1709,6 +1853,9 @@ async function viewProfile(id) {
   const nickLine = h('h1', {},
     u.nick,
     u.admin ? h('span', { class: 'admin-badge', title: 'Администратор' }, icon('star', 'i i-sm'), 'админ') : null,
+    // The popular mark is the operator's own editorial call, not a claim the
+    // account makes about itself, so it is a separate badge from "admin".
+    u.popular ? h('span', { class: 'popular-badge', title: 'Популярный автор' }, icon('star', 'i i-sm'), 'популярный') : null,
   );
 
   $view.replaceChildren(
@@ -1724,6 +1871,16 @@ async function viewProfile(id) {
           onclick: async () => { await logoutAccount(); toast('Вышли'); navigate('/'); },
         }, 'Выйти') : null,
         signedIn() && !isMe ? h('a', { class: 'btn btn-ghost', href: '/auth' }, 'Сменить аккаунт') : null,
+        // The entry point to the moderation console. Gated in the UI because the
+        // role is already known here, and enforced again on every admin route -
+        // a hidden link is a courtesy, not a permission.
+        account?.admin || account?.role === 'moderator'
+          ? h('a', { class: 'btn btn-ghost', href: '/admin' }, icon('shield', 'i i-sm'), 'Модерация')
+          : null,
+        !isMe ? h('button', {
+          class: 'btn btn-ghost', type: 'button',
+          onclick: () => fileReport('user', u.id, `аккаунт @${u.nick}`),
+        }, icon('alert', 'i i-sm'), 'Пожаловаться') : null,
       ),
     ),
       h('div', { class: 'panel profile-card', style: themeStyle },
@@ -1737,6 +1894,7 @@ async function viewProfile(id) {
         ),
       ),
     u.bio && !isMe ? h('p', { class: 'page-sub', text: u.bio }) : null,
+    isMe ? avatarEditor(u, notice) : null,
     isMe ? h('form', {
       class: 'card',
       onsubmit: async (e) => {
@@ -1790,6 +1948,335 @@ async function viewProfile(id) {
   );
 }
 
+/* ----------------------------------------------------------------- reports -- *
+ * Filing one needs no account. The person who wants a post taken down often
+ * has no reason to register first, and requiring registration to complain is
+ * the surest way to get no complaints at all. What the reporter gets back is a
+ * receipt id, which is also the thing to quote when following up.
+ */
+
+const REPORT_REASONS = [
+  ['copyright', 'Авторские права'],
+  ['illegal', 'Незаконный контент'],
+  ['porn', 'Порнография'],
+  ['violence', 'Насилие'],
+  ['harassment', 'Оскорбления'],
+  ['impersonation', 'Выдача себя за другого'],
+  ['abuse', 'Оскорбление или домогательство'],
+  ['spam', 'Спам'],
+  ['other', 'Другое'],
+];
+const REASON_LABEL = Object.fromEntries(REPORT_REASONS);
+
+function reportDialog(targetType, targetId, what) {
+  return new Promise((resolve) => {
+    const details = h('textarea', {
+      class: 'textarea', rows: 4, maxlength: 1000,
+      placeholder: 'Что именно не так? Ссылка, автор, дата — всё, что поможет разобраться.',
+    });
+    const reasonSelect = h('select', { class: 'select' },
+      REPORT_REASONS.map(([value, label]) => h('option', { value, text: label })),
+    );
+    const error = h('p', { class: 'form-error', role: 'alert' });
+    const done = (value) => { backdrop.remove(); resolve(value); };
+    const submit = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Отправить');
+
+    const form = h('form', {
+      class: 'panel auth-card',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        submit.disabled = true;
+        error.textContent = '';
+        try {
+          const res = await api('/api/reports', {
+            method: 'POST',
+            body: { targetType, targetId, reason: reasonSelect.value, details: details.value.trim() },
+          });
+          done(res);
+        } catch (err) {
+          error.textContent = err.message || 'не удалось отправить';
+          submit.disabled = false;
+        }
+      },
+    },
+      h('h2', { text: 'Пожаловаться' }),
+      h('p', { class: 'page-sub', text: `На ${what}. Аккаунт не нужен.` }),
+      h('label', { class: 'field' },
+        h('span', { class: 'label' }, 'Причина'),
+        reasonSelect,
+      ),
+      h('label', { class: 'field' },
+        h('span', { class: 'label' }, 'Подробности'),
+        details,
+      ),
+      error,
+      h('div', { class: 'field-row' },
+        submit,
+        h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => done(null) }, 'Отмена'),
+      ),
+    );
+
+    const backdrop = h('div', {
+      class: 'modal-backdrop',
+      onclick: (e) => { if (e.target === backdrop) done(null); },
+    }, form);
+
+    document.body.appendChild(backdrop);
+    details.focus();
+    form.addEventListener('keydown', (e) => { if (e.key === 'Escape') done(null); });
+  });
+}
+
+/** Files a report and reports the outcome, including the receipt id. */
+async function fileReport(targetType, targetId, what) {
+  const res = await reportDialog(targetType, targetId, what);
+  if (!res) return;
+  toast(`Жалоба принята, номер ${res.id}. Мы разберём её и сообщим о решении.`, true);
+}
+
+/* ---------------------------------------------------------------- avatars -- *
+ * Uploaded from the user's own device, so the image is shrunk in the browser
+ * before it is sent. The server accepts 512 KiB and only four image types, and
+ * re-encoding a 4 MB phone photo to a 256px square PNG is both the difference
+ * between fitting that limit and not, and the reason the stored bytes are a
+ * thumbnail rather than the original. The account's `logo` URL field stays
+ * available for people who would rather point at an image they already host.
+ */
+
+const AVATAR_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+const AVATAR_MAX_BYTES = 512 * 1024;
+const AVATAR_EDGE = 256;
+
+/**
+ * Draws the image into a canvas at most AVATAR_EDGE on its longest side and
+ * re-encodes it. A canvas of zero width throws in several browsers, which is
+ * what happens for a malformed or still-loading image, so the size is read off
+ * the element and the natural size is trusted only once it is non-zero.
+ */
+function resizeAvatar(file) {
+  return new Promise((resolve, reject) => {
+    if (!AVATAR_TYPES.includes(file.type)) {
+      reject(new Error('Нужен PNG, JPEG, WebP или GIF'));
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const long = Math.max(img.naturalWidth, img.naturalHeight);
+      // A small GIF is kept as-is: re-encoding an animation through a canvas
+      // flattens it to its first frame, which is a worse outcome than a
+      // slightly larger file.
+      if (!long || (file.type === 'image/gif' && file.size <= AVATAR_MAX_BYTES)) {
+        resolve(file);
+        return;
+      }
+      const scale = Math.min(1, AVATAR_EDGE / long);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { resolve(file); return; }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => {
+        if (!blob) { resolve(file); return; }
+        // WebP is the smallest of the three at this size, but it is not decodable
+        // everywhere, so a JPEG fallback is used when the browser cannot make one.
+        const out = blob.type === 'image/webp' ? blob : null;
+        if (out && out.size <= AVATAR_MAX_BYTES) { resolve(out); return; }
+        canvas.toBlob((jpeg) => resolve(jpeg && jpeg.size <= AVATAR_MAX_BYTES ? jpeg : file), 'image/jpeg', 0.86);
+      }, 'image/webp');
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Файл не читается как изображение'));
+    };
+    img.src = url;
+  });
+}
+
+/** The avatar picker, shown only on your own profile. */
+function avatarEditor(u, notice) {
+  const file = h('input', { class: 'input', type: 'file', accept: AVATAR_TYPES.join(',') });
+  const preview = h('div', { class: 'avatar-picker' });
+
+  const paint = () => {
+    preview.replaceChildren(avatarFor(u, 72),
+      h('div', { class: 'field-row' },
+        h('button', {
+          class: 'btn btn-primary', type: 'button',
+          onclick: async (e) => {
+            const btn = e.currentTarget;
+            if (!file.files || !file.files[0]) { notice.textContent = 'Выберите файл'; return; }
+            btn.disabled = true;
+            notice.textContent = '';
+            try {
+              const shrunk = await resizeAvatar(file.files[0]);
+              if (shrunk.size > AVATAR_MAX_BYTES) {
+                throw new Error(`Файл ${bytes(shrunk.size)} — больше лимита ${bytes(AVATAR_MAX_BYTES)}`);
+              }
+              const res = await api('/api/auth/avatar', { method: 'POST', body: shrunk });
+              account = res.user;
+              toast('Аватар обновлён');
+              navigate(`/u/${u.id}`);
+            } catch (err) {
+              notice.textContent = err.message || 'не удалось загрузить';
+              btn.disabled = false;
+            }
+          },
+        }, 'Загрузить'),
+        u.avatar ? h('button', {
+          class: 'btn btn-ghost', type: 'button',
+          onclick: async (e) => {
+            e.currentTarget.disabled = true;
+            try {
+              const res = await api('/api/auth/avatar', { method: 'DELETE' });
+              account = res.user;
+              toast('Аватар удалён');
+              navigate(`/u/${u.id}`);
+            } catch (err) {
+              notice.textContent = err.message;
+              e.currentTarget.disabled = false;
+            }
+          },
+        }, 'Убрать') : null,
+      ),
+    );
+  };
+  paint();
+
+  return h('div', { class: 'panel' },
+    h('div', { class: 'panel-title' }, icon('user', 'i i-sm'), ' Аватар'),
+    h('div', { class: 'design-row' },
+      preview,
+      h('label', { class: 'field' },
+        h('span', { class: 'label' }, 'Файл'),
+        file,
+        h('span', { class: 'hint', text: `PNG, JPEG, WebP или GIF, до ${bytes(AVATAR_MAX_BYTES)}. Большие фото уменьшаются в браузере.` }),
+      ),
+    ),
+  );
+}
+
+/* ------------------------------------------------------------------ legal --
+ * Three documents and a report form. The text is deliberately plain: a rule
+ * nobody reads because it was written for a lawyer is not a rule, and the one
+ * obligation that is not negotiable is that a complaint reaches a person who
+ * can act on it and that the person who filed it can be told what happened.
+ */
+
+const UPDATED = '15 сентября 2026';
+
+function legalPage(title, intro, sections) {
+  $view.replaceChildren(
+    h('div', { class: 'page-head' },
+      h('div', {},
+        h('h1', { text: title }),
+        h('p', { class: 'page-sub', text: `Редакция от ${UPDATED}.` }),
+      ),
+    ),
+    h('div', { class: 'panel legal' },
+      h('p', { class: 'page-sub', text: intro }),
+      sections.map(([head, ...paras]) => h('section', {},
+        h('h2', { text: head }),
+        paras.map((p) => h('p', { text: p })),
+      )),
+      h('p', { class: 'hint', text: 'Документы не отменяют закон. Если право требует от нас что-то, чего здесь нет, напишите, и мы это исправим.' }),
+    ),
+    h('p', { style: 'margin-top:18px' },
+      h('a', { class: 'btn btn-ghost', href: '/report' }, icon('flag', 'i i-sm'), 'Пожаловаться на контент'),
+    ),
+  );
+}
+
+function viewRules() {
+  legalPage('Правила площадки', 'Публикуя здесь, вы соглашаетесь с этими правилами. Площадка — анонимная: у аккаунта нет юридического лица, а у вас нет обязанностей перед третьими лицами, кроме тех, что вы добровольно взяли на себя, загрузив чужой материал.', [
+    ['Что запрещено', 'Контент, нарушающий закон, материалы, права на которые у вас нет, чужие персональные данные, публикации, выдающие себя за других людей, угрозы и травлю.'],
+    ['Что будет сделано', 'За нарушения аккаунт получает бан на срок от часа до бесконечности, публикация снимается, а ник блокируется. Решение модератора можно обжаловать, написав на почту, указанную в разделе «Контакты».'],
+    ['Кто отвечает за контент', 'Автор. Площадка не предварительно проверяет публикации и не может гарантировать законность любого файла, но жалобы разбирает и принимает меры.'],
+    ['Блокировки', 'Бан действует на аккаунт, а не на браузер: новый вход не снимает его. Срок виден при первой попытке публикации.'],
+  ]);
+}
+
+function viewTerms() {
+  legalPage('Условия использования', 'Сервис предоставляется как есть, без гарантий. Ниже — что именно это означает на практике.', [
+    ['Что вы получаете', 'Публикацию файлов и текстов по ссылке, аккаунт с ключом редактирования, возможность закрыть публикацию ключом доступа и подписаться на других.'],
+    ['Обязательства сервиса', 'Хранить опубликованное, пока оно не снято по вашей просьбе или по жалобе; отвечать на жалобы; не требовать оплаты за базовые функции.'],
+    ['Обязательства автора', 'Не публиковать то, что запрещено правилами; отвечать на жалобы о своих материалах; не выдавать себя за другого человека.'],
+    ['Ответственность', 'Сервис не отвечает за содержимое публикаций и за убытки, возникшие из-за них. Прямая ответственность сервиса ограничена суммой, фактически уплаченной за использование, то есть, при текущих тарифах, нулём.'],
+    ['Прекращение', 'Аккаунт можно удалить, написав с него. Публикации удалённого аккаунта остаются, если под ними нет активной жалобы, иначе они снимаются.'],
+  ]);
+}
+
+function viewPrivacy() {
+  legalPage('Приватность', 'Сервис не продаёт данные и не строит на них рекламу. Ниже — что хранится и зачем.', [
+    ['Что хранится', 'Для аккаунта: ник, описание, аватар, тема профиля, счётчики подписок и публикаций. Для посетителя без аккаунта: идентификатор устройства, дата первого визита и счётчик публикаций, к которым он обращался.'],
+    ['Пароли', 'Пароль не хранится. Вместо него лежит PBKDF2-хеш с солью, из него нельзя восстановить пароль, только проверить его.'],
+    ['Ключи', 'Ключ доступа к закрытой публикации хранится только у вас, в вашем браузере. Сервер хранит его хеш и короткую подсказку.'],
+    ['Аватары', 'Файл аватара хранится на сервере и виден всем, кто открыл ваш профиль. Удаление аккаунта удаляет аватар.'],
+    ['Кто читает жалобы', 'Жалобы видят администраторы и модераторы. В жалобе нет вашего аккаунта, если вы отправили её без входа, но есть идентификатор устройства, по которому её можно отличить от повторной.'],
+    ['Срок хранения', 'Публикации и аккаунты хранятся, пока их не удалили. Аккаунты, не заходившие более года, удаляются вместе с публикациями.'],
+  ]);
+}
+
+/** The report form, as a page. Filing one needs no account. */
+async function viewReport() {
+  const targetId = new URL(location.href).searchParams.get('id') || '';
+  const notice = h('p', { class: 'form-error', role: 'alert' });
+  const target = h('input', {
+    class: 'input', maxlength: 40, value: targetId,
+    placeholder: 'ID публикации или аккаунта', spellcheck: false, autocomplete: 'off',
+  });
+  const kind = h('select', { class: 'select' },
+    [['item', 'Публикация'], ['user', 'Аккаунт'], ['comment', 'Комментарий']]
+      .map(([v, l]) => h('option', { value: v, text: l })),
+  );
+  const reason = h('select', { class: 'select' },
+    REPORT_REASONS.map(([v, l]) => h('option', { value: v, text: l })),
+  );
+  const details = h('textarea', { class: 'textarea', rows: 5, maxlength: 1000, placeholder: 'Что именно не так и где это видно.' });
+
+  $view.replaceChildren(
+    h('div', { class: 'page-head' },
+      h('div', {},
+        h('h1', {}, icon('flag', 'i i-sm'), ' Пожаловаться'),
+        h('p', { class: 'page-sub', text: 'Аккаунт не нужен. Ответ придёт по номеру обращения.' }),
+      ),
+    ),
+    h('form', {
+      class: 'panel legal',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        const id = (target.value || '').trim();
+        if (!id) { notice.textContent = 'Укажите ID публикации или аккаунта.'; return; }
+        try {
+          const res = await api('/api/reports', {
+            method: 'POST',
+            body: { targetType: kind.value, targetId: id, reason: reason.value, details: (details.value || '').trim() },
+          });
+          notice.textContent = '';
+          $view.replaceChildren(
+            h('div', { class: 'page-head' }, h('h1', { text: 'Жалоба принята' })),
+            h('div', { class: 'panel legal' },
+              h('p', { text: `Номер обращения: ${res.id}. Сохраните его — по нему можно уточнить, чем закончилось разбирательство.` }),
+              h('p', { class: 'page-sub', text: 'Мы разбираем жалобы в порядке поступления. Если речь о чужих персональных данных или о нелегальном контенте, разбираем быстрее.' }),
+            ),
+            h('p', { style: 'margin-top:18px' }, h('a', { class: 'btn btn-ghost', href: '/' }, 'На главную')),
+          );
+        } catch (err) { notice.textContent = err.message; }
+      },
+    },
+      h('label', { class: 'field' }, h('span', { class: 'label' }, 'Что именно'), kind),
+      h('label', { class: 'field' }, h('span', { class: 'label' }, 'ID'), target),
+      h('label', { class: 'field' }, h('span', { class: 'label' }, 'Причина'), reason),
+      h('label', { class: 'field' }, h('span', { class: 'label' }, 'Подробности'), details),
+      notice,
+      h('div', { class: 'field-row' }, h('button', { class: 'btn btn-primary', type: 'submit' }, 'Отправить')),
+      h('p', { class: 'hint', text: 'Ложные жалобы приводят к бану аккаунта. Не используйте форму для спама или разбирательств с людьми.' }),
+    ),
+  );
+}
+
 async function viewFollowers(id) {
   const data = await api(`/api/users/${encodeURIComponent(id)}/followers`);
   $view.replaceChildren(
@@ -1810,12 +2297,23 @@ async function viewFollowers(id) {
 }
 
 async function viewStats() {
-  const s = await api('/api/stats');
-  const p = await api('/api/plugins');
+  const [s, p] = await Promise.all([api('/api/stats'), api('/api/plugins')]);
   const line = (label, value) => [h('dt', { text: label }), h('dd', { text: String(value) })];
   $view.replaceChildren(
     h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Состояние' }), h('p', { class: 'page-sub', text: 'Счётчики хранилища и загруженные серверные плагины.' }))),
     h('div', { class: 'split' },
+      h('div', { class: 'panel' },
+        h('div', { class: 'panel-title' }, icon('user', 'i i-sm'), ' Люди'),
+        // People, not storage. A visitor counter that only counts publishers
+        // understates the site by an order of magnitude, so the client that
+        // every page load sends is counted here.
+        h('dl', { class: 'kv' },
+          ...line('Аккаунтов', s.users ?? 0),
+          ...line('Устройств', s.clients ?? 0),
+          ...line('Открытых жалоб', s.openReports ?? 0),
+          ...line('Действующих банов', s.activeBans ?? 0),
+        ),
+      ),
       h('div', { class: 'panel' },
         h('div', { class: 'panel-title', text: 'Хранилище' }),
         h('dl', { class: 'kv' },
@@ -1825,7 +2323,6 @@ async function viewStats() {
           ...line('Приложений', s.apps),
           ...line('Файлов', s.files),
           ...line('Объём', bytes(s.bytes)),
-          ...line('Устройств', s.clients),
         ),
       ),
       h('div', { class: 'panel' },
@@ -1843,6 +2340,278 @@ async function viewStats() {
       ),
     ),
   );
+}
+
+/* ----------------------------------------------------------------- admin --
+ * The console is one page with four queues rather than a nested set of admin
+ * screens: a moderator's whole job is "look at the open reports, look at the
+ * newest posts, act", and every extra level of navigation is a level between
+ * reading a complaint and answering it.
+ *
+ * Nothing here is a permission. The role is read from /api/admin/overview, and
+ * every action is re-checked server-side, so a stale page or a hand-typed URL
+ * gets the same answer as a hidden button.
+ */
+
+const ADMIN_TABS = [
+  ['reports', 'flag', 'Жалобы'],
+  ['items', 'doc', 'Публикации'],
+  ['users', 'user', 'Аккаунты'],
+  ['nicks', 'ban', 'Ники'],
+];
+
+const BAN_PRESETS = [
+  [1, 'час'], [24, 'сутки'], [72, '3 дня'], [168, 'неделя'], [720, 'месяц'],
+];
+
+function adminAction(label, cls, run) {
+  const btn = h('button', { class: `btn btn-sm ${cls || 'btn-ghost'}`, type: 'button' }, label);
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      await run();
+    } catch (err) {
+      toast(err.message || 'не получилось', true);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  return btn;
+}
+
+async function viewAdmin(tab = 'reports') {
+  if (!signedIn()) { navigate('/auth'); return; }
+
+  let overview;
+  try {
+    overview = await api('/api/admin/overview');
+  } catch (err) {
+    $view.replaceChildren(
+      h('div', { class: 'page-head' }, h('h1', { text: 'Модерация' })),
+      h('div', { class: 'notice' }, icon('ban', 'i i-sm'), h('span', { text: err.message })),
+      h('p', { class: 'hint', style: 'margin-top:16px', text: 'Страница доступна администраторам и модераторам.' }),
+    );
+    return;
+  }
+
+  const isAdmin = overview.role === 'admin';
+  const open = overview.reports?.length || 0;
+  const body = h('div', {});
+
+  const tabs = h('div', { class: 'tabs', role: 'tablist' }, ADMIN_TABS.map(([key, ic, label]) => h('button', {
+    class: 'tab', type: 'button', role: 'tab', 'aria-selected': key === tab,
+    onclick: () => { navigate(`/admin/${key}`); },
+  }, icon(ic, 'i i-sm'), label, key === 'reports' && open ? h('span', { class: 'pill', text: String(open) }) : null)));
+
+  const paint = async () => {
+    if (tab === 'reports') await paintReports(body, isAdmin, paint);
+    else if (tab === 'items') await paintItems(body, paint);
+    else if (tab === 'users') await paintUsers(body, isAdmin, paint);
+    else await paintNicks(body, isAdmin, paint);
+  };
+
+  $view.replaceChildren(
+    h('div', { class: 'page-head' },
+      h('div', {},
+        h('h1', {}, icon('shield', 'i i-sm'), ' Модерация'),
+        h('p', {
+          class: 'page-sub',
+          text: isAdmin
+            ? 'Полный доступ: роли, блок ников, снятие банов и баны без ограничения по сроку.'
+            : 'Модератор: удаление публикаций, бан до 7 дней, жалобы и отметка популярного автора.',
+        }),
+      ),
+    ),
+    tabs,
+    body,
+  );
+  await paint();
+}
+
+/** The report queue. A resolved report stays in the log, which is the point. */
+async function paintReports(body, isAdmin, refresh) {
+  const { reports } = await api('/api/admin/reports');
+  if (!reports.length) {
+    body.replaceChildren(h('div', { class: 'panel' }, h('p', { class: 'empty', text: 'Жалоб нет.' })));
+    return;
+  }
+  const TARGET = { item: 'публикацию', user: 'аккаунт', comment: 'комментарий' };
+  const resolve = (report, status) => adminAction(
+    status === 'resolved' ? 'Снять' : 'Отклонить',
+    status === 'resolved' ? 'btn-primary' : 'btn-ghost',
+    async () => {
+      // The Worker reports what it actually removed, and the wording follows it:
+      // a complaint about an account is closed here but the account is dealt
+      // with separately, and telling the operator it was "taken down" when
+      // nothing was would be the kind of small lie that erodes trust in a queue.
+      const res = await api(`/api/admin/reports/${report.id}`, { method: 'POST', body: { status } });
+      if (status === 'dismissed') toast('Жалоба отклонена');
+      else if (res && res.removed) toast('Публикация снята по жалобе');
+      else toast('Жалоба закрыта. Аккаунт разберите в разделе «Аккаунты»');
+      await refresh();
+    },
+  );
+  body.replaceChildren(h('div', { class: 'panel' },
+    h('div', { class: 'panel-title' }, icon('flag', 'i i-sm'), ` Жалобы (${reports.length})`),
+    h('div', { class: 'rows' }, reports.map((r) => h('div', { class: 'queue-row' },
+      h('div', {},
+        h('div', {},
+          h('strong', { text: REASON_LABEL[r.reason] || r.reason }),
+          h('span', { class: 'hint', text: ` · на ${TARGET[r.targetType] || r.targetType} ` }),
+          r.targetType === 'item' ? h('a', { href: `/i/${r.targetId}`, text: r.targetId }) : null,
+        ),
+        r.details ? h('p', { class: 'page-sub', text: r.details }) : null,
+         h('p', { class: 'hint', text: `${ago(r.createdAt)}${r.byUserId ? '' : ' · без аккаунта'}` }),
+      ),
+      h('span', { class: 'spacer' }),
+      h('span', { class: 'pill pill-mute', text: r.status }),
+      r.status === 'open' ? resolve(r, 'dismissed') : null,
+      // Only content can be taken down from here. An account is not deleted
+      // because of a complaint, so a user target gets no takedown button - the
+      // account queue is where a ban is set, with a term and a reason.
+      r.status === 'open' && (r.targetType === 'item' || r.targetType === 'comment') ? resolve(r, 'resolved') : null,
+    ))),
+  ));
+}
+
+/** Newest posts across every author, which is where spam shows up first. */
+async function paintItems(body, refresh) {
+  const { items } = await api('/api/admin/items?limit=50');
+  if (!items.length) {
+    body.replaceChildren(h('div', { class: 'panel' }, h('p', { class: 'empty', text: 'Публикаций нет.' })));
+    return;
+  }
+  body.replaceChildren(h('div', { class: 'panel' },
+    h('div', { class: 'panel-title' }, icon('doc', 'i i-sm'), ' Последние публикации'),
+    h('div', { class: 'rows' }, items.map((it) => h('div', { class: 'queue-row' },
+      h('a', { href: `/i/${it.id}` }, h('strong', { text: it.title })),
+      h('span', { class: 'spacer' }),
+      h('span', { class: 'hint', text: `${it.authorLabel || it.author} · ${ago(it.createdAt)}` }),
+      adminAction('Снять', 'btn-ghost', async () => {
+        if (!confirm(`Снять публикацию «${it.title}»? Действие необратимо.`)) return;
+        await api(`/api/admin/items/${it.id}`, { method: 'DELETE' });
+        toast('Публикация снята');
+        await refresh();
+      }),
+    ))),
+  ));
+}
+
+/** Account search, ban, popular mark and - for an admin only - the role. */
+async function paintUsers(body, isAdmin, refresh) {
+  const search = h('input', {
+    class: 'input', type: 'search', placeholder: 'ник или ID аккаунта',
+    autocomplete: 'off', spellcheck: false,
+  });
+  const results = h('div', { class: 'rows' });
+
+  const run = async () => {
+    // `value` is read defensively: an input with nothing typed in is an empty
+    // string in a browser, but the moderation console must not be the one view
+    // that breaks on a null there.
+    const { users } = await api(`/api/admin/users?q=${encodeURIComponent((search.value || '').trim())}`);
+    results.replaceChildren(...(users.length
+      ? users.map((u) => h('div', { class: 'queue-row' },
+        avatarFor(u, 32),
+        h('div', {},
+          h('div', {},
+            h('a', { href: `/u/${u.id}` }, h('strong', { text: u.nick })),
+            u.admin ? h('span', { class: 'admin-badge admin-badge-sm', title: 'Администратор' }, icon('star', 'i i-sm')) : null,
+            u.popular ? h('span', { class: 'popular-badge popular-badge-sm', title: 'Популярный автор' }, icon('star', 'i i-sm')) : null,
+            u.role === 'moderator' ? h('span', { class: 'pill', text: 'модератор' }) : null,
+            u.banned ? h('span', { class: 'pill pill-danger', text: 'забанен' }) : null,
+          ),
+          h('p', { class: 'hint', text: `${u.id} · ${u.posts ?? 0} публикаций · ${u.followers ?? 0} подписчиков` }),
+        ),
+        h('span', { class: 'spacer' }),
+        adminAction('Популярный', 'btn-ghost', async () => {
+          await api(`/api/admin/users/${u.id}/popular`, { method: 'POST', body: { popular: !u.popular } });
+          await refresh();
+        }),
+        banButton(u, isAdmin, refresh),
+        isAdmin ? adminAction(u.role === 'moderator' ? 'Снять модератора' : 'Сделать модератором', 'btn-ghost', async () => {
+          await api(`/api/admin/users/${u.id}/role`, {
+            method: 'POST', body: { role: u.role === 'moderator' ? 'user' : 'moderator' },
+          });
+          toast('Роль обновлена');
+          await refresh();
+        }) : null,
+      ))
+      : [h('p', { class: 'empty', text: 'Никого не нашлось.' })]));
+  };
+  search.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); run(); } });
+
+  body.replaceChildren(h('div', { class: 'panel' },
+    h('div', { class: 'panel-title' }, icon('user', 'i i-sm'), ' Поиск аккаунта'),
+    h('div', { class: 'field-row' }, search, h('button', { class: 'btn btn-primary', type: 'button', onclick: run }, 'Найти')),
+    results,
+  ));
+  await run();
+}
+
+/** A ban form as a prompt, because the presets are the point and free text is not. */
+function banButton(u, isAdmin, refresh) {
+  return adminAction('Забанить', 'btn-ghost', async () => {
+    const presets = isAdmin
+      ? [...BAN_PRESETS, [24 * 365, 'год'], [0, 'до снятия']]
+      : BAN_PRESETS;
+    const choice = prompt(`Срок бана для @${u.nick}:\n${presets.map(([v, l], i) => `${i + 1} — ${l}`).join('\n')}\n\nНомер срока, либо часы числом.`);
+    if (choice === null) return;
+    const pick = Number(choice.trim());
+    const found = presets.find(([v]) => v === pick);
+    const hours = found ? found[0] : Number.isFinite(pick) ? pick : 24;
+    const reason = prompt('Причина (видна автору при попытке публикации):', 'нарушение правил') || '';
+    await api(`/api/admin/users/${u.id}/ban`, { method: 'POST', body: { hours, reason } });
+    toast(`@${u.nick} забанен`);
+    await refresh();
+  });
+}
+
+/** The blocked-nick list. Admin only: a moderator cannot act on it. */
+async function paintNicks(body, isAdmin, refresh) {
+  if (!isAdmin) {
+    body.replaceChildren(h('div', { class: 'panel' },
+      h('p', { class: 'empty', text: 'Блок ников доступен только администратору.' })));
+    return;
+  }
+  const nick = h('input', { class: 'input', placeholder: 'ник', maxlength: 24, autocomplete: 'off', spellcheck: false });
+  const reason = h('input', { class: 'input', placeholder: 'причина', maxlength: 200 });
+  const { blocked } = await api('/api/admin/nicks');
+
+  body.replaceChildren(h('div', { class: 'panel' },
+    h('div', { class: 'panel-title' }, icon('ban', 'i i-sm'), ' Заблокированные ники'),
+    h('div', { class: 'field-row' },
+      nick, reason,
+      h('button', {
+        class: 'btn btn-primary', type: 'button',
+        onclick: async (e) => {
+          e.currentTarget.disabled = true;
+          try {
+            await api('/api/admin/nicks', { method: 'POST', body: { nick: nick.value.trim(), reason: reason.value.trim() } });
+            toast('Ник заблокирован');
+            await refresh();
+          } catch (err) {
+            toast(err.message, true);
+            e.currentTarget.disabled = false;
+          }
+        },
+      }, 'Заблокировать'),
+    ),
+    blocked.length
+      ? h('div', { class: 'rows' }, blocked.map((b) => h('div', { class: 'queue-row' },
+          h('div', {},
+            h('strong', { text: b.nick }),
+            h('p', { class: 'hint', text: b.reason || 'без причины' }),
+          ),
+          h('span', { class: 'spacer' }),
+          adminAction('Разблокировать', 'btn-ghost', async () => {
+            await api(`/api/admin/nicks/${encodeURIComponent(b.nick_key)}`, { method: 'DELETE' });
+            toast('Ник разблокирован');
+            await refresh();
+          }),
+        )))
+      : h('p', { class: 'empty', text: 'Список пуст.' }),
+  ));
 }
 
 function notFound() {
@@ -1875,6 +2644,17 @@ async function route() {
       await viewStats();
     } else if (path === '/auth') {
       await viewAuth(url);
+    } else if (path === '/admin' || path.startsWith('/admin/')) {
+      const tab = path.slice('/admin'.length).replace(/^\//, '') || 'reports';
+      await viewAdmin(['reports', 'items', 'users', 'nicks'].includes(tab) ? tab : 'reports');
+    } else if (path === '/rules') {
+      viewRules();
+    } else if (path === '/terms') {
+      viewTerms();
+    } else if (path === '/privacy') {
+      viewPrivacy();
+    } else if (path === '/report') {
+      await viewReport();
     } else if (/^\/u\/[A-Za-z0-9_-]{3,32}$/.test(path)) {
       await viewProfile(path.slice(3));
     } else if (/^\/u\/[A-Za-z0-9_-]{3,32}\/followers$/.test(path)) {
