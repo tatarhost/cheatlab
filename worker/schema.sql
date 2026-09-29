@@ -16,6 +16,10 @@ CREATE TABLE IF NOT EXISTS items (
   author       TEXT NOT NULL,
   author_label TEXT NOT NULL DEFAULT '',
   secret_hash  TEXT NOT NULL,
+  -- Access key (LootLabs-style lock): only the SHA-256 hex is stored, never the
+  -- key. A non-NULL value locks the item body and files behind the key.
+  access_key_hash TEXT,
+  key_hint        TEXT NOT NULL DEFAULT '',
   visibility   TEXT NOT NULL DEFAULT 'public',
   hits         INTEGER NOT NULL DEFAULT 0,
   -- Denormalised social counters, kept in step by the store after each
@@ -80,6 +84,11 @@ CREATE TABLE IF NOT EXISTS user (
   pass_salt     TEXT NOT NULL,
   iterations    INTEGER NOT NULL,
   bio           TEXT NOT NULL DEFAULT '',
+  -- Profile design: logo is an https image URL, accent a #hex colour, bg a
+  -- safe CSS background value (gradients allowed, no url()).
+  logo          TEXT NOT NULL DEFAULT '',
+  accent        TEXT NOT NULL DEFAULT '',
+  bg            TEXT NOT NULL DEFAULT '',
   -- Cached counts, kept in step after each follow/unfollow and post.
   followers     INTEGER NOT NULL DEFAULT 0,
   following     INTEGER NOT NULL DEFAULT 0,
@@ -132,6 +141,17 @@ CREATE TABLE IF NOT EXISTS like (
 );
 CREATE INDEX IF NOT EXISTS idx_like_user ON like(user_id);
 CREATE INDEX IF NOT EXISTS idx_like_item ON like(item_id);
+
+-- Deduplicates view counting: one row per (item, client) so refreshing the
+-- page or farming the counter from the same browser counts once. Rows are
+-- never deleted - an identity is an identity.
+CREATE TABLE IF NOT EXISTS item_view (
+  item_id   TEXT NOT NULL,
+  client_id TEXT NOT NULL,
+  first_at  INTEGER NOT NULL,
+  PRIMARY KEY (item_id, client_id)
+);
+CREATE INDEX IF NOT EXISTS idx_item_view_item ON item_view(item_id);
 
 CREATE TABLE IF NOT EXISTS comment (
   id         TEXT PRIMARY KEY,

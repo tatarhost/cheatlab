@@ -10,7 +10,8 @@
 
 const ITEM_FIELDS = new Set([
   'id', 'type', 'title', 'body', 'language', 'tags',
-  'author', 'author_label', 'secret_hash', 'visibility', 'created_at', 'updated_at',
+  'author', 'author_label', 'secret_hash', 'access_key_hash', 'key_hint',
+  'visibility', 'created_at', 'updated_at',
 ]);
 
 function mapFile(row) {
@@ -125,6 +126,7 @@ export class Store {
   async updateUser(id, patch) {
     const allowed = [
       'nick', 'nick_key', 'bio', 'pass_hash', 'pass_salt', 'iterations', 'last_seen_at',
+      'logo', 'accent', 'bg',
     ];
     const keys = Object.keys(patch).filter((k) => allowed.includes(k));
     if (!keys.length) return this.getUser(id);
@@ -385,8 +387,34 @@ export class Store {
     return row?.n ?? 0;
   }
 
-  async incItemHits(id) {
+  /**
+   * Counts a view of an item, deduplicated by client id.
+   *
+   * The `item_view` table's primary key means the same browser (client id)
+   * counts once per item; a refresh or a repeated GET does not farm the
+   * counter. The publish/author client id and the viewing account's own items
+   * are skipped entirely - loading your own page is not a view. Returns 1 when
+   * this call actually incremented the counter.
+   *
+   * A signed-in viewer is keyed by the account instead of the browser id, so
+   * clearing localStorage does not hand out a fresh identity and re-farm the
+   * counter. Anonymous visitors are still keyed by client id: there is nothing
+   * stronger to key on without fingerprinting a reader who never opted in.
+   */
+  async incItemHits(id, clientId, { viewerUserId = null } = {}) {
+    const key = viewerUserId ? `viewer:${viewerUserId}` : clientId;
+    if (!key) return 0;
+    const row = await this.getItem(id);
+    if (!row) return 0;
+    if (!viewerUserId && clientId === row.author) return 0;
+    if (viewerUserId && (await this.ownerOfItem(id)) === viewerUserId) return 0;
+    const r = await this.db
+      .prepare('INSERT OR IGNORE INTO item_view (item_id, client_id, first_at) VALUES (?, ?, ?)')
+      .bind(id, key, Date.now())
+      .run();
+    if ((r.meta?.changes ?? 0) <= 0) return 0;
     await this.db.prepare('UPDATE items SET hits = hits + 1 WHERE id = ?').bind(id).run();
+    return 1;
   }
 
   async listItems({ type = '', q = '', tag = '', author = '', sort = 'new', limit = 30, offset = 0 } = {}) {

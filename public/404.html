@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CHEATLAB</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="/cheatlab/assets/logo.png">
+
+<!-- GitHub Pages serves this project from https://tatarhost.github.io/cheatlab/,
+     so the app root is a subpath. Same <base> as index.html, which makes the
+     relative replace below resolve to /cheatlab/ no matter how deep the
+     requested URL was. Deploy under a domain root instead? Change both files. -->
+<base href="/cheatlab/">
+
+<!-- GitHub Pages has no rewrite rules, so any app route (/i/abc, /u/abc,
+     /edit/abc) is a path with no file behind it and Pages answers 404. This file
+     is what it answers with.
+
+     The route is handed to the app through sessionStorage rather than appended
+     to the URL on purpose: redirecting straight to /cheatlab/i/abc would land on
+     another unmatched path, so Pages would serve this file again, forever. The
+     app reads the stored path on boot and takes over the address bar from there,
+     which costs no extra request and cannot loop. -->
+<script>
+  try {
+    sessionStorage.setItem('cheatlab.redirect', location.pathname + location.search + location.hash);
+  } catch (e) { /* private mode: the app falls back to the root route */ }
+  location.replace('./');
+</script>
+</head>
+<body>
+<p>Открываем CHEATLAB…</p>
+<noscript><a href="/cheatlab/">Открыть CHEATLAB</a></noscript>
+</body>
+</html>

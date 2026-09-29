@@ -47,6 +47,15 @@ POW_BITS = "18"
 ANON_NEW_ITEMS_PER_DAY = "1"
 REG_NEW_ITEMS_PER_DAY = "4"
 
+# Ids of the accounts that get the admin mark on their profile and posts. It is
+# a var rather than a secret on purpose: the flag is public by design (it is in
+# every API response) and lives in source, so an empty list is the honest
+# default - nobody is an admin until someone is named here. Comma-separated:
+#
+#   ADMIN_IDS = "tatar506,someoneelse"
+#
+ADMIN_IDS = "u_cjp5nj6huwag"
+
 # CAPTCHA_SECRET is NOT set here on purpose: it is a secret, not a var. Create
 # it once with:
 #

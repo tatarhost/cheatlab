@@ -35,6 +35,8 @@ function config(env) {
     maxFilesPerItem: Number(env.MAX_FILES || 20),
     titleMax: Number(env.TITLE_MAX || 120),
     labelMax: Number(env.LABEL_MAX || 24),
+    accessKeyMax: 64,
+    keyHintMax: 80,
     writeCap: Number(env.WRITE_CAP || 30),
     readCap: Number(env.READ_CAP || 240),
     allowOrigin: env.ALLOW_ORIGIN || '*',
@@ -97,6 +99,11 @@ function publicItem(row, files, tag) {
     authorLabel: row.author_label || null,
     visibility: row.visibility,
     hits: row.hits,
+    likes: Number(row.likes) || 0,
+    comments: Number(row.comments) || 0,
+    // A non-NULL access_key_hash means the body and files are behind a key.
+    locked: !!row.access_key_hash,
+    keyHint: row.key_hint || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     files: files.map(({ id, name, size, mime, sha256, downloads, createdAt }) => ({
@@ -107,15 +114,91 @@ function publicItem(row, files, tag) {
   return base;
 }
 
-/** Two-step: files + hashed author tag are both async now. */
-async function itemView(store, row, { full = false } = {}) {
+/**
+ * Two-step: files + hashed author tag are both async now.
+ *
+ * When `unlocked` is false - a locked item seen without its key - the file list
+ * and the body are withheld entirely and the preview is emptied, while the
+ * shell (title, tags, counts, `locked: true`, `keyHint`) still renders. The
+ * owner is resolved so the UI can link the author and offer a follow button.
+ */
+async function itemView(store, row, { full = false, unlocked = true, ownerId = null } = {}) {
   if (!row) return null;
-  const files = await store.listFiles(row.id);
+  const files = unlocked ? await store.listFiles(row.id) : [];
   const tag = await authorTag(row.author);
   const base = publicItem(row, files, tag);
-  if (full) base.body = row.body;
-  else base.preview = row.body.slice(0, 240);
+  base.unlocked = unlocked;
+  if (!unlocked) base.files = [];
+  if (unlocked && full) base.body = row.body;
+  else if (unlocked) base.preview = row.body.slice(0, 240);
+  else base.preview = '';
+  if (ownerId === null) ownerId = await store.ownerOfItem(row.id);
+  if (ownerId) {
+    const owner = await store.getUser(ownerId);
+    if (owner) {
+      base.ownerId = owner.id;
+      base.authorLabel = owner.nick;
+      base.owner = { id: owner.id, nick: owner.nick };
+    }
+  }
   return base;
+}
+
+/**
+ * The access key travels in the `x-cheatlab-key` header, or for media and raw
+ * routes - which load <img>/<video>/<script> that cannot set headers - as a
+ * `?key=` query string. A key never comes back from the server once set.
+ */
+function keyOf(request, url) {
+  const h = request.headers.get('x-cheatlab-key');
+  if (h) return String(h);
+  const q = url?.searchParams?.get('key');
+  if (!q) return '';
+  try { return decodeURIComponent(q); } catch { return q; }
+}
+
+async function isUnlocked(row, request, url) {
+  if (!row?.access_key_hash) return true;
+  const key = keyOf(request, url);
+  return !!key && (await secretMatches(key, row.access_key_hash));
+}
+
+/** Gates a media/file/raw route behind the item's access key, if any. */
+async function lockedGate(request, env, itemId, url) {
+  const row = await env.STORE.getItem(itemId);
+  if (row && row.access_key_hash && !(await isUnlocked(row, request, url))) {
+    return fail(403, 'key required');
+  }
+  return null;
+}
+
+/* ---- profile design sanitisation: raw CSS and URLs never touch the page -- */
+
+const LOGO_URL = /^https:\/\/[^\s<>"']{3,280}$/;
+const ACCENT_HEX = /^#[0-9a-fA-F]{6}$/;
+// Allowlist, not a blocklist: anything not spelled out here is dropped. The set
+// is what a gradient actually needs - letters, digits, `,` between stops, `%`
+// and `-` for angles, `#` for colours, `()` for the function, and `:` for the
+// `linear-gradient(180deg, ...)` syntax. `/` and `;` stay out on purpose, so
+// neither a path nor a second declaration can be smuggled in behind a gradient
+// that looks legitimate.
+const BG_VALUE = /^[A-Za-z0-9 #.,%():\-]{0,128}$/;
+// The colon needed for gradient syntax also makes `url(javascript:...)` fit the
+// allowlist, so the one function this field has no use for is named outright.
+// A background here is a colour or a gradient; a fetch is never the intent.
+const BG_FETCH = /url\s*\(/i;
+
+function sanitizeLogo(v) {
+  const t = str(v, 300);
+  return t && LOGO_URL.test(t) ? t : '';
+}
+function sanitizeAccent(v) {
+  const t = str(v, 16).toLowerCase();
+  return t && ACCENT_HEX.test(t) ? t : '';
+}
+function sanitizeBg(v) {
+  const t = str(v, 120);
+  return t && !BG_FETCH.test(t) && BG_VALUE.test(t) ? t : '';
 }
 
 async function ownSecret(request, row) {
@@ -243,6 +326,8 @@ route('GET', /^\/api\/config$/, async (request, env) => {
       maxTextBytes: c.maxTextBytes,
       maxFilesPerItem: c.maxFilesPerItem,
       titleMax: c.titleMax,
+      accessKeyMax: c.accessKeyMax,
+      keyHintMax: c.keyHintMax,
     },
     auth: 'device',
     // The client renders limits from this rather than hard-coding them, so the
@@ -351,7 +436,7 @@ route('POST', /^\/api\/auth\/register$/, async (request, env) => {
     userAgent: str(request.headers.get('user-agent'), 200),
   });
 
-  return json({ user: publicUser(row), token, expiresAt: now() + SESSION_TTL_MS }, 201);
+  return json({ user: publicUser(row, env), token, expiresAt: now() + SESSION_TTL_MS }, 201);
 });
 
 route('POST', /^\/api\/auth\/login$/, async (request, env) => {
@@ -396,7 +481,7 @@ route('POST', /^\/api\/auth\/login$/, async (request, env) => {
     userAgent: str(request.headers.get('user-agent'), 200),
   });
 
-  return json({ user: publicUser(row), token, expiresAt: now() + SESSION_TTL_MS });
+  return json({ user: publicUser(row, env), token, expiresAt: now() + SESSION_TTL_MS });
 });
 
 route('POST', /^\/api\/auth\/logout$/, async (request, env) => {
@@ -415,7 +500,7 @@ route('GET', /^\/api\/auth\/me$/, async (request, env) => {
   const client = clientOf(request);
   const used = await storageUsed(env.STORE.db, ownerKeyOf(id.user));
   return json({
-    user: publicUser(id.user),
+    user: publicUser(id.user, env),
     quota: { ...q, storageBytes: q.storageBytes, storageUsed: used, storageLeft: Math.max(0, q.storageBytes - used) },
   });
 });
@@ -447,6 +532,15 @@ route('PATCH', /^\/api\/auth\/me$/, async (request, env) => {
 
   if (typeof payload.bio === 'string') patch.bio = str(payload.bio, 200);
 
+  // Profile design. Each field is sanitised to a value the browser can render
+  // but cannot be abused with: logo must be an https image URL, accent a #hex
+  // colour, bg a plain CSS value (gradients allowed, url() not). An invalid
+  // value clears the field rather than failing the whole request, so a stale
+  // client cannot get locked out of editing its bio.
+  if (typeof payload.logo === 'string') patch.logo = sanitizeLogo(payload.logo);
+  if (typeof payload.accent === 'string') patch.accent = sanitizeAccent(payload.accent);
+  if (typeof payload.bg === 'string') patch.bg = sanitizeBg(payload.bg);
+
   // Changing a password requires the current one, otherwise a stolen session is
   // enough to lock the owner out permanently.
   if (typeof payload.password === 'string' && payload.password) {
@@ -475,10 +569,10 @@ route('PATCH', /^\/api\/auth\/me$/, async (request, env) => {
       clientId: clientOf(request) || '',
       userAgent: str(request.headers.get('user-agent'), 200),
     });
-    return json({ user: publicUser(row), token, reauth: true });
+    return json({ user: publicUser(row, env), token, reauth: true });
   }
 
-  return json({ user: publicUser(row) });
+  return json({ user: publicUser(row, env) });
 });
 
 /* ---------------------------------------------------------------- social -- */
@@ -495,29 +589,33 @@ route('GET', /^\/api\/users$/, async (request, env, _m, url) => {
   // leak and a cheap way to enumerate accounts to spam.
   if (search.length < 2) return fail(400, 'search needs at least 2 characters');
   const rows = await env.STORE.searchUsers(search, { excludeId: id?.user.id, limit: 20 });
-  return json({ users: rows.map(publicUser) });
+  return json({ users: rows.map((u) => publicUser(u, env)) });
 });
 
-route('GET', /^\/api\/users\/([A-Za-z0-9_-]{3,32})$/, async (request, env, m) => {
+route('GET', /^\/api\/users\/([A-Za-z0-9_-]{3,32})$/, async (request, env, m, url) => {
   const viewer = await identity(request, env);
   const row = await env.STORE.getUser(m[1]);
   if (!row) return fail(404, 'no such user');
   const items = await env.STORE.itemsOfUser(row.id, { limit: 20 });
+  // Same rule as the feed: a locked item shows its card, not its contents.
+  const views = await Promise.all(items.map(async (it) => itemView(env.STORE, it, {
+    unlocked: await isUnlocked(it, request, url), ownerId: row.id,
+  })));
   return json({
-    user: publicUser(row),
+    user: publicUser(row, env),
     isFollowing: await env.STORE.isFollowing(viewer?.user.id, row.id),
-    items: await Promise.all(items.map((it) => itemView(env.STORE, it))),
+    items: views,
   });
 });
 
 route('GET', /^\/api\/users\/([A-Za-z0-9_-]{3,32})\/followers$/, async (request, env, m) => {
   const rows = await env.STORE.followersOf(m[1], { limit: 100 });
-  return json({ users: rows.map(publicUser) });
+  return json({ users: rows.map((u) => publicUser(u, env)) });
 });
 
 route('GET', /^\/api\/users\/([A-Za-z0-9_-]{3,32})\/following$/, async (request, env, m) => {
   const rows = await env.STORE.followingOf(m[1], { limit: 100 });
-  return json({ users: rows.map(publicUser) });
+  return json({ users: rows.map((u) => publicUser(u, env)) });
 });
 
 /**
@@ -533,7 +631,7 @@ route('POST', /^\/api\/users\/([A-Za-z0-9_-]{3,32})\/follow$/, async (request, e
 
   const r = await env.STORE.followUser(id.user.id, target.id);
   const fresh = await env.STORE.getUser(target.id);
-  return json({ ok: r.ok, following: true, reason: r.reason, user: publicUser(fresh) }, r.reason === 'self' ? 400 : 200);
+  return json({ ok: r.ok, following: true, reason: r.reason, user: publicUser(fresh, env) }, r.reason === 'self' ? 400 : 200);
 });
 
 route('DELETE', /^\/api\/users\/([A-Za-z0-9_-]{3,32})\/follow$/, async (request, env, m) => {
@@ -543,7 +641,7 @@ route('DELETE', /^\/api\/users\/([A-Za-z0-9_-]{3,32})\/follow$/, async (request,
   if (!target) return fail(404, 'no such user');
   await env.STORE.unfollowUser(id.user.id, target.id);
   const fresh = await env.STORE.getUser(target.id);
-  return json({ ok: true, following: false, user: publicUser(fresh) });
+  return json({ ok: true, following: false, user: publicUser(fresh, env) });
 });
 
 /** Like is a toggle: POST likes, DELETE unlikes, both idempotent. */
@@ -634,7 +732,9 @@ route('GET', /^\/api\/me$/, async (request, env) => {
   const { STORE } = env;
   await STORE.touchClient(id);
   const mine = await STORE.listItems({ author: id, limit: 100 });
-  const items = await Promise.all(mine.items.map((row) => itemView(STORE, row)));
+  // The author's own client id is the item author, so these are their items and
+  // locked ones stay readable here.
+  const items = await Promise.all(mine.items.map((row) => itemView(STORE, row, { unlocked: true })));
   return json({
     author: await authorTag(id),
     items,
@@ -661,7 +761,13 @@ route('GET', /^\/api\/items$/, async (request, env, _m, url) => {
     limit: clamp(Number(q.get('limit')) || 30, 1, 60),
     offset: Math.max(0, Number(q.get('offset')) || 0),
   });
-  return json({ total, items: await Promise.all(items.map((row) => itemView(STORE, row))) });
+  // A locked item is listed by its shell only. Without this check the feed would
+  // hand out the body and preview of every locked item, which is the whole point
+  // of the lock.
+  const views = await Promise.all(items.map(async (row) => itemView(STORE, row, {
+    unlocked: await isUnlocked(row, request, url),
+  })));
+  return json({ total, items: views });
 });
 
 route('POST', /^\/api\/items$/, async (request, env) => {
@@ -724,6 +830,7 @@ route('POST', /^\/api\/items$/, async (request, env) => {
 
   const secret = newSecret();
   const t = now();
+  const accessKey = str(payload.accessKey, c.accessKeyMax);
   const row = await STORE.createItem({
     id: newId(8),
     ...value,
@@ -731,6 +838,11 @@ route('POST', /^\/api\/items$/, async (request, env) => {
     author: id,
     author_label: str(payload.authorLabel, c.labelMax),
     secret_hash: await secretHash(secret),
+    // Only the hash is stored, and the plaintext is returned once, here - the
+    // same rule as the edit secret. A key cannot be recovered later, so the
+    // author is told to keep it and can always set another one.
+    access_key_hash: accessKey ? await secretHash(accessKey) : null,
+    key_hint: accessKey ? str(payload.keyHint, c.keyHintMax) : '',
     created_at: t,
     updated_at: t,
   });
@@ -744,14 +856,64 @@ route('POST', /^\/api\/items$/, async (request, env) => {
   }
   const view = await itemView(STORE, row, { full: true });
   await env.PLUGINS.run('item:published', view, ctxOf(request, env));
-  return json({ item: view, secret, registered: !!who }, 201);
+  return json({ item: view, secret, accessKey: accessKey || null, registered: !!who }, 201);
 });
 
-route('GET', /^\/api\/items\/([A-Za-z0-9]{4,16})$/, async (_r, env, m) => {
-  const row = await env.STORE.getItem(m[1]);
+/**
+ * Item detail. Answers the viewer's like state and the owner's follow state so
+ * the page can render both buttons without a second round trip, and counts the
+ * view once per client id.
+ *
+ * A locked item without its key still returns 200 with the shell and
+ * `locked: true` - not 403 - so the page can show the lock screen, the hint and
+ * the author's follow button instead of an error.
+ */
+route('GET', /^\/api\/items\/([A-Za-z0-9]{4,16})$/, async (request, env, m, url) => {
+  const { STORE } = env;
+  const row = await STORE.getItem(m[1]);
   if (!row) return fail(404, 'not found');
-  await env.STORE.incItemHits(m[1]);
-  return json({ item: await itemView(env.STORE, await env.STORE.getItem(m[1]), { full: true }) });
+  const viewer = await identity(request, env);
+  const open = await isUnlocked(row, request, url);
+  await STORE.incItemHits(m[1], clientOf(request), { viewerUserId: viewer?.user.id });
+  const fresh = await STORE.getItem(m[1]);
+  const view = await itemView(STORE, fresh, { full: true, unlocked: open });
+  const uid = viewer?.user.id;
+  return json({
+    item: view,
+    liked: uid ? await STORE.hasLiked(fresh.id, uid) : false,
+    isFollowing: uid && view?.ownerId && view.ownerId !== uid
+      ? await STORE.isFollowing(uid, view.ownerId)
+      : false,
+  });
+});
+
+/**
+ * Tries an access key against a locked item. Separate from the detail route so a
+ * wrong guess costs one keyed hash rather than a full item assembly, and so the
+ * client gets one unambiguous yes/no to render.
+ */
+route('POST', /^\/api\/items\/([A-Za-z0-9]{4,16})\/unlock$/, async (request, env, m) => {
+  const { STORE } = env;
+  const c = config(env);
+  const row = await STORE.getItem(m[1]);
+  if (!row) return fail(404, 'not found');
+  if (!row.access_key_hash) return json({ ok: true, unlocked: true });
+
+  const client = clientOf(request) || 'anon';
+  if (!(await STORE.throttle(`unlock:${client}`, 'write', { cap: 10, windowMs: 60_000 }))) {
+    return fail(429, 'too many attempts, try later');
+  }
+
+  let payload = {};
+  try {
+    payload = await readJson(request, 4096);
+  } catch {
+    payload = {};
+  }
+  const key = str(payload.key, c.accessKeyMax) || keyOf(request);
+  if (!key) return fail(400, 'key is required');
+  if (!(await secretMatches(key, row.access_key_hash))) return fail(403, 'wrong key');
+  return json({ ok: true, unlocked: true });
 });
 
 route('PATCH', /^\/api\/items\/([A-Za-z0-9]{4,16})$/, async (request, env, m) => {
@@ -787,6 +949,16 @@ route('PATCH', /^\/api\/items\/([A-Za-z0-9]{4,16})$/, async (request, env, m) =>
   if (payload.language !== undefined && LANGUAGES.includes(payload.language)) patch.language = payload.language;
   if (payload.tags !== undefined) patch.tags = tags(payload.tags).join(' ');
   if (payload.visibility !== undefined && VISIBILITY.has(payload.visibility)) patch.visibility = payload.visibility;
+
+  // An empty accessKey removes the lock, a new one replaces it. The previous key
+  // is not readable, so this is the only way to change it - which is why the
+  // editor says so next to the field.
+  if (payload.accessKey !== undefined) {
+    const accessKey = str(payload.accessKey, c.accessKeyMax);
+    patch.access_key_hash = accessKey ? await secretHash(accessKey) : null;
+    if (!accessKey) patch.key_hint = '';
+  }
+  if (payload.keyHint !== undefined) patch.key_hint = str(payload.keyHint, c.keyHintMax);
 
   const updated = await STORE.updateItem(m[1], patch);
   const view = await itemView(STORE, updated, { full: true });
@@ -952,22 +1124,28 @@ async function serveFile(request, env, file, { inline, render = false }) {
   return new Response(object.body, { status: 200, headers: { ...headers, 'Content-Length': String(file.size) } });
 }
 
-route('GET', /^\/f\/([A-Za-z0-9]{4,16})$/, async (request, env, m) => {
+route('GET', /^\/f\/([A-Za-z0-9]{4,16})$/, async (request, env, m, url) => {
   const file = await env.STORE.getFile(m[1]);
   if (!file) return fail(404, 'not found');
+  const locked = await lockedGate(request, env, file.itemId, url);
+  if (locked) return locked;
   return serveFile(request, env, file, { inline: false });
 });
 
-route('GET', /^\/f\/([A-Za-z0-9]{4,16})\/raw$/, async (request, env, m) => {
+route('GET', /^\/f\/([A-Za-z0-9]{4,16})\/raw$/, async (request, env, m, url) => {
   const file = await env.STORE.getFile(m[1]);
   if (!file) return fail(404, 'not found');
+  const locked = await lockedGate(request, env, file.itemId, url);
+  if (locked) return locked;
   return serveFile(request, env, file, { inline: true });
 });
 
 /** Media needs a renderable Content-Type, so raw media is served apart from text. */
-route('GET', /^\/m\/([A-Za-z0-9]{4,16})$/, async (request, env, m) => {
+route('GET', /^\/m\/([A-Za-z0-9]{4,16})$/, async (request, env, m, url) => {
   const file = await env.STORE.getFile(m[1]);
   if (!file) return fail(404, 'not found');
+  const locked = await lockedGate(request, env, file.itemId, url);
+  if (locked) return locked;
   const etag = `"${file.sha256}"`;
   if (request.headers.get('if-none-match') === etag) {
     return new Response(null, { status: 304, headers: { ETag: etag, 'Cache-Control': 'public, max-age=31536000, immutable' } });
@@ -991,10 +1169,12 @@ route('GET', /^\/m\/([A-Za-z0-9]{4,16})$/, async (request, env, m) => {
   });
 });
 
-route('GET', /^\/r\/([A-Za-z0-9]{4,16})$/, async (_r, env, m) => {
+route('GET', /^\/r\/([A-Za-z0-9]{4,16})$/, async (request, env, m, url) => {
   const row = await env.STORE.getItem(m[1]);
   if (!row) return fail(404, 'not found');
-  await env.STORE.incItemHits(m[1]);
+  if (!(await isUnlocked(row, request, url))) return fail(403, 'key required');
+  const viewer = await identity(request, env);
+  await env.STORE.incItemHits(m[1], clientOf(request), { viewerUserId: viewer?.user.id });
   return new Response(row.body, {
     status: 200,
     headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', ...SECURITY_HEADERS },
@@ -1021,7 +1201,7 @@ route('GET', /^\/$/, async (_r, env) => json({
  * tests - the test harness calls the worker directly and never goes through a
  * preflight - it just fails in a real browser, as a CORS error with no explanation.
  */
-const ALLOWED_HEADERS = 'content-type, x-cheatlab-client, x-cheatlab-secret, x-cheatlab-session, x-cheatlab-pow, x-cheatlab-pow-nonce, x-filename';
+const ALLOWED_HEADERS = 'content-type, x-cheatlab-client, x-cheatlab-secret, x-cheatlab-session, x-cheatlab-pow, x-cheatlab-pow-nonce, x-cheatlab-key, x-filename';
 const ALLOWED_METHODS = 'GET, HEAD, POST, PATCH, DELETE, OPTIONS';
 
 function withCors(response, origin, preflight) {

@@ -1,4 +1,14 @@
 const KEY_STORE = 'cheatlab.keys';
+/**
+ * Access keys for locked publications.
+ *
+ * Kept apart from the edit keys on purpose: the edit secret is a capability
+ * that grants write access, while the access key is a shareable read password
+ * that the author hands to readers. Mixing them in one blob would mean every
+ * shared key also came with edit rights, so the export on "Мои загрузки" would
+ * leak them together.
+ */
+const ACCESS_STORE = 'cheatlab.access';
 const ID_STORE = 'cheatlab.client';
 
 const TYPE_ICON = { script: 'code', app: 'box', paste: 'clip', image: 'image', video: 'video', file: 'file' };
@@ -23,8 +33,8 @@ function h(tag, props, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(props || {})) {
     if (v === null || v === undefined || v === false) continue;
-        if (k === 'class') el.className = v;
-        else if (k === 'text') el.textContent = v;
+    if (k === 'class') el.className = v;
+    else if (k === 'text') el.textContent = v;
         else if (k === 'dataset') Object.assign(el.dataset, v);
         else if (k.startsWith('on')) el.addEventListener(k.slice(2).toLowerCase(), v);
         else if (k === 'href') el.setAttribute('href', appPath(String(v)));
@@ -93,6 +103,24 @@ function rememberKey(id, secret) {
   const keys = loadKeys();
   keys[id] = secret;
   saveKeys(keys);
+}
+
+/** Access keys, shaped exactly like the edit keys: { itemId: key }. */
+function loadAccess() {
+  try { return JSON.parse(localStorage.getItem(ACCESS_STORE) || '{}'); } catch { return {}; }
+}
+function saveAccess(map) {
+  try { localStorage.setItem(ACCESS_STORE, JSON.stringify(map || {})); } catch { /* private mode */ }
+}
+function accessFor(id) { return loadAccess()[id] || null; }
+function rememberAccess(id, key) {
+  const map = loadAccess();
+  map[id] = key;
+  saveAccess(map);
+}
+function forgetAccess(id) {
+  const map = loadAccess();
+  if (map[id]) { delete map[id]; saveAccess(map); }
 }
 
 /**
@@ -220,17 +248,31 @@ const API = ((document.querySelector('meta[name="cheatlab-api"]') || {}).content
 const STATIC_HOSTS = /(\.|^)(github\.io|githubusercontent\.com|pages\.dev|netlify\.app|vercel\.app)$/i;
 const API_UNSET = !API && STATIC_HOSTS.test(location.hostname);
 
-const fileUrl = (id) => `${API}/f/${id}`;
-const rawFileUrl = (id) => `${API}/f/${id}/raw`;
-const mediaUrl = (id) => `${API}/m/${id}`;
-const textUrl = (id) => `${API}/r/${id}`;
+/**
+ * Media, file and raw URLs.
+ *
+ * `<img>`, `<video>` and "open in a new tab" cannot set request headers, so for
+ * a locked item the access key travels as `?key=` instead - the only routes that
+ * accept it. For an open item the query is omitted entirely, so a shared link
+ * never carries someone else's key in its URL.
+ */
+const withKey = (url, key) => (key ? `${url}${url.includes('?') ? '&' : '?'}key=${encodeURIComponent(key)}` : url);
+const fileUrl = (id, key) => withKey(`${API}/f/${id}`, key);
+const rawFileUrl = (id, key) => withKey(`${API}/f/${id}/raw`, key);
+const mediaUrl = (id, key) => withKey(`${API}/m/${id}`, key);
+const textUrl = (id, key) => withKey(`${API}/r/${id}`, key);
 const isImageFile = (f) => /^image\//.test(f.mime || '');
 const isVideoFile = (f) => /^video\//.test(f.mime || '');
 const isAudioFile = (f) => /^audio\//.test(f.mime || '');
 
-async function api(path, { method = 'GET', body, secret, signal, noAuth, headers: extra } = {}) {
+/**
+ * One API call. `key` sends an item's access key in `x-cheatlab-key`, which is
+ * how a locked publication answers with its contents instead of a shell.
+ */
+async function api(path, { method = 'GET', body, secret, key, signal, noAuth, headers: extra } = {}) {
   const headers = { 'x-cheatlab-client': CLIENT };
   if (secret) headers['x-cheatlab-secret'] = secret;
+  if (key) headers['x-cheatlab-key'] = key;
   Object.assign(headers, extra || {});
   // Sent on everything except the endpoints that establish or end a session, so
   // a stale token cannot make a fresh login look signed-in.
@@ -431,8 +473,9 @@ function renderAccountChip() {
       class: 'rail-stat', href: `/u/${account.id}`,
       title: `@${account.nick}`,
     },
-      icon('user', 'i i-sm'),
+      avatarFor(account, 24),
       h('span', { text: account.nick }),
+      account.admin ? h('span', { class: 'admin-badge admin-badge-sm', title: 'Администратор' }, icon('star', 'i i-sm')) : null,
       h('span', { class: 'spacer' }),
       h('span', { text: `${account.posts ?? 0}` }),
     ));
@@ -663,10 +706,87 @@ async function copy(text, label = 'Скопировано') {
 
 // ---------------------------------------------------------------- shared bits
 
+/* ---------------------------------------------------------------- social bits */
+
+/** Small "N" counter with an icon, hidden at zero to keep rows quiet. */
+function counter(iconName, value, cls = '') {
+  if (!value) return null;
+  return h('span', { class: cls }, icon(iconName, 'i i-sm'), String(value));
+}
+
+/**
+ * Profile avatar: the author's own image when they set one, otherwise their
+ * first letter. `onerror` falls back to the letter because a hotlinked logo can
+ * 404 or block the request at any time and an empty circle would look broken.
+ */
+function avatarFor(user, size) {
+  const letter = h('span', { class: 'avatar-letter', text: (user.nick || '?').slice(0, 1).toUpperCase() });
+  const box = h('span', {
+    class: 'avatar',
+    style: `width:${size}px;height:${size}px;font-size:${Math.round(size * 0.45)}px`,
+  }, letter);
+  if (!user.logo) return box;
+  // The letter stays underneath and simply gets covered, so a failed load needs
+  // no DOM change at all: a hotlinked logo can 404 or be blocked at any time.
+  box.prepend(h('img', {
+    class: 'avatar-img', src: user.logo, alt: '', loading: 'lazy', decoding: 'async',
+  }));
+  return box;
+}
+
+/**
+ * Like toggle.
+ *
+ * Requires an account on the server, so anonymous visitors get a link to the
+ * auth page instead of a button that would only 401. State is written locally
+ * from the response rather than refetching the item: the server returns the
+ * authoritative count, and a round trip per tap is not worth it.
+ */
+function likeButton(item, state) {
+  let liked = Boolean(state?.liked);
+  let count = Number(item.likes) || 0;
+
+  const label = h('span', { class: 'like-count' });
+  const render = () => {
+    btn.classList.toggle('is-on', liked);
+    btn.setAttribute('aria-pressed', liked ? 'true' : 'false');
+    label.textContent = String(count);
+  };
+
+  const btn = h('button', {
+    class: 'btn btn-sm btn-like',
+    type: 'button',
+    onclick: async () => {
+      if (!signedIn()) { navigate('/auth'); return; }
+      btn.disabled = true;
+      try {
+        const res = await api(`/api/items/${item.id}/like`, { method: liked ? 'DELETE' : 'POST' });
+        liked = Boolean(res.liked);
+        count = Number(res.likes) || 0;
+        render();
+      } catch (err) {
+        toast(err.message, true);
+      } finally {
+        btn.disabled = false;
+      }
+    },
+  }, icon('heart', 'i i-sm'), label);
+
+  render();
+  return btn;
+}
+
+/** Marks a row whose contents are behind a key. */
+const lockChip = (item) => (item.locked
+  ? h('span', { class: 'chip chip-lock', title: item.keyHint ? `Ключ: ${item.keyHint}` : 'Под ключом' },
+      icon('lock', 'i i-sm'), item.keyHint || 'под ключом')
+  : null);
+
 function typeRow(item) {
   const meta = h('div', { class: 'row-meta' },
     h('span', {}, icon('user', 'i i-sm'), item.author),
-    h('span', {}, icon('eye', 'i i-sm'), String(item.hits)),
+    counter('eye', item.hits),
+    counter('heart', item.likes),
     item.language !== 'text' ? h('span', { text: LANG_LABEL[item.language] || item.language }) : null,
     item.files.length
       ? h('span', {}, icon('download', 'i i-sm'), `${item.files.length} / ${bytes(item.fileSize)}`)
@@ -679,12 +799,18 @@ function typeRow(item) {
         item.tags.map((t) => h('a', { class: 'tag', href: `/search?tag=${encodeURIComponent(t)}`, text: `#${t}` })))
     : null;
 
-  // first image gets a thumbnail so media feeds are browsable as a gallery
-  const thumb = item.files.find((f) => isImageFile(f) && f.size);
+  // A locked item the reader cannot open gets no thumbnail and no file line: the
+  // image route answers 403 without the key, and the list itself is withheld by
+  // the server, so there is nothing to point at.
+  const key = item.locked ? accessFor(item.id) : null;
+  const visible = !item.locked || item.unlocked !== false;
+  const thumb = visible
+    ? item.files.find((f) => isImageFile(f) && f.size)
+    : null;
 
   return h('a', { class: 'row', href: `/i/${item.id}` },
     thumb
-      ? h('span', { class: 'row-thumb' }, h('img', { src: mediaUrl(thumb.id), alt: '', loading: 'lazy', decoding: 'async' }))
+      ? h('span', { class: 'row-thumb' }, h('img', { src: mediaUrl(thumb.id, key), alt: '', loading: 'lazy', decoding: 'async' }))
       : h('span', { class: 'row-mark' }, icon(TYPE_ICON[item.type] || 'clip', 'i i-sm')),
     h('span', {},
       h('span', { class: 'row-title', text: item.title }),
@@ -692,7 +818,8 @@ function typeRow(item) {
       tags,
     ),
     h('span', { class: 'row-right' },
-      item.visibility === 'unlisted' ? icon('lock', 'i i-sm') : null,
+      lockChip(item),
+      item.visibility === 'unlisted' ? icon('link', 'i i-sm') : null,
       h('span', { text: when(item.createdAt) }),
     ),
   );
@@ -792,57 +919,55 @@ async function viewFeed(path, url) {
 }
 
 async function viewItem(id) {
-  const { item } = await api(`/api/items/${id}`);
+  const stored = accessFor(id);
+  const { item, liked, isFollowing } = await api(`/api/items/${id}`, { key: stored || undefined });
   const secret = keyFor(id);
+  // The key travels in the header for XHR-shaped calls and in the query string
+  // for <img>/<video>/"open in new tab", which cannot set headers. A wrong key
+  // stored from an earlier typo must not be retried silently on every render,
+  // so a 403 here drops it and the reader gets the lock screen again.
+  const key = item.unlocked ? stored : null;
+  // `locked` describes the publication; `unlocked` describes this particular
+  // request. Only the combination means the contents are still being withheld,
+  // and it is what decides between the lock screen and the real thing - testing
+  // `item.locked` alone would keep showing the form to a reader who already
+  // typed the right key.
+  const gated = item.locked && item.unlocked === false;
 
   /**
    * Media previews. Rendered above the file table so an image or video post
    * reads as media at a glance instead of as a download link. Video relies on
    * the API's byte-range support, and `preload="metadata"` keeps large clips
    * from being fetched in full.
+   *
+   * A locked item never reaches this branch - the server sends no file list at
+   * all until a key matches - so nothing here has to guess whether a media URL
+   * is going to answer 403.
    */
   const mediaFiles = item.files.filter((f) => isImageFile(f) || isVideoFile(f) || isAudioFile(f));
   const media = mediaFiles.length
     ? h('div', { class: 'media' }, mediaFiles.map((f) => {
+        const src = mediaUrl(f.id, key);
+        const caption = h('figcaption', {},
+          h('a', { href: src, target: '_blank', rel: 'noopener', text: f.name }),
+          h('span', { class: 'spacer' }),
+          h('a', { class: 'btn btn-sm btn-ghost', href: fileUrl(f.id, key) }, icon('download', 'i i-sm'), 'Скачать'),
+        );
         if (isImageFile(f)) {
           return h('figure', { class: 'media-item' },
-            h('img', {
-              class: 'media-img',
-              src: mediaUrl(f.id),
-              alt: f.name,
-              loading: 'lazy',
-              decoding: 'async',
-            }),
-            h('figcaption', {},
-              h('a', { href: mediaUrl(f.id), target: '_blank', rel: 'noopener', text: f.name }),
-              h('span', { class: 'spacer' }),
-              h('a', { class: 'btn btn-sm btn-ghost', href: fileUrl(f.id) }, icon('download', 'i i-sm'), 'Скачать'),
-            ),
+            h('img', { class: 'media-img', src, alt: f.name, loading: 'lazy', decoding: 'async' }),
+            caption,
           );
         }
         if (isVideoFile(f)) {
           return h('figure', { class: 'media-item' },
-            h('video', {
-              class: 'media-video',
-              src: mediaUrl(f.id),
-              controls: true,
-              preload: 'metadata',
-              playsinline: true,
-            }),
-            h('figcaption', {},
-              h('a', { href: mediaUrl(f.id), target: '_blank', rel: 'noopener', text: f.name }),
-              h('span', { class: 'spacer' }),
-              h('a', { class: 'btn btn-sm btn-ghost', href: fileUrl(f.id) }, icon('download', 'i i-sm'), 'Скачать'),
-            ),
+            h('video', { class: 'media-video', src, controls: true, preload: 'metadata', playsinline: true }),
+            caption,
           );
         }
         return h('figure', { class: 'media-item' },
-          h('audio', { class: 'media-audio', src: mediaUrl(f.id), controls: true, preload: 'metadata' }),
-          h('figcaption', {},
-            h('a', { href: mediaUrl(f.id), target: '_blank', rel: 'noopener', text: f.name }),
-            h('span', { class: 'spacer' }),
-            h('a', { class: 'btn btn-sm btn-ghost', href: fileUrl(f.id) }, icon('download', 'i i-sm'), 'Скачать'),
-          ),
+          h('audio', { class: 'media-audio', src, controls: true, preload: 'metadata' }),
+          caption,
         );
       }))
     : null;
@@ -860,9 +985,9 @@ async function viewItem(id) {
           h('td', { class: 'name', style: 'color:var(--mute)', text: f.sha256 || '' }),
           h('td', { class: 'num', text: bytes(f.size) }),
           h('td', { class: 'act' },
-            h('a', { class: 'btn btn-sm', href: fileUrl(f.id) }, icon('download', 'i i-sm'), 'Скачать'),
+            h('a', { class: 'btn btn-sm', href: fileUrl(f.id, key) }, icon('download', 'i i-sm'), 'Скачать'),
             ' ',
-            h('a', { class: 'btn btn-sm btn-ghost', href: rawFileUrl(f.id), target: '_blank', rel: 'noopener' }, icon('eye', 'i i-sm'), 'Открыть'),
+            h('a', { class: 'btn btn-sm btn-ghost', href: rawFileUrl(f.id, key), target: '_blank', rel: 'noopener' }, icon('eye', 'i i-sm'), 'Открыть'),
           ),
         ))),
       )
@@ -875,11 +1000,99 @@ async function viewItem(id) {
           h('span', { class: 'spacer' }),
           h('span', { text: `${item.body.split('\n').length} строк` }),
           h('button', { class: 'btn btn-sm btn-ghost', onclick: () => copy(item.body, 'Код скопирован') }, icon('copy', 'i i-sm'), 'Копировать'),
-          h('a', { class: 'btn btn-sm btn-ghost', href: textUrl(item.id), target: '_blank', rel: 'noopener' }, icon('link', 'i i-sm'), 'Сырой'),
+          h('a', { class: 'btn btn-sm btn-ghost', href: textUrl(item.id, key), target: '_blank', rel: 'noopener' }, icon('link', 'i i-sm'), 'Сырой'),
         ),
         h('pre', { class: 'code' }, h('code', { text: item.body })),
       )
     : null;
+
+  /**
+   * Lock screen.
+   *
+   * The title, tags and counters are already public, so the reader knows what
+   * they are about to open before typing anything. The key is checked against
+   * the dedicated unlock route first: a wrong guess then costs one keyed hash
+   * instead of a full page load, and the stored copy is only written on a
+   * confirmed match.
+   */
+  const lockScreen = () => {
+    const input = h('input', {
+      class: 'input', type: 'password', name: 'key', maxlength: config.limits?.accessKeyMax || 64,
+      placeholder: 'ключ доступа', autocomplete: 'off', spellcheck: false,
+    });
+    const notice = h('p', { class: 'form-error', role: 'alert' });
+    const submit = h('button', { class: 'btn btn-primary', type: 'submit' }, icon('key', 'i i-sm'), 'Открыть');
+
+    const form = h('form', {
+      class: 'panel lock-panel',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        const value = input.value.trim();
+        if (!value) { notice.textContent = 'Введи ключ.'; return; }
+        submit.disabled = true;
+        notice.textContent = '';
+        try {
+          await api(`/api/items/${item.id}/unlock`, { method: 'POST', body: { key: value } });
+          rememberAccess(item.id, value);
+          toast('Публикация открыта');
+          route();
+        } catch (err) {
+          notice.textContent = err.status === 429 ? err.message : 'Неверный ключ.';
+          submit.disabled = false;
+          input.select();
+        }
+      },
+    },
+      h('div', { class: 'lock-head' },
+        icon('lock'),
+        h('div', {},
+          h('h2', { text: 'Публикация под ключом' }),
+          h('p', { class: 'hint', text: item.keyHint
+            ? `Подсказка от автора: ${item.keyHint}`
+            : 'Автор не оставил подсказку. Ключ выдаётся вместе со ссылкой.' }),
+        ),
+      ),
+      h('div', { class: 'field-row', style: 'margin-top:16px' }, input, submit),
+      notice,
+    );
+
+    return h('div', { class: 'lock-screen' },
+      h('div', { class: 'lock-fade', 'aria-hidden': 'true' }),
+      form,
+    );
+  };
+
+  const owner = item.owner;
+  const mine = Boolean(account && owner && account.id === owner.id);
+  const followBtn = h('button', {
+    class: 'btn btn-sm', type: 'button', disabled: mine,
+    onclick: async () => {
+      followBtn.disabled = true;
+      try {
+        const res = await api(`/api/users/${owner.id}/follow`, { method: isFollowing ? 'DELETE' : 'POST' });
+        followBtn.textContent = res.following ? 'Отписаться' : 'Подписаться';
+        followBtn.classList.toggle('btn-primary', res.following);
+      } catch (err) { toast(err.message, true); }
+      finally { followBtn.disabled = mine; }
+    },
+  }, isFollowing ? 'Отписаться' : 'Подписаться');
+
+  // A div, not a link: the follow button is interactive and nesting a button
+  // inside an anchor is invalid HTML, so only the name and the avatar are the
+  // link target.
+  const author = owner
+    ? h('div', { class: 'author-row' },
+        h('a', { class: 'author-link', href: `/u/${owner.id}` },
+          avatarFor(owner, 40),
+          h('span', {},
+            h('span', { class: 'author-nick', text: owner.nick }),
+            h('span', { class: 'author-sub', text: 'автор публикации' }),
+          ),
+        ),
+        h('span', { class: 'spacer' }),
+        signedIn() && !mine ? followBtn : null,
+      )
+    : h('span', { text: item.authorLabel || item.author });
 
   const sidebar = h('div', {},
     h('div', { class: 'panel' },
@@ -889,15 +1102,40 @@ async function viewItem(id) {
         h('dt', { text: 'Автор' }), h('dd', { text: item.authorLabel || item.author }),
         h('dt', { text: 'Создано' }), h('dd', { text: when(item.createdAt) }),
         h('dt', { text: 'Просмотры' }), h('dd', { text: String(item.hits) }),
+        h('dt', { text: 'Лайки' }), h('dd', { text: String(item.likes ?? 0) }),
         h('dt', { text: 'Видимость' }), h('dd', { text: item.visibility === 'unlisted' ? 'по ссылке' : 'в ленте' }),
+        item.locked ? h('dt', { text: 'Доступ' }) : null,
+        item.locked ? h('dd', {}, lockChip(item)) : null,
         h('dt', { text: 'ID' }), h('dd', { text: item.id }),
       ),
     ),
     h('div', { class: 'panel' },
       h('div', { class: 'panel-title', text: 'Действия' }),
       h('div', { class: 'actions' },
+        likeButton(item, { liked }),
         h('button', { class: 'btn btn-sm', onclick: () => copy(location.href, 'Ссылка скопирована') }, icon('link', 'i i-sm'), 'Ссылка'),
         item.body ? h('button', { class: 'btn btn-sm', onclick: () => copy(item.body, 'Код скопирован') }, icon('copy', 'i i-sm'), 'Код') : null,
+        // Only the author can rotate a key, and only the author can drop one, so
+        // this button is behind the same edit secret as "Изменить" and "Удалить".
+        secret ? h('button', {
+          class: 'btn btn-sm',
+          onclick: async () => {
+            // The plaintext was only ever shown once, at publish time, so the
+            // only options left are replacing it or dropping the lock.
+            const answer = prompt('Новый ключ доступа (пусто — снять защиту):');
+            if (answer === null) return;
+            try {
+              await api(`/api/items/${item.id}`, { method: 'PATCH', secret, body: { accessKey: answer } });
+              // Store the new key rather than dropping the old one, or the author
+              // would lock themselves out of a post they just published. An empty
+              // answer removes the lock, so there is nothing left to remember.
+              if (answer) rememberAccess(item.id, answer);
+              else forgetAccess(item.id);
+              toast(answer ? 'Ключ обновлён' : 'Защита снята');
+              route();
+            } catch (err) { toast(err.message, true); }
+          },
+        }, icon('key', 'i i-sm'), secret && item.locked ? 'Сменить ключ' : 'Защитить ключом') : null,
         secret ? h('a', { class: 'btn btn-sm', href: `/edit/${item.id}` }, icon('edit', 'i i-sm'), 'Изменить') : null,
         secret ? h('button', {
           class: 'btn btn-sm btn-danger',
@@ -908,6 +1146,7 @@ async function viewItem(id) {
               const keys = loadKeys();
               delete keys[item.id];
               saveKeys(keys);
+              forgetAccess(item.id);
               toast('Удалено');
               navigate('/me');
             } catch (err) { toast(err.message, true); }
@@ -929,10 +1168,12 @@ async function viewItem(id) {
     h('div', { class: 'split' },
       h('div', {},
         h('div', { class: 'pill pill-mute' }, icon(TYPE_ICON[item.type], 'i i-sm'), TYPE_LABEL[item.type]),
+        item.locked ? lockChip(item) : null,
         h('h1', { style: 'margin:8px 0 0', text: item.title }),
-        media,
-        files,
-        body,
+        author,
+        gated ? lockScreen() : media,
+        gated ? null : files,
+        gated ? null : body,
       ),
       sidebar,
     ),
@@ -952,6 +1193,12 @@ function editorForm(initial) {
     tags: (initial.tags || []).join(', '),
     body: initial.body || '',
     visibility: initial.visibility || 'public',
+    // Editing an already-locked item: the existing key is a hash on the server
+    // and cannot be read back, so the field starts empty and only what the
+    // author types here is sent. An empty box leaves the current key alone
+    // unless the "remove lock" checkbox is ticked.
+    wasLocked: Boolean(initial.locked),
+    removeLock: false,
   };
 
   const bodyInput = h('textarea', {
@@ -968,6 +1215,57 @@ function editorForm(initial) {
   const langField = h('label', { class: 'field' }, h('span', { class: 'label', text: 'Язык' }), langSel);
   const unlisted = h('input', { type: 'checkbox', onchange: (e) => { state.visibility = e.target.checked ? 'unlisted' : 'public'; } });
   if (state.visibility === 'unlisted') unlisted.checked = true;
+
+  /**
+   * Access-key fields.
+   *
+   * The key box is blank by design even when the item is already locked: the
+   * server only ever stores a hash, so there is nothing to prefill and
+   * pretending otherwise would be a lie. Typing a key replaces the current one,
+   * and the checkbox is the only way to remove a lock that the author no longer
+   * has the key to.
+   */
+  const keyMax = config.limits?.accessKeyMax || 64;
+  const hintMax = config.limits?.keyHintMax || 80;
+  const accessKeyInput = h('input', {
+    class: 'input', id: 'f-key', type: 'text', maxlength: keyMax, autocomplete: 'off', spellcheck: false,
+    placeholder: state.wasLocked ? 'оставь пустым, чтобы не менять' : 'необязательно',
+  });
+  const keyHintInput = h('input', {
+    class: 'input', id: 'f-key-hint', maxlength: hintMax, value: initial.keyHint || '',
+    placeholder: 'например: для своих',
+  });
+  const removeLock = h('input', {
+    type: 'checkbox', disabled: !state.wasLocked,
+    onchange: (e) => {
+      state.removeLock = e.target.checked;
+      accessKeyInput.disabled = e.target.checked;
+      if (e.target.checked) accessKeyInput.value = '';
+    },
+  });
+  if (state.wasLocked) {
+    keyHintInput.disabled = false;
+  }
+  const keyRow = h('label', { class: 'toggle' }, removeLock, h('span', { text: 'Снять защиту ключом' }));
+  const keyHintField = h('label', { class: 'field' },
+    h('span', { class: 'label', text: 'Подсказка к ключу' }), keyHintInput,
+    h('span', { class: 'hint', text: 'видна всем, кто откроет публикацию, сама публикация — нет' }),
+  );
+
+  const keyPanel = h('div', { class: 'panel' },
+    h('div', { class: 'panel-title' }, icon('key', 'i i-sm'), 'Доступ по ключу'),
+    h('div', { style: 'display:flex; flex-direction:column; gap:14px' },
+      h('label', { class: 'field' },
+        h('span', { class: 'label', text: 'Ключ' }),
+        accessKeyInput,
+        h('span', { class: 'hint', text: state.wasLocked
+          ? 'текущий ключ сохранить нельзя — сервер хранит только хеш. Введи новый, чтобы заменить.'
+          : 'показывается один раз при публикации и больше не восстанавливается' }),
+      ),
+      keyHintField,
+      state.wasLocked ? keyRow : null,
+    ),
+  );
 
   /**
    * Keeps the type tab, the body placeholder and the language hint in step.
@@ -1067,7 +1365,7 @@ function editorForm(initial) {
           ? h('div', { class: 'panel' },
               h('div', { class: 'panel-title', text: 'Уже загружено' }),
               existing.map((f) => h('div', { class: 'queue-row' },
-                h('a', { href: fileUrl(f.id), text: f.name }),
+                h('a', { href: fileUrl(f.id, initial.id ? accessFor(initial.id) : null), text: f.name }),
                 h('span', { class: 'spacer' }),
                 h('span', { text: bytes(f.size) }),
               )),
@@ -1085,6 +1383,7 @@ function editorForm(initial) {
           initial.id ? h('a', { class: 'btn btn-sm btn-ghost', href: `/i/${initial.id}` }, 'Отмена') : null,
         ),
       ),
+      keyPanel,
       h('div', { class: 'panel' },
         h('div', { class: 'panel-title', text: 'Как это работает' }),
         h('p', { class: 'hint', text: 'При публикации сервер выдаёт ключ редактирования — он остаётся в этом браузере. Секрет нужен, чтобы изменить или удалить запись. Анонимно — одна публикация в сутки с проверкой, с аккаунтом — четыре и без проверки.' }),
@@ -1098,6 +1397,7 @@ function editorForm(initial) {
     submit.disabled = true;
     submit.replaceChildren(icon('upload', 'i i-sm spin'), 'Публикация');
 
+    const accessKey = accessKeyInput.value.trim();
     const payload = {
       type: state.type,
       title: state.title.trim(),
@@ -1106,12 +1406,23 @@ function editorForm(initial) {
       body: state.body,
       visibility: state.visibility,
     };
+    // On create, an empty string is the same as no key. On edit it means "keep
+    // the current one", so the field is only sent when the author actually
+    // typed something or ticked "remove the lock".
+    if (accessKey || state.removeLock) {
+      payload.accessKey = state.removeLock ? '' : accessKey;
+      payload.keyHint = keyHintInput.value.trim();
+    } else if (keyHintInput.value.trim() && !initial.id) {
+      payload.keyHint = keyHintInput.value.trim();
+    }
 
     try {
       let id = initial.id;
       if (id) {
         await api(`/api/items/${id}`, { method: 'PATCH', body: payload, secret: keyFor(id) });
-        toast('Сохранено');
+        if (state.removeLock) forgetAccess(id);
+        else if (accessKey) rememberAccess(id, accessKey);
+        toast(state.removeLock ? 'Сохранено, защита снята' : 'Сохранено');
       } else {
         // Anonymous publishing is captcha-gated, so a 403 here is expected for
         // signed-out users rather than a failure: ask the question and retry.
@@ -1124,6 +1435,10 @@ function editorForm(initial) {
         toast(res.registered
           ? `Опубликовано от имени ${account ? account.nick : 'аккаунта'}. Ключ: ${res.secret}`
           : `Опубликовано. Ключ: ${res.secret}`);
+        // The access key comes back exactly once, from the create response, and
+        // never again - so this is the last chance to keep a working local copy
+        // for the author's own browser.
+        if (res.accessKey) rememberAccess(id, res.accessKey);
       }
 
       let failed = 0;
@@ -1173,7 +1488,18 @@ async function viewEdit(id) {
     );
     return;
   }
-  const { item } = await api(`/api/items/${id}`);
+  // The stored access key is sent along, otherwise the editor would load a bare
+  // shell for a locked publication and show every field empty.
+  const res = await api(`/api/items/${id}`, { key: accessFor(id) || undefined });
+  const item = res.item;
+  if (item.locked && !item.unlocked) {
+    $view.replaceChildren(
+      h('div', { class: 'page-head' }, h('h1', { text: 'Публикация под ключом' })),
+      h('div', { class: 'notice' }, icon('lock'), h('span', { text: 'Сначала открой публикацию ключом, потом возвращайся к редактированию.' })),
+      h('p', { style: 'margin-top:20px' }, h('a', { class: 'btn', href: `/i/${id}` }, icon('key', 'i i-sm'), 'Ввести ключ')),
+    );
+    return;
+  }
   $view.replaceChildren(
     h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Редактирование' }), h('p', { class: 'page-sub', text: item.title }))),
     editorForm(item),
@@ -1183,17 +1509,21 @@ async function viewEdit(id) {
 async function viewMe() {
   const { author, items, files } = await api('/api/me');
   const keys = loadKeys();
+  const access = loadAccess();
+  const itemById = new Map(items.map((it) => [it.id, it]));
   const mine = items.map((item) => {
     const owned = Boolean(keys[item.id]);
     return h('div', { class: 'row' },
-      h('span', { class: 'row-mark' }, icon(TYPE_ICON[item.type] || 'clip', 'i i-sm')),
+      h('span', { class: 'row-mark' }, icon(item.locked ? 'lock' : TYPE_ICON[item.type] || 'clip', 'i i-sm')),
       h('span', {},
         h('a', { class: 'row-title', href: `/i/${item.id}`, text: item.title }),
         h('div', { class: 'row-meta' },
           h('span', {}, icon('hash', 'i i-sm'), item.id),
           h('span', { text: when(item.createdAt) }),
           h('span', {}, icon('eye', 'i i-sm'), String(item.hits)),
+          counter('heart', item.likes),
           item.files.length ? h('span', {}, icon('download', 'i i-sm'), String(item.files.length)) : null,
+          item.locked ? h('span', { text: access[item.id] ? 'ключ есть' : 'ключ утерян' }) : null,
           owned ? null : h('span', { text: 'только чтение' }),
         ),
       ),
@@ -1204,6 +1534,31 @@ async function viewMe() {
   });
 
   const exportBox = h('textarea', { class: 'textarea', style: 'min-height:120px', placeholder: JSON.stringify({ 'abc12345': 'ключ' }, null, 2), spellcheck: 'false' });
+  // Access keys are exportable too, and as a separate blob: handing a reader an
+  // edit key would hand them write access to the publication.
+  const accessBox = h('textarea', { class: 'textarea', style: 'min-height:120px', placeholder: JSON.stringify({ 'abc12345': 'ключ доступа' }, null, 2), spellcheck: 'false' });
+  /**
+   * Validates a pasted blob before it is merged into a store.
+   *
+   * Every entry is checked here rather than trusted, because a bad paste would
+   * otherwise sit in localStorage forever as a value no view can use, and the
+   * import is the one path where data arrives from outside the app.
+   */
+  const parseKeys = (box) => {
+    const incoming = JSON.parse(box.value || '{}');
+    if (typeof incoming !== 'object' || incoming === null || Array.isArray(incoming)) {
+      throw new Error('ожидался объект { id: ключ }');
+    }
+    const entries = Object.entries(incoming);
+    for (const [k, v] of entries) {
+      if (!/^[A-Za-z0-9]{4,16}$/.test(k) || typeof v !== 'string' || !v) {
+        throw new Error(`плохая запись: ${k}`);
+      }
+    }
+    return incoming;
+  };
+  const lockedCount = items.filter((it) => it.locked).length;
+  const lostKeys = items.filter((it) => it.locked && !access[it.id]).length;
 
   $view.replaceChildren(
     h('div', { class: 'page-head' },
@@ -1226,24 +1581,62 @@ async function viewMe() {
               class: 'btn btn-sm',
               onclick: () => {
                 try {
-                  const incoming = JSON.parse(exportBox.value || '{}');
-                  saveKeys({ ...loadKeys(), ...incoming });
+                  saveKeys({ ...loadKeys(), ...parseKeys(exportBox) });
                   toast('Ключи импортированы');
                   route();
-                } catch { toast('не похоже на JSON с ключами', true); }
+                } catch (err) {
+                  toast(err instanceof SyntaxError ? 'Это не JSON' : err.message, true);
+                }
               },
             }, icon('upload', 'i i-sm'), 'Импорт'),
           ),
           exportBox,
         ),
+        lockedCount
+          ? h('div', { class: 'panel' },
+              h('div', { class: 'panel-title' }, icon('key', 'i i-sm'), 'Ключи доступа'),
+              h('p', { class: 'hint', text: `Под ключом ${lockedCount} публикаций, в браузере ${Object.keys(access).length} ключей.${lostKeys ? ` Потеряно: ${lostKeys} — их нельзя восстановить, только задать новые при редактировании.` : ''}` }),
+              h('div', { class: 'actions', style: 'margin-top:12px' },
+                h('button', { class: 'btn btn-sm', onclick: () => copy(JSON.stringify(access, null, 2), 'Ключи доступа скопированы') }, icon('download', 'i i-sm'), 'Экспорт'),
+                h('button', {
+                  class: 'btn btn-sm',
+                  onclick: () => {
+                    try {
+                      const incoming = parseKeys(accessBox);
+                      // Only accept keys for items this browser actually owns:
+                      // a paste of someone else's dump should not quietly
+                      // unlock a stranger's publication on this device. For a
+                      // publication that isn't yours there is the unlock form
+                      // on its own page.
+                      const mine2 = {};
+                      for (const [k, v] of Object.entries(incoming)) {
+                        const it = itemById.get(k);
+                        if (it && keys[k]) mine2[k] = v;
+                      }
+                      if (!Object.keys(mine2).length) { toast('Нет своих публикаций среди этих id', true); return; }
+                      saveAccess({ ...loadAccess(), ...mine2 });
+                      toast(`Импортировано ключей: ${Object.keys(mine2).length}`);
+                      route();
+                    } catch (err) {
+                      toast(err instanceof SyntaxError ? 'Это не JSON' : err.message, true);
+                    }
+                  },
+                }, icon('upload', 'i i-sm'), 'Импорт'),
+              ),
+              accessBox,
+            )
+          : null,
         h('div', { class: 'panel' },
           h('div', { class: 'panel-title', text: 'Мои файлы' }),
           files.length
-            ? h('div', {}, files.map((f) => h('div', { class: 'queue-row' },
-                h('a', { href: fileUrl(f.id), text: f.name, style: 'overflow:hidden;text-overflow:ellipsis' }),
-                h('span', { class: 'spacer' }),
-                h('span', { text: bytes(f.size) }),
-              )))
+            ? h('div', {}, files.map((f) => {
+                const it = items.find((x) => x.files.some((y) => y.id === f.id));
+                return h('div', { class: 'queue-row' },
+                  h('a', { href: fileUrl(f.id, it ? access[it.id] : null), text: f.name, style: 'overflow:hidden;text-overflow:ellipsis' }),
+                  h('span', { class: 'spacer' }),
+                  h('span', { text: bytes(f.size) }),
+                );
+              }))
             : h('p', { class: 'hint', text: 'Файлов пока нет.' }),
         ),
       ),
@@ -1261,6 +1654,19 @@ async function viewProfile(id) {
     class: 'input', name: 'bio', maxlength: 280,
     value: u.bio || '', placeholder: 'Пара слов о себе',
   });
+  const logo = h('input', {
+    class: 'input', name: 'logo', maxlength: 280, spellcheck: false, autocapitalize: 'off',
+    value: u.logo || '', placeholder: 'https://.../avatar.png',
+  });
+  const accent = h('input', {
+    class: 'input', name: 'accent', maxlength: 7, spellcheck: false,
+    value: u.accent || '', placeholder: '#7c5cff',
+    oninput: (e) => { e.target.style.borderColor = /^#[0-9a-f]{6}$/i.test(e.target.value) ? e.target.value : ''; },
+  });
+  const bg = h('input', {
+    class: 'input', name: 'bg', maxlength: 120, spellcheck: false,
+    value: u.bg || '', placeholder: 'linear-gradient(120deg, #17141f, #0b0b0b)',
+  });
   const followBtn = h('button', {
     class: 'btn', type: 'button', disabled: isMe,
     onclick: async () => {
@@ -1269,6 +1675,7 @@ async function viewProfile(id) {
         const res = await api(`/api/users/${u.id}/follow`, { method: data.isFollowing ? 'DELETE' : 'POST' });
         data.isFollowing = res.following;
         followBtn.textContent = res.following ? 'Отписаться' : 'Подписаться';
+        followBtn.classList.toggle('btn-primary', res.following);
         const n = document.getElementById('followCount');
         if (n) n.textContent = String(u.followers + (res.following ? 1 : -1));
       } catch (err) {
@@ -1277,6 +1684,7 @@ async function viewProfile(id) {
       }
     },
   }, data.isFollowing ? 'Отписаться' : 'Подписаться');
+  if (data.isFollowing) followBtn.classList.add('btn-primary');
 
   const stat = (label, value) => h('div', { class: 'stat-box' },
     h('span', { class: 'stat-value', text: String(value) }),
@@ -1290,10 +1698,23 @@ async function viewProfile(id) {
     h('span', { class: 'stat-label', text: 'подписчиков' }),
   );
 
+  // A profile's own accent and background, applied to the card wrapper only -
+  // never to <html>, where it would repaint the whole site for one user. The
+  // values were already sanitised server-side (https URL, #hex, plain CSS), so
+  // the strings are safe to hand to the style attribute as-is.
+  let themeStyle = null;
+  if (u.accent) themeStyle = `border-color:${u.accent}`;
+  if (u.bg) themeStyle = themeStyle ? `${themeStyle};background:${u.bg}` : `background:${u.bg}`;
+
+  const nickLine = h('h1', {},
+    u.nick,
+    u.admin ? h('span', { class: 'admin-badge', title: 'Администратор' }, icon('star', 'i i-sm'), 'админ') : null,
+  );
+
   $view.replaceChildren(
     h('div', { class: 'page-head' },
       h('div', {},
-        h('h1', { text: u.nick }),
+        nickLine,
         h('p', { class: 'page-sub', text: `@${u.nick} · с ${new Date(u.createdAt).toLocaleDateString('ru')}` }),
       ),
       h('div', { class: 'field-row' },
@@ -1305,20 +1726,31 @@ async function viewProfile(id) {
         signedIn() && !isMe ? h('a', { class: 'btn btn-ghost', href: '/auth' }, 'Сменить аккаунт') : null,
       ),
     ),
-    h('div', { class: 'panel' },
-      h('div', { class: 'stats-row' },
-        stat('публикаций', u.posts),
-        followersLink,
-        stat('подписок', u.following),
+      h('div', { class: 'panel profile-card', style: themeStyle },
+        h('div', { class: 'profile-head' },
+          avatarFor(u, 64),
+          h('div', { class: 'stats-row' },
+            stat('публикаций', u.posts),
+            followersLink,
+            stat('подписок', u.following),
+          ),
+        ),
       ),
-    ),
     u.bio && !isMe ? h('p', { class: 'page-sub', text: u.bio }) : null,
     isMe ? h('form', {
       class: 'card',
       onsubmit: async (e) => {
         e.preventDefault();
         try {
-          const res = await api('/api/auth/me', { method: 'PATCH', body: { bio: bio.value.trim() } });
+          const res = await api('/api/auth/me', {
+            method: 'PATCH',
+            body: {
+              bio: bio.value.trim(),
+              logo: logo.value.trim(),
+              accent: accent.value.trim(),
+              bg: bg.value.trim(),
+            },
+          });
           account = res.user;
           toast('Профиль обновлён');
           navigate(`/u/${u.id}`);
@@ -1327,6 +1759,24 @@ async function viewProfile(id) {
     },
       h('h2', { text: 'О себе' }),
       bio,
+      h('div', { class: 'design-row' },
+        h('label', { class: 'field' },
+          h('span', { class: 'label' }, icon('image', 'i i-sm'), 'Логотип'),
+          logo,
+          h('span', { class: 'hint', text: 'ссылка на https-картинку' }),
+        ),
+        h('label', { class: 'field' },
+          h('span', { class: 'label' }, icon('palette', 'i i-sm'), 'Акцент'),
+          accent,
+          h('span', { class: 'hint', text: 'цвет вида #7c5cff' }),
+        ),
+        h('label', { class: 'field' },
+          h('span', { class: 'label' }, icon('palette', 'i i-sm'), 'Фон'),
+          bg,
+          h('span', { class: 'hint', text: 'цвет или градиент CSS' }),
+        ),
+      ),
+      h('p', { class: 'hint', text: 'Логотип, акцент и фон показываются в твоём профиле. Неверное значение молча игнорируется сервером.' }),
       notice,
       h('div', { class: 'field-row' }, h('button', { class: 'btn btn-primary', type: 'submit' }, 'Сохранить')),
     ) : null,
@@ -1421,15 +1871,15 @@ async function route() {
       await viewNew(url);
     } else if (path === '/me') {
       await viewMe();
-      } else if (path === '/stats') {
-        await viewStats();
-      } else if (path === '/auth') {
-        await viewAuth(url);
-      } else if (/^\/u\/[A-Za-z0-9_-]{3,32}$/.test(path)) {
-        await viewProfile(path.slice(3));
-      } else if (/^\/u\/[A-Za-z0-9_-]{3,32}\/followers$/.test(path)) {
-        await viewFollowers(path.slice(3, -'/followers'.length));
-      } else if (/^\/i\/[A-Za-z0-9]{4,16}$/.test(path)) {
+    } else if (path === '/stats') {
+      await viewStats();
+    } else if (path === '/auth') {
+      await viewAuth(url);
+    } else if (/^\/u\/[A-Za-z0-9_-]{3,32}$/.test(path)) {
+      await viewProfile(path.slice(3));
+    } else if (/^\/u\/[A-Za-z0-9_-]{3,32}\/followers$/.test(path)) {
+      await viewFollowers(path.slice(3, -'/followers'.length));
+    } else if (/^\/i\/[A-Za-z0-9]{4,16}$/.test(path)) {
       await viewItem(path.slice(3));
     } else if (/^\/edit\/[A-Za-z0-9]{4,16}$/.test(path)) {
       await viewEdit(path.slice(6));
@@ -1520,7 +1970,36 @@ async function boot() {
   // Before the first route, so the rail shows the right control on arrival and a
   // stored token is validated rather than assumed.
   await refreshAccount();
+  restoreDeepLink();
   await route();
+}
+
+/**
+ * Takes the address bar back after GitHub Pages served 404.html.
+ *
+ * A deep link like /cheatlab/i/abc has no file behind it, so Pages answers 404
+ * and 404.html parks the requested path in sessionStorage before bouncing to
+ * the app root. Restoring it here means the visitor lands on the page they asked
+ * for with the right URL, without the extra request a redirect would cost and
+ * without a second Pages 404.
+ *
+ * The stored value is dropped on the way out either way, so a stale entry can
+ * never hijack a later visit, and it is only honoured when it still points
+ * inside this deployment.
+ */
+function restoreDeepLink() {
+  const KEY = 'cheatlab.redirect';
+  let saved;
+  try {
+    saved = sessionStorage.getItem(KEY);
+    sessionStorage.removeItem(KEY);
+  } catch {
+    return;
+  }
+  if (!saved) return;
+  const path = new URL(saved, location.origin);
+  if (path.origin !== location.origin || !isAppLink(path.pathname)) return;
+  history.replaceState({}, '', path.pathname + path.search + path.hash);
 }
 
 boot();

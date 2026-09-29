@@ -11,7 +11,7 @@ import { makeEnv, call, request, answerQuestion, solveCaptcha } from './harness.
 import worker from '../src/index.js';
 import {
   passwordProblems, nickProblems, nickKey, hashPassword, verifyPassword,
-  sessionValid, PBKDF2_ITERATIONS,
+  sessionValid, PBKDF2_ITERATIONS, PBKDF2_MAX_ITERATIONS,
 } from '../src/accounts.js';
 import {
   checkPow, solvePow, powBits, newPowChallenge, issueCaptcha, verifyCaptcha,
@@ -83,7 +83,12 @@ await t('salted hashes differ for the same password', async () => {
 });
 
 await t('production iteration count is at the practical ceiling', async () => {
-  check('iterations >= 200k', PBKDF2_ITERATIONS >= 200_000, `got ${PBKDF2_ITERATIONS}`);
+  // The ceiling here is the runtime's, not a policy choice: Workers WebCrypto
+  // rejects PBKDF2 above 100k with NotSupportedError, so any higher value makes
+  // every register and login fail with a 500. Node has no such cap, which is
+  // why this needs to be asserted rather than merely exercised.
+  check('iterations <= 100k Workers runtime cap', PBKDF2_ITERATIONS <= 100_000, `got ${PBKDF2_ITERATIONS}`);
+  check('iterations sit at the cap', PBKDF2_ITERATIONS === PBKDF2_MAX_ITERATIONS, `got ${PBKDF2_ITERATIONS}`);
   check('iteration count is not absurdly high for Workers CPU', PBKDF2_ITERATIONS <= 600_000, `got ${PBKDF2_ITERATIONS}`);
 });
 

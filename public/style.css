@@ -414,6 +414,76 @@ a.stat-box:hover .stat-label { color: var(--ink); }
 .stat-label { font-size: 11px; color: var(--mute); transition: color 0.12s linear; }
 .rows { display: block; }
 
+/* ---- locked publications ----
+   The lock screen is deliberately not a modal: the title, tags and counters
+   around it are public, and hiding them would break the feed-to-post link that
+   makes a locked publication worth clicking. A short fade over the top edge
+   reads as "content continues past this line" without faking the content. */
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 7px; border: 1px solid var(--line);
+  font: 11px var(--mono); color: var(--mute); white-space: nowrap;
+}
+.chip-lock { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+
+.lock-screen { position: relative; margin-top: 20px; }
+.lock-fade {
+  position: absolute; inset: -6px -10px 46% -10px; z-index: 0; pointer-events: none;
+  background: linear-gradient(180deg, var(--fog) 0%, transparent 100%);
+}
+.lock-panel { position: relative; z-index: 1; background: var(--paper); }
+.lock-head { display: flex; align-items: flex-start; gap: 12px; }
+.lock-head h2 { margin: 0 0 4px; font-size: 16px; }
+.lock-panel .input { flex: 1 1 180px; min-width: 0; }
+.lock-panel .field-row { align-items: stretch; }
+
+/* ---- like ----
+   Outlined until liked, then filled: a filled heart reads as state at a glance
+   without needing the count to be non-zero. */
+.btn-like { gap: 6px; }
+.btn-like .like-count { font: 11px var(--mono); }
+.btn-like .like-count:empty { display: none; }
+.btn-like.is-on { color: var(--paper); background: var(--ink); border-color: var(--ink); }
+.btn-like.is-on:hover { background: var(--ink); }
+.btn-like:disabled { opacity: 0.5; }
+
+/* ---- profile design ---- */
+.profile-card { margin-bottom: 18px; }
+.profile-head { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.avatar {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; overflow: hidden; border: 1px solid var(--line);
+  background: var(--fog); color: var(--mute);
+}
+.avatar-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.avatar-letter { font: 600 1em var(--sans); }
+
+/* Server-set admin flag only - the client cannot grant itself one. */
+.admin-badge {
+  display: inline-flex; align-items: center; gap: 4px; vertical-align: middle;
+  margin-left: 8px; padding: 2px 7px; border: 1px solid var(--ink);
+  font: 11px var(--mono); text-transform: lowercase; color: var(--ink);
+}
+.admin-badge-sm { margin-left: 0; padding: 1px 4px; }
+.design-row { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 14px; }
+.design-row .field { flex: 1 1 200px; margin-top: 0; }
+.design-row .label { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Author line on an item page, doubling as the follow control. */
+.author-row {
+  display: flex; align-items: center; gap: 10px; margin-top: 12px;
+  color: inherit;
+}
+.author-link {
+  display: flex; align-items: center; gap: 10px; min-width: 0;
+  text-decoration: none; color: inherit;
+}
+.author-link:hover .author-nick { text-decoration: underline; }
+.author-link > span:last-child { display: flex; flex-direction: column; min-width: 0; }
+.author-nick { font-size: 14px; color: var(--ink); }
+.author-sub { font: 11px var(--mono); color: var(--mute); }
+.author-row .btn { flex: 0 0 auto; }
+
 .modal-backdrop {
   position: fixed; inset: 0; z-index: 40;
   display: flex; align-items: center; justify-content: center;

@@ -10,13 +10,24 @@ import { newId, newSecret, secretHash, secretMatches, now, str, sha256 } from '.
 const enc = new TextEncoder();
 
 /**
- * OWASP's 2023 floor for PBKDF2-HMAC-SHA256 is 600k, but Workers CPU-bounded
- * request limits make that unusable here: at 600k a single login costs roughly
- * a second of CPU and would trip the limit under any real traffic. 210k is the
- * practical ceiling for this deployment, and it is stored per user so the cost
- * can be raised later without invalidating anyone's password.
+ * Hard ceiling imposed by the Workers runtime: `crypto.subtle.deriveBits`
+ * rejects any PBKDF2 request above 100k iterations with NotSupportedError, which
+ * is what made every registration and login fail with a 500. Node's WebCrypto
+ * has no such cap, so the test suite alone cannot catch a value that is illegal
+ * in production - hence PBKDF2_MAX below and the guard in the tests.
+ *
+ * The cost is stored per user, so this can be raised again later without
+ * invalidating anyone's password, as long as it stays at or under the cap.
  */
-export const PBKDF2_ITERATIONS = 210_000;
+export const PBKDF2_MAX_ITERATIONS = 100_000;
+
+/**
+ * OWASP's 2023 floor for PBKDF2-HMAC-SHA256 is 600k, but two hard limits make
+ * that unreachable here: Workers CPU-bounded request limits (a single login at
+ * 600k costs roughly a second of CPU) and the runtime's own 100k cap above. 100k
+ * is the strongest setting this deployment can actually run.
+ */
+export const PBKDF2_ITERATIONS = PBKDF2_MAX_ITERATIONS;
 const SALT_BYTES = 16;
 const KEY_BITS = 256;
 
@@ -101,9 +112,12 @@ async function pbkdf2(pw, salt, iterations) {
 }
 
 export async function hashPassword(pw, iterations = PBKDF2_ITERATIONS) {
+  // Clamped rather than trusted: an over-cap count throws NotSupportedError deep
+  // inside deriveBits, which surfaces to the caller as an opaque 500.
+  const cost = Math.min(Math.max(1, Math.trunc(iterations)), PBKDF2_MAX_ITERATIONS);
   const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
-  const key = await pbkdf2(pw, salt, iterations);
-  return { passHash: b64(key), passSalt: b64(salt), iterations };
+  const key = await pbkdf2(pw, salt, cost);
+  return { passHash: b64(key), passSalt: b64(salt), iterations: cost };
 }
 
 /**
@@ -118,6 +132,8 @@ export async function verifyPassword(pw, row) {
   try {
     got = await pbkdf2(pw, unb64(row.pass_salt), iterations);
   } catch {
+    // A stored count the runtime refuses (over the cap) cannot be verified, so
+    // this is treated exactly like a wrong password rather than a 500.
     return { ok: false, needsRehash: false };
   }
   const expected = unb64(row.pass_hash);
@@ -161,17 +177,35 @@ export async function sessionValid(row, clientId) {
   return true;
 }
 
+/**
+ * True when a user id is in the admin list. The list ships in the environment
+ * as a comma-separated string, because it is a deploy-time fact rather than
+ * account data anyone should be able to vote on.
+ */
+export function adminOf(env, id) {
+  if (!env?.ADMIN_IDS || !id) return false;
+  return String(env.ADMIN_IDS)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .includes(String(id));
+}
+
 /** Public shape of a user. Never includes any credential material. */
-export function publicUser(row) {
+export function publicUser(row, env) {
   if (!row) return null;
   return {
     id: row.id,
     nick: row.nick,
     bio: str(row.bio, 200),
+    logo: str(row.logo, 300),
+    accent: str(row.accent, 16),
+    bg: str(row.bg, 120),
     followers: Number(row.followers) || 0,
     following: Number(row.following) || 0,
     posts: Number(row.posts) || 0,
     createdAt: Number(row.created_at) || 0,
+    admin: adminOf(env, row.id),
   };
 }
 
