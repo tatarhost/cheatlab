@@ -512,7 +512,15 @@ await t('stats and plugins', async (env) => {
 
   const config = await call(worker, env, '/api/config');
   check('config advertises media types', ['image', 'video', 'file'].every((x) => config.json?.types?.includes(x)), JSON.stringify(config.json?.types));
-  check('config exposes limits', config.json?.limits?.maxFileBytes === 24 * 1024 * 1024, `${config.json?.limits?.maxFileBytes}`);
+  check('config exposes limits', typeof config.json?.limits?.maxFileBytes === 'number' && config.json.limits.maxFileBytes > 0,
+    `${config.json?.limits?.maxFileBytes}`);
+  // Without the Cloudinary secrets the store is KV, so the advertised cap is the
+  // store's own ceiling rather than MAX_FILE_MB. The default test env has no
+  // secrets, which is what a fresh clone looks like.
+  check('config reports the store it will actually use', config.json?.storage === 'kv',
+    JSON.stringify(config.json?.storage));
+  check('the kv cap is not more than kv can hold', config.json?.limits?.maxFileBytes <= 24 * 1024 * 1024,
+    `${config.json?.limits?.maxFileBytes}`);
 });
 
 /* ------------------------------------------------------------------- plugins */

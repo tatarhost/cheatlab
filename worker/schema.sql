@@ -26,12 +26,20 @@ CREATE TABLE IF NOT EXISTS items (
   -- insert/delete so a feed query needs no per-item subquery.
   likes        INTEGER NOT NULL DEFAULT 0,
   comments     INTEGER NOT NULL DEFAULT 0,
+  -- Which game the paste is for, as free text the browser resolved from the
+  -- game's own public API. Empty on every row that predates the feature.
+  game_id     TEXT NOT NULL DEFAULT '',
+  game_name   TEXT NOT NULL DEFAULT '',
+  game_author TEXT NOT NULL DEFAULT '',
+  game_cover  TEXT NOT NULL DEFAULT '',
+  key_system  TEXT NOT NULL DEFAULT '',
   created_at   INTEGER NOT NULL,
   updated_at   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS items_created ON items (created_at DESC);
 CREATE INDEX IF NOT EXISTS items_author   ON items (author, created_at DESC);
 CREATE INDEX IF NOT EXISTS items_type     ON items (type, created_at DESC);
+CREATE INDEX IF NOT EXISTS items_game     ON items (game_id) WHERE game_id <> '';
 
 CREATE TABLE IF NOT EXISTS files (
   id          TEXT PRIMARY KEY,
@@ -42,6 +50,12 @@ CREATE TABLE IF NOT EXISTS files (
   sha256      TEXT NOT NULL,
   author      TEXT NOT NULL,
   downloads   INTEGER NOT NULL DEFAULT 0,
+  -- Where the bytes are: 'kv' for everything uploaded before the Cloudinary
+  -- migration, 'cloudinary' for what goes to the CDN afterwards. `url` is the
+  -- delivery url and `rid` the public id a takedown hands to the destroy API.
+  store       TEXT NOT NULL DEFAULT 'kv',
+  url         TEXT NOT NULL DEFAULT '',
+  rid         TEXT NOT NULL DEFAULT '',
   created_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS files_item ON files (item_id, created_at);

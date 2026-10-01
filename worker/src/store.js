@@ -12,6 +12,7 @@ const ITEM_FIELDS = new Set([
   'id', 'type', 'title', 'body', 'language', 'tags',
   'author', 'author_label', 'secret_hash', 'access_key_hash', 'key_hint',
   'visibility', 'created_at', 'updated_at',
+  'game_id', 'game_name', 'game_author', 'game_cover', 'key_system',
 ]);
 
 function mapFile(row) {
@@ -26,6 +27,11 @@ function mapFile(row) {
     author: row.author,
     downloads: row.downloads,
     createdAt: row.created_at,
+    // Where the bytes are. 'kv' is every file uploaded before the Cloudinary
+    // migration, and it keeps serving from KV rather than 404ing.
+    store: row.store || 'kv',
+    url: row.url || '',
+    rid: row.rid || '',
   };
 }
 
@@ -420,13 +426,18 @@ export class Store {
     return 1;
   }
 
-  async listItems({ type = '', q = '', tag = '', author = '', sort = 'new', limit = 30, offset = 0 } = {}) {
+  async listItems({ type = '', q = '', tag = '', author = '', game = '', sort = 'new', limit = 30, offset = 0 } = {}) {
     const where = [];
     const params = [];
 
     if (type) { where.push('type = ?'); params.push(type); }
     if (tag) { where.push('(tags = ? OR tags LIKE ? OR tags LIKE ? OR tags LIKE ?)'); params.push(tag, `${tag} %`, `% ${tag}`, `% ${tag} %`); }
     if (author) { where.push('author = ?'); params.push(author); }
+    // An exact match on the id, not a LIKE over the name: this filter is what a
+    // game chip links to, so it has to answer "everything about this one game"
+    // and nothing else. Matching on the name would pull in every post that
+    // happens to spell the game's name in its title.
+    if (game) { where.push('game_id = ?'); params.push(String(game)); }
     if (q) {
       where.push("(title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\')");
       const like = `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
@@ -453,8 +464,14 @@ export class Store {
 
   async addFile(file) {
     await this.db
-      .prepare('INSERT INTO files (id, item_id, name, mime, size, sha256, author, created_at) VALUES (?,?,?,?,?,?,?,?)')
-      .bind(file.id, file.item_id, file.name, file.mime, file.size, file.sha256, file.author, file.created_at)
+      .prepare(
+        `INSERT INTO files (id, item_id, name, mime, size, sha256, author, created_at, store, url, rid)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .bind(
+        file.id, file.item_id, file.name, file.mime, file.size, file.sha256, file.author,
+        file.created_at, file.store || 'kv', file.url || '', file.rid || '',
+      )
       .run();
     return this.getFile(file.id);
   }

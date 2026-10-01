@@ -124,7 +124,7 @@ await t('a person can register from the browser and land on a usable session', a
   // The session header is what every later request carries.
   const me = await clientApi(env, '/api/auth/me', { session: res.json.token });
   check('/api/auth/me resolves the session', me.json?.user?.nick === 'flowuser', me.text.slice(0, 200));
-  check('registered quota advertised', me.json?.quota?.newItemsPerDay === 4, `${me.json?.quota?.newItemsPerDay}`);
+  check('registered quota advertised', me.json?.quota?.newItemsPerDay === 12, `${me.json?.quota?.newItemsPerDay}`);
   check('registered exempt from captcha', me.json?.quota?.captchaOnPost === false);
 });
 

@@ -53,10 +53,15 @@ class D1Shim {
 
 /**
  * Mirrors the slice of the Workers KV surface BlobStore uses: put, delete,
- * list-by-prefix and get, where get returns an ArrayBuffer and honours an
- * offset/length range. Returning an ArrayBuffer rather than a stream is
- * deliberate - it is what the shim hands to Response, so a body that works here
- * works on the platform.
+ * list-by-prefix and get, where get returns an ArrayBuffer for a binary value
+ * and honours an offset/length range.
+ *
+ * The text case is here because the platform really does distinguish the two: a
+ * value stored as a string comes back as a string from a plain `get`, and only
+ * `get(key, 'text')` stringifies a binary one. A shim that always returned an
+ * ArrayBuffer would quietly let a string-vs-bytes bug through, since
+ * `String(arrayBuffer)` yields "[object ArrayBuffer]" rather than the JSON that
+ * was actually stored.
  */
 class KvShim {
   constructor() {
@@ -64,7 +69,7 @@ class KvShim {
   }
 
   async put(key, value) {
-    this.map.set(key, new Uint8Array(value));
+    this.map.set(key, value);
   }
 
   async delete(key) {
@@ -82,10 +87,18 @@ class KvShim {
 
   async get(key, opts) {
     const v = this.map.get(key);
-    if (!v) return null;
+    if (v === undefined || v === null) return null;
+    const wantsText = opts === 'text' || (opts && typeof opts === 'object' && opts.type === 'text');
+    if (typeof v === 'string') {
+      // The platform has no range option for text values, so neither does this.
+      if (wantsText || !opts) return v;
+      return new TextEncoder().encode(v).buffer;
+    }
     const range = opts && typeof opts === 'object' ? opts.range : null;
-    if (!range) return v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength);
-    const slice = v.subarray(range.offset, range.offset + range.length);
+    const bytes = v instanceof Uint8Array ? v : new Uint8Array(v);
+    if (wantsText) return new TextDecoder().decode(bytes);
+    if (!range) return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    const slice = bytes.subarray(range.offset, range.offset + range.length);
     return slice.buffer.slice(slice.byteOffset, slice.byteOffset + slice.byteLength);
   }
 }
@@ -96,12 +109,12 @@ export function makeEnv(overrides = {}) {
   return {
     DB: new D1Shim(),
     BUCKET: new KvShim(),
-    MAX_FILE_MB: '24',
+    MAX_FILE_MB: '50',
     MAX_TEXT_KB: '256',
-    MAX_FILES: '20',
+    MAX_FILES: '60',
     TITLE_MAX: '120',
     LABEL_MAX: '24',
-    WRITE_CAP: '30',
+    WRITE_CAP: '90',
     READ_CAP: '240',
     ALLOW_ORIGIN: '*',
     SITE_URL: 'https://tatarhost.github.io/cheatlab',
@@ -118,7 +131,7 @@ export function makeEnv(overrides = {}) {
     // The shipped daily caps. A suite that publishes many items raises these
     // explicitly so an unrelated test is not blocked by the anti-abuse policy.
     ANON_NEW_ITEMS_PER_DAY: '1',
-    REG_NEW_ITEMS_PER_DAY: '4',
+    REG_NEW_ITEMS_PER_DAY: '12',
     ...overrides,
   };
 }
@@ -177,7 +190,9 @@ export function answerQuestion(q) {
  * anonymously, and so the auth suite can assert on the real challenge.
  */
 export async function solveCaptcha(worker, env, opts = {}) {
-  const res = await call(worker, env, '/api/auth/captcha', opts);
+  // `autoCaptcha` is dropped and the method forced to GET: leaving it in place
+  // would have this function ask itself for a captcha to answer a captcha.
+  const res = await call(worker, env, '/api/auth/captcha', { ...opts, method: 'GET', autoCaptcha: false, body: undefined });
   if (res.status !== 200) throw new Error(`captcha endpoint returned ${res.status}`);
   const { token, q } = res.json;
   return { token, answer: answerQuestion(q), question: q };

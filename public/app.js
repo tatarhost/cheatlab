@@ -35,6 +35,11 @@ function h(tag, props, ...kids) {
     if (v === null || v === undefined || v === false) continue;
     if (k === 'class') el.className = v;
     else if (k === 'text') el.textContent = v;
+    // `value` is a property, not an attribute: the attribute only records the
+    // *default* value, so anything that resets or retypes the field afterwards
+    // would leave the field showing what it was created with. Setting the
+    // property is also what lets a test read back what the form was given.
+    else if (k === 'value') el.value = v;
         else if (k === 'dataset') Object.assign(el.dataset, v);
         else if (k.startsWith('on')) el.addEventListener(k.slice(2).toLowerCase(), v);
         else if (k === 'href') el.setAttribute('href', appPath(String(v)));
@@ -264,6 +269,109 @@ const textUrl = (id, key) => withKey(`${API}/r/${id}`, key);
 const isImageFile = (f) => /^image\//.test(f.mime || '');
 const isVideoFile = (f) => /^video\//.test(f.mime || '');
 const isAudioFile = (f) => /^audio\//.test(f.mime || '');
+
+/* ------------------------------------------------------------- downscaling */
+
+const IMAGE_MAX_EDGE = 1920;  // px on the long edge
+const IMAGE_LEAVE_ALONE = 1.5 * 1024 * 1024; // already-small files are not worth re-encoding
+
+/**
+ * Shrinks a picture in the browser before it is uploaded.
+ *
+ * A phone screenshot of a menu is routinely 4-8 MB of pixels, and a cheat
+ * listing is mostly screenshots: uploaded as-is they cost the reader a mobile
+ * data plan, fill the author's storage quota with images nobody sees at that
+ * resolution, and make the gallery feel broken on a slow connection. The fix
+ * belongs here rather than on the server because the bytes never have to cross
+ * the network at all - the original is discarded before the upload starts.
+ *
+ * The rules are deliberately conservative, because this code is running on other
+ * people's files:
+ *
+ *   - GIF and SVG are returned untouched. A GIF is animated - one frame of it
+ *     would be a silent, wrong picture - and an SVG is a vector that is already
+ *     small and that re-encoding through a raster canvas would only blur.
+ *   - A picture that is already small enough is returned untouched, so quality
+ *     is never spent to save bytes nobody needed saved.
+ *   - WebP is preferred, and falls back to JPEG and then to PNG. WebP keeps text
+ *     in a screenshot legible at a fraction of a PNG's size, which matters
+ *     because screenshots of code are the point of most of these posts.
+ *   - If re-encoding does not actually pay for itself - the "save 4 MB" numbers
+ *     come from a lossy re-encode, and a 900 KB PNG that stays 880 KB is not
+ *     worth a second of everyone's time - the original bytes are kept and only
+ *     the dimensions change.
+ *
+ * Returns the file to upload plus what happened, so the queue can tell the
+ * author their picture was changed instead of silently substituting something
+ * else for it.
+ */
+async function downscaleImage(file) {
+  const result = { file, changed: false, note: '' };
+  if (!/^image\//.test(file.type)) return result;
+  if (/gif|svg/i.test(file.type)) return result;
+
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    // A file whose type claims to be an image but that will not decode is not
+    // this function's problem to solve - the upload will fail with a real
+    // message, and failing here would only replace it with a vaguer one.
+    return result;
+  }
+
+  const longEdge = Math.max(bitmap.width, bitmap.height);
+  const needsResize = longEdge > IMAGE_MAX_EDGE;
+  if (!needsResize && file.size <= IMAGE_LEAVE_ALONE) {
+    bitmap.close?.();
+    return result;
+  }
+
+  const scale = needsResize ? Math.min(1, IMAGE_MAX_EDGE / longEdge) : 1;
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  // A JPEG has no alpha channel, so a transparent PNG flattened onto it comes
+  // out with a black background unless the canvas is filled first.
+  const target = /png/.test(file.type) ? 'image/png' : 'image/jpeg';
+  if (target === 'image/jpeg') {
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, width, height);
+  }
+  ctx.drawImage(bitmap, 0, 0, width, height);
+  bitmap.close?.();
+
+  const quality = /png/.test(file.type) ? undefined : 0.9;
+  let blob = await new Promise((resolve) => canvas.toBlob(resolve, target, quality));
+  if (!blob) return result;
+
+  // WebP is smaller than both of the above for this kind of picture, so it is
+  // tried as well - but only swapped in when it wins by enough to be worth the
+  // tiny quality difference.
+  if (target !== 'image/webp') {
+    const webp = await new Promise((resolve) => canvas.toBlob(resolve, 'image/webp', 0.9));
+    if (webp && webp.size < blob.size * 0.8) blob = webp;
+  }
+
+  const ext = { 'image/webp': 'webp', 'image/jpeg': 'jpg', 'image/png': 'png' }[blob.type] || 'bin';
+  // The upload sends the name in a header and the server decides what a file is
+  // from that name, so the extension has to follow the new type or the gallery
+  // will refuse to render the picture it just received.
+  const name = file.name.replace(/\.[^.]*$/, '') + `.${ext}`;
+  const before = file.size;
+  const scaled = new File([blob], name, { type: blob.type, lastModified: file.lastModified });
+  const shrank = scaled.size < before * 0.98;
+  const resized = needsResize;
+  if (!shrank && !resized) return { file, changed: false, note: '' };
+  result.file = scaled;
+  result.changed = true;
+  result.note = `${width}×${height}, ${bytes(blob.size)}`;
+  return result;
+}
 
 /**
  * One API call. `key` sends an item's access key in `x-cheatlab-key`, which is
@@ -830,6 +938,7 @@ function typeRow(item) {
       h('span', { class: 'row-title', text: item.title }),
       meta,
       tags,
+      item.game ? h('span', { class: 'row-game' }, gameChip(item.game)) : null,
     ),
     h('span', { class: 'row-right' },
       lockChip(item),
@@ -837,6 +946,42 @@ function typeRow(item) {
       h('span', { text: when(item.createdAt) }),
     ),
   );
+}
+
+/**
+ * The game chip: a cover, the game's name, its studio, and a link to the rest of
+ * what has been written about it.
+ *
+ * It is not an <a> around the cover for one reason - an image inside a link with
+ * text beside it is announced twice by a screen reader, and the whole chip is
+ * already clickable. The name alone is the link.
+ *
+ * The cover is only drawn when the server accepted it. A cover that failed the
+ * worker's https-and-image-extension check comes back as an empty string, and
+ * rendering that as `<img src="">` would re-request the page itself as an image,
+ * so the fallback letter tile is not cosmetic.
+ */
+const gameChip = (game) => h('span', { class: 'chip chip-game' },
+  game.cover
+    ? h('img', { class: 'chip-cover', src: game.cover, alt: '', loading: 'lazy', decoding: 'async' })
+    : h('span', { class: 'chip-cover chip-cover-empty' }, icon('game', 'i i-sm')),
+  h('span', { class: 'chip-text' },
+    h('a', { class: 'chip-game-name', href: gamePageHref(game), text: game.name || 'игра' }),
+    game.author ? h('span', { class: 'chip-game-author', text: game.author }) : null,
+  ),
+);
+
+/**
+ * Where a chip points.
+ *
+ * The id goes in the path and nothing else does: the name and the cover are
+ * re-read from the post on the destination, so a link cannot be edited into a
+ * chip that claims to be a different game. A chip with no usable id - which is
+ * the one case the server can hand back, if a cover or name was rejected - links
+ * nowhere and says so, rather than to a page that would silently list everything.
+ */
+function gamePageHref(game) {
+  return /^\d{1,20}$/.test(game.id || '') ? `/games/${game.id}` : null;
 }
 
 function emptyState(title, text, actionHref, actionLabel) {
@@ -855,6 +1000,11 @@ function sortTabs(current, base) {
   }, icon(iconName, 'i i-sm'), label);
   return h('div', { class: 'actions' }, mk('new', 'Новые', 'plus'), mk('hot', 'Популярные', 'sort'));
 }
+
+// A game's own page, reachable from the chip on any post about it. The id is
+// numeric and bounded, which keeps it out of the shape of anything else the
+// router matches.
+const GAME_PAGE = /^\/games\/(\d{1,20})$/;
 
 // ---------------------------------------------------------------- views
 
@@ -894,7 +1044,13 @@ async function viewFeed(path, url) {
   const type = FEED_TYPE[path] || '';
   const q = url.searchParams.get('q') || '';
   const tag = url.searchParams.get('tag') || '';
+  // A game's page arrives here as `/search?game=<id>`, so the filter is read in
+  // one place with the others rather than being rebuilt by the caller. Reading it
+  // from the url is also what keeps a hand-typed `/search?game=…` link working
+  // even though nothing in the site links to that form.
+  const game = url.searchParams.get('game') || '';
   const sort = url.searchParams.get('sort') === 'hot' ? 'hot' : 'new';
+  const filtered = q || tag || game;
   const title = FEED_TITLE[type] || 'Публикации';
   const blurb = FEED_BLURB[type] || 'Всё, что опубликовали пользователи.';
 
@@ -905,8 +1061,8 @@ async function viewFeed(path, url) {
         h('p', { class: 'page-sub', text: q || tag ? 'Совпадения по названию, тегу и содержимому.' : blurb }),
       ),
       h('div', { class: 'spacer' }),
-      sortTabs(sort, q || tag
-        ? (tag ? `/search?tag=${encodeURIComponent(tag)}` : `/search?q=${encodeURIComponent(q)}`)
+      sortTabs(sort, filtered
+        ? (tag ? `/search?tag=${encodeURIComponent(tag)}` : q ? `/search?q=${encodeURIComponent(q)}` : `/games/${game}`)
         : (type ? FEED_PATH[type] : '/')),
     ),
   );
@@ -915,6 +1071,7 @@ async function viewFeed(path, url) {
   if (type) params.set('type', type);
   if (q) params.set('q', q);
   if (tag) params.set('tag', tag);
+  if (game) params.set('game', game);
   params.set('sort', sort);
   params.set('limit', '40');
 
@@ -922,14 +1079,179 @@ async function viewFeed(path, url) {
   const list = h('div', { class: 'list' });
   if (!items.length) {
     $view.append(emptyState(
-      q || tag ? 'Ничего не нашлось' : 'Пока пусто',
-        q || tag ? 'Попробуй другой запрос или сними фильтр.' : 'Опубликуй первым — регистрация не обязательна.',
+      filtered ? 'Ничего не нашлось' : 'Пока пусто',
+        filtered ? 'Попробуй другой запрос или сними фильтр.' : 'Опубликуй первым — регистрация не обязательна.',
       '/new', 'Опубликовать',
     ));
     return;
   }
+  // A game's page is headed by the game, taken from a post about it rather than
+  // from the url, so a shared link cannot rename the game it points at. The id is
+  // matched strictly on purpose: if the server ever stopped filtering, the
+  // heading would go missing rather than name the wrong game.
+  if (game) {
+    const named = items.find((it) => it.game?.id === game)?.game;
+    if (named) $view.firstChild?.firstChild?.replaceChildren(gameHeading(named));
+  }
   for (const item of items) list.append(typeRow(item));
   $view.append(list, h('p', { class: 'hint', style: 'margin-top:16px', text: `${total} всего` }));
+}
+
+/** The `<h1>` of a game's page: its chip, at heading size. */
+function gameHeading(game) {
+  return h('span', { class: 'page-title-row' }, gameChip(game));
+}
+
+/**
+ * A game's page: the chip, and every post written about it.
+ *
+ * It reuses the feed and points the API at `?game=`, so there is one list to keep
+ * working rather than a second implementation to keep in step. The chip is
+ * resolved through the same lookup the publish form uses, which is what makes
+ * this work for a game that nobody has posted about yet - the page still has a
+ * name and a cover instead of a bare id.
+ */
+async function viewGame(id) {
+  $view.replaceChildren(h('p', { class: 'hint', text: 'Загрузка...' }));
+  let game = null;
+  try {
+    const found = await api(`/api/games/roblox/${id}`);
+    game = { id: found.gameId, name: found.gameName, author: found.gameAuthor, cover: found.gameCover };
+  } catch {
+    // A game Roblox will not name is still worth a page: the posts exist and are
+    // filterable by id alone, so the list below is not conditional on the lookup.
+  }
+  const url = new URL(location.href);
+  url.search = `?game=${encodeURIComponent(id)}`;
+  url.pathname = '/search';
+  await viewFeed('/search', url);
+  // The lookup wins over whatever the feed derived, because it is the only source
+  // that can name a game with no posts yet. It runs last, so on the common path -
+  // a game with posts - the two agree and this changes nothing.
+  if (game) $view.firstChild?.firstChild?.replaceChildren(gameHeading(game));
+}
+
+/**
+ * The image carousel.
+ *
+ * One slide at a time, with arrows, dots and a counter. It is built here rather
+ * than with a scroll-snap container because the two behave differently in a way
+ * that matters for screenshots: a snapped scroll shows a sliver of the next
+ * picture, which invites the reader to keep swiping and lose their place, while
+ * a carousel shows exactly one image and says how many there are.
+ *
+ * Three ways to move, because the device is unknown and a gesture-only control
+ * is unusable with a keyboard:
+ *   - the arrows and dots, which are real buttons and work everywhere;
+ *   - left/right arrow keys while the carousel has focus;
+ *   - a horizontal swipe, which is what a phone reader will try first.
+ *
+ * Pictures are fetched as the reader reaches them: the current one and the two on
+ * either side, three in total however many the post has. A post with twenty
+ * screenshots costs three downloads until the reader asks for the rest, and an
+ * arrow press still lands on a picture that is already there rather than on a
+ * spinner.
+ */
+function imageCarousel(files, key) {
+  // The images are kept in a list of their own rather than dug back out of the
+  // slides with firstChild. A slide is a <figure> with an image and a caption in
+  // it, and any edit to that structure - a wrapper, a text node, a comment -
+  // would then silently point the lazy loader at the wrong element, which shows
+  // up as a picture that never loads rather than as an error.
+  const imgs = files.map((f) => h('img', { class: 'media-img', alt: f.name, loading: 'lazy', decoding: 'async' }));
+  const slides = files.map((f, i) => h('figure', { class: 'media-item' },
+    imgs[i],
+    h('figcaption', {},
+      // The name opens the picture itself, which is what a reader who just saw
+      // the file name click on. It carries the key only for a locked post, so
+      // the shared link never spreads someone else's key any further than the
+      // download button next to it already does.
+      h('a', { class: 'media-name', href: mediaUrl(f.id, key), target: '_blank', rel: 'noopener', text: f.name }),
+      h('span', { class: 'spacer' }),
+      h('a', { class: 'btn btn-sm btn-ghost', href: fileUrl(f.id, key) }, icon('download', 'i i-sm'), 'Скачать'),
+    ),
+  ));
+  let index = 0;
+  let loaded = new Set();
+
+  const counter = h('span', { class: 'carousel-count' });
+  const dots = h('div', { class: 'carousel-dots' });
+  const stage = h('div', { class: 'carousel-stage' }, slides);
+
+  const load = (i) => {
+    if (loaded.has(i)) return;
+    loaded.add(i);
+    imgs[i].src = mediaUrl(files[i].id, key);
+  };
+
+  const show = (next) => {
+    index = (next + files.length) % files.length;
+    // Load the neighbours so an arrow press lands on a picture that is already
+    // there instead of a spinner.
+    load(index);
+    load((index + 1) % files.length);
+    load((index - 1 + files.length) % files.length);
+    stage.style.setProperty('--carousel-index', String(index));
+    for (const [i, dot] of [...dots.children].entries()) {
+      dot.setAttribute('aria-current', i === index ? 'true' : 'false');
+    }
+    counter.textContent = `${index + 1} / ${files.length}`;
+    prev.disabled = prev.hidden = files.length < 2;
+    next.disabled = next.hidden = files.length < 2;
+  };
+
+  const prev = h('button', {
+    class: 'carousel-nav carousel-prev', type: 'button', 'aria-label': 'Предыдущее фото',
+    onclick: () => show(index - 1),
+  }, icon('back', 'i i-sm'));
+  const next = h('button', {
+    class: 'carousel-nav carousel-next', type: 'button', 'aria-label': 'Следующее фото',
+    onclick: () => show(index + 1),
+  }, icon('next', 'i i-sm'));
+
+  files.forEach((f, i) => {
+    const dot = h('button', {
+      class: 'carousel-dot', type: 'button', 'aria-label': `Фото ${i + 1}`,
+      onclick: () => show(i),
+    });
+    dots.append(dot);
+  });
+
+  // Keyboard: only while the carousel itself holds focus, so the arrows on the
+  // feed and in the comment box keep working while the reader is typing.
+  const onKey = (e) => {
+    if (e.key === 'ArrowLeft') { e.preventDefault(); show(index - 1); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); show(index + 1); }
+  };
+
+  // Swipe. A pointer that moves mostly sideways and much further than it moves
+  // vertically is a swipe; anything else is a scroll or a tap and is left alone,
+  // which is what keeps a long picture from being flip-flopped by a reader just
+  // trying to scroll past it.
+  let start = null;
+  stage.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse') return;
+    start = { x: e.clientX, y: e.clientY };
+  });
+  stage.addEventListener('pointerup', (e) => {
+    if (!start) return;
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+    start = null;
+    if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.5) show(index + (dx < 0 ? 1 : -1));
+  });
+  stage.addEventListener('pointercancel', () => { start = null; });
+
+  const root = h('div', {
+    class: 'carousel', tabindex: '0', role: 'group', 'aria-roledescription': 'карусель',
+    onkeydown: onKey,
+  },
+    h('div', { class: 'carousel-head' }, h('span', { class: 'pill pill-mute' }, icon('image', 'i i-sm'), 'Фото'), h('span', { class: 'spacer' }), counter),
+    h('div', { class: 'carousel-box' }, stage, prev, next),
+    files.length > 2 ? dots : null,
+  );
+  show(0);
+  return root;
 }
 
 async function viewItem(id) {
@@ -949,41 +1271,55 @@ async function viewItem(id) {
   const gated = item.locked && item.unlocked === false;
 
   /**
-   * Media previews. Rendered above the file table so an image or video post
-   * reads as media at a glance instead of as a download link. Video relies on
-   * the API's byte-range support, and `preload="metadata"` keeps large clips
-   * from being fetched in full.
+   * Media previews. Rendered below the code so a script is read before the
+   * screenshots that illustrate it - a reader who opened a listing wants the
+   * script, and the pictures are the second question, not the first.
+   *
+   * Pictures become a carousel once there is more than one: a cheat post with
+   * six screenshots otherwise becomes a scroll the length of a phone screen, and
+   * the last one - usually the one with the answer - is the picture nobody sees.
+   * Video and audio are left as their own blocks, because a carousel that
+   * swaps a playing clip out from under it is worse than a long page.
    *
    * A locked item never reaches this branch - the server sends no file list at
    * all until a key matches - so nothing here has to guess whether a media URL
    * is going to answer 403.
    */
   const mediaFiles = item.files.filter((f) => isImageFile(f) || isVideoFile(f) || isAudioFile(f));
+  const caption = (f, src) => h('figcaption', {},
+    h('a', { href: src, target: '_blank', rel: 'noopener', text: f.name }),
+    h('span', { class: 'spacer' }),
+    h('a', { class: 'btn btn-sm btn-ghost', href: fileUrl(f.id, key) }, icon('download', 'i i-sm'), 'Скачать'),
+  );
+  const pictures = mediaFiles.filter(isImageFile);
+  const clips = mediaFiles.filter((f) => !isImageFile(f));
+  // One picture needs no carousel - it is already a single slide, and the
+  // arrows and dots would be decoration around something the reader can see.
+  const single = pictures.length === 1 ? pictures : [];
+  const gallery = pictures.length > 1 ? imageCarousel(pictures, key) : null;
   const media = mediaFiles.length
-    ? h('div', { class: 'media' }, mediaFiles.map((f) => {
-        const src = mediaUrl(f.id, key);
-        const caption = h('figcaption', {},
-          h('a', { href: src, target: '_blank', rel: 'noopener', text: f.name }),
-          h('span', { class: 'spacer' }),
-          h('a', { class: 'btn btn-sm btn-ghost', href: fileUrl(f.id, key) }, icon('download', 'i i-sm'), 'Скачать'),
-        );
-        if (isImageFile(f)) {
+    ? h('div', { class: 'media' },
+        gallery,
+        ...single.map((f) => {
+          const src = mediaUrl(f.id, key);
           return h('figure', { class: 'media-item' },
             h('img', { class: 'media-img', src, alt: f.name, loading: 'lazy', decoding: 'async' }),
-            caption,
+            caption(f, src),
           );
-        }
-        if (isVideoFile(f)) {
-          return h('figure', { class: 'media-item' },
-            h('video', { class: 'media-video', src, controls: true, preload: 'metadata', playsinline: true }),
-            caption,
-          );
-        }
-        return h('figure', { class: 'media-item' },
-          h('audio', { class: 'media-audio', src, controls: true, preload: 'metadata' }),
-          caption,
-        );
-      }))
+        }),
+        ...clips.map((f) => {
+          const src = mediaUrl(f.id, key);
+          return isVideoFile(f)
+            ? h('figure', { class: 'media-item' },
+                h('video', { class: 'media-video', src, controls: true, preload: 'metadata', playsinline: true }),
+                caption(f, src),
+              )
+            : h('figure', { class: 'media-item' },
+                h('audio', { class: 'media-audio', src, controls: true, preload: 'metadata' }),
+                caption(f, src),
+              );
+        }),
+      )
     : null;
 
   const files = item.files.length
@@ -1124,6 +1460,10 @@ async function viewItem(id) {
       h('div', { class: 'panel-title', text: 'Сведения' }),
       h('dl', { class: 'kv' },
         h('dt', { text: 'Тип' }), h('dd', { text: TYPE_LABEL[item.type] }),
+        item.game ? h('dt', { text: 'Игра' }) : null,
+        item.game ? h('dd', {}, gameChip(item.game)) : null,
+        item.keySystem ? h('dt', { text: 'Ключевая система' }) : null,
+        item.keySystem ? h('dd', { text: item.keySystem }) : null,
         h('dt', { text: 'Автор' }), h('dd', { text: item.authorLabel || item.author }),
         h('dt', { text: 'Создано' }), h('dd', { text: when(item.createdAt) }),
         h('dt', { text: 'Просмотры' }), h('dd', { text: String(item.hits) }),
@@ -1203,9 +1543,14 @@ async function viewItem(id) {
         item.locked ? lockChip(item) : null,
         h('h1', { style: 'margin:8px 0 0', text: item.title }),
         author,
-        gated ? lockScreen() : media,
+        // The code comes before the attachments. A post is filed under a type
+        // because of what it contains, and the body is the thing itself - the
+        // screenshots exist to illustrate it. It also means a long code block
+        // starts right under the title instead of below a full-screen picture a
+        // reader has to scroll past to reach anything.
+        gated ? lockScreen() : body,
+        gated ? null : media,
         gated ? null : files,
-        gated ? null : body,
         gated ? null : commentsPanel(item),
       ),
       sidebar,
@@ -1337,6 +1682,8 @@ function editorForm(initial) {
     tags: (initial.tags || []).join(', '),
     body: initial.body || '',
     visibility: initial.visibility || 'public',
+    game: initial.game || null,
+    keySystem: initial.keySystem || '',
     // Editing an already-locked item: the existing key is a hash on the server
     // and cannot be read back, so the field starts empty and only what the
     // author types here is sent. An empty box leaves the current key alone
@@ -1412,6 +1759,127 @@ function editorForm(initial) {
   );
 
   /**
+   * The game and the key system.
+   *
+   * Both are one free-text box each, and both exist because "which game is this
+   * for" and "what has to be running for it to work" are the first two questions
+   * a reader asks about any post. Typed in prose they get missed; as fields they
+   * get filled in.
+   *
+   * The game id is resolved to a name, a studio and a cover by the API, so the
+   * author types one number instead of transcribing three fields - and cannot
+   * accidentally point a chip at a different game than the one they meant by
+   * typing the wrong name. Every field stays editable afterwards, because the
+   * lookup can be wrong (a private place, a game that has since been renamed) and
+   * an author who cannot correct it has no way to publish at all.
+   */
+  const gameIdInput = h('input', {
+    class: 'input', id: 'f-game-id', inputmode: 'numeric', autocomplete: 'off', spellcheck: false,
+    placeholder: '1818 или 909090', value: state.game?.id || '',
+  });
+  const gameNameInput = h('input', { class: 'input', id: 'f-game-name', value: state.game?.name || '', placeholder: 'название' });
+  const gameAuthorInput = h('input', { class: 'input', id: 'f-game-author', value: state.game?.author || '', placeholder: 'студия или автор' });
+  const gameCoverInput = h('input', {
+    class: 'input', id: 'f-game-cover', value: state.game?.cover || '',
+    placeholder: 'https://ссылка на обложку', spellcheck: false, autocomplete: 'off',
+  });
+  const gamePreview = h('div', { class: 'game-preview' });
+  const gameStatus = h('p', { class: 'hint' });
+  const lookup = h('button', {
+    class: 'btn', type: 'button',
+    onclick: async () => {
+      const id = gameIdInput.value.trim();
+      if (!/^\d{1,20}$/.test(id)) { gameStatus.textContent = 'Нужен числовой id игры.'; gameIdInput.focus(); return; }
+      lookup.disabled = true;
+      gameStatus.textContent = 'Ищу игру…';
+      try {
+        const found = await api(`/api/games/roblox/${id}`);
+        state.game = { id: found.gameId, name: found.gameName, author: found.gameAuthor, cover: found.gameCover };
+        gameIdInput.value = found.gameId;
+        gameNameInput.value = found.gameName;
+        gameAuthorInput.value = found.gameAuthor;
+        gameCoverInput.value = found.gameCover;
+        drawPreview();
+        gameStatus.textContent = found.cached ? 'Найдено (из кэша).' : 'Найдено.';
+      } catch (err) {
+        gameStatus.textContent = `${err.message}. Заполни поля вручную или оставь игру пустой.`;
+        gamePreview.replaceChildren();
+        state.game = null;
+      } finally {
+        lookup.disabled = false;
+      }
+    },
+  }, icon('search', 'i i-sm'), 'Найти');
+
+  function drawPreview() {
+    if (!state.game?.name) { gamePreview.replaceChildren(); return; }
+    gamePreview.replaceChildren(gameChip(state.game));
+  }
+  drawPreview();
+
+  // Editing a name or a studio by hand has to be reflected in what gets sent,
+  // and clearing the name has to clear the chip - otherwise the author fixes a
+  // typo in the visible field and publishes the old text anyway.
+  //
+  // The four fields are read together rather than patched one at a time, so hand
+  // typing can *start* a chip and not only correct one. That case is not
+  // hypothetical: the lookup fails for a private place, and an author who then
+  // types the name by hand must still get a chip instead of a form that quietly
+  // publishes nothing at all. An id and a name are what a chip needs; the studio
+  // and the cover are display detail and may stay empty.
+  const readGameFields = () => {
+    const id = gameIdInput.value.trim();
+    const name = gameNameInput.value.trim();
+    const author = gameAuthorInput.value.trim();
+    const cover = gameCoverInput.value.trim();
+    state.game = id && name ? { id, name, author, cover } : null;
+    drawPreview();
+  };
+  for (const input of [gameIdInput, gameNameInput, gameAuthorInput, gameCoverInput]) {
+    input.addEventListener('input', readGameFields);
+  }
+
+  const gamePanel = h('div', { class: 'panel' },
+    h('div', { class: 'panel-title' }, icon('game', 'i i-sm'), 'Игра'),
+    h('div', { style: 'display:flex; flex-direction:column; gap:14px' },
+      h('label', { class: 'field' },
+        h('span', { class: 'label', text: 'ID игры' }),
+        h('div', { class: 'field-row' }, gameIdInput, lookup),
+        h('span', { class: 'hint', text: 'id плейса или universe из ссылки roblox.com/games' }),
+      ),
+      h('label', { class: 'field' },
+        h('span', { class: 'label', text: 'Название' }), gameNameInput),
+      h('label', { class: 'field' },
+        h('span', { class: 'label', text: 'Студия / автор' }), gameAuthorInput),
+      h('label', { class: 'field' },
+        h('span', { class: 'label', text: 'Обложка' }), gameCoverInput,
+        h('span', { class: 'hint', text: 'подставится сама после «Найти»; можно заменить или стереть' })),
+      gamePreview,
+      gameStatus,
+    ),
+  );
+
+  const keySystemInput = h('input', {
+    class: 'input', id: 'f-key-system', list: 'key-systems', maxlength: 40,
+    value: state.keySystem, placeholder: 'необязательно',
+    oninput: (e) => { state.keySystem = e.target.value.trim(); },
+  });
+  const keySystemList = h('datalist', { id: 'key-systems' },
+    // Suggestions only. The field accepts anything, because the executors in use
+    // change faster than this file will and a closed list would quietly refuse
+    // to name the one a reader actually needs.
+    ['Luasense', 'Synapse', 'Fluxus', 'Moon Sec', 'Codex', 'Delta', 'Arceus', 'Solara', 'Wave', 'Selenis']
+      .map((name) => h('option', { value: name })));
+  const keySystemPanel = h('div', { class: 'panel' },
+    h('div', { class: 'panel-title' }, icon('box', 'i i-sm'), 'Ключевая система'),
+    h('label', { class: 'field' },
+      keySystemInput,
+      keySystemList,
+      h('span', { class: 'hint', text: 'что должно быть запущено, чтобы скрипт работал' }),
+    ),
+  );
+
+  /**
    * Keeps the type tab, the body placeholder and the language hint in step.
    * Media types carry no code, so the language selector becomes meaningless.
    */
@@ -1444,28 +1912,69 @@ function editorForm(initial) {
   const fileInput = h('input', { type: 'file', multiple: true, onchange: (e) => { addFiles([...e.target.files]); e.target.value = ''; } });
   const drop = h('label', { class: 'drop' }, icon('upload'), h('span', { text: 'Перетащи файлы сюда или нажми, чтобы выбрать' }), fileInput);
 
-  function addFiles(list) {
-    for (const f of list) {
-      if (pending.length + existing.length >= (config.limits.maxFilesPerItem || 20)) {
+  /**
+   * Adds files to the queue, shrinking pictures on the way in.
+   *
+   * The size check happens after the downscale, not before, which reverses the
+   * obvious order and is the whole point: a 12 MB phone screenshot is over the
+   * limit as the camera wrote it and comfortably under it once it is 1920px
+   * wide. Rejecting first would throw away exactly the files most worth
+   * keeping. A 12 MB video has no such second chance and is refused as it is.
+   */
+  async function addFiles(list) {
+    const rows = [];
+    for (const original of list) {
+      if (pending.length + existing.length + rows.length >= (config.limits.maxFilesPerItem || 60)) {
         toast('Лимит файлов на публикацию исчерпан', true);
         break;
       }
-      if (f.size > config.limits.maxFileBytes) { toast(`${f.name}: больше лимита ${bytes(config.limits.maxFileBytes)}`, true); continue; }
-      pending.push(f);
       const bar = h('span', { class: 'bar' }, h('span', { style: 'width:0%' }));
+      const size = h('span', { text: bytes(original.size) });
       const row = h('div', { class: 'queue-row' },
-        h('span', { text: f.name }),
+        h('span', { text: original.name }),
         h('span', { class: 'spacer' }),
-        h('span', { text: bytes(f.size) }),
+        size,
         bar,
       );
       queue.append(row);
-      f._ui = { bar: bar.firstChild, row };
+      rows.push({ original, row, bar, size });
     }
+
     // dropping a picture or a clip should not also require picking the right tab
     if (!MEDIA_TYPES.has(state.type)) {
       const first = list.find((f) => /^image\//.test(f.type) || /^video\//.test(f.type));
       if (first) setType(/^image\//.test(first.type) ? 'image' : 'video');
+    }
+
+    // One file at a time: decoding a dozen 8 MB screenshots into bitmaps at once
+    // is how a phone browser runs out of memory on the very photos the author
+    // is trying to save space on.
+    for (const entry of rows) {
+      entry.row.classList.add('is-working');
+      let file = entry.original;
+      try {
+        const shrunk = await downscaleImage(file);
+        file = shrunk.file;
+        if (shrunk.changed) {
+          entry.row.firstChild.textContent = file.name;
+          entry.size.textContent = `${bytes(entry.original.size)} → ${bytes(file.size)}`;
+          entry.row.title = `уменьшено в браузере: ${shrunk.note}`;
+        }
+      } catch {
+        // A picture that will not decode is still allowed through as itself, so
+        // the upload can reject it with a message about the file rather than the
+        // author seeing a silent gap in their queue.
+      }
+      entry.row.classList.remove('is-working');
+      if (file.size > config.limits.maxFileBytes) {
+        entry.row.replaceChildren(h('span', { text: entry.original.name }));
+        entry.row.append(h('span', { class: 'spacer' }), h('span', { class: 'err', text: `больше ${bytes(config.limits.maxFileBytes)}` }));
+        toast(`${entry.original.name}: больше лимита ${bytes(config.limits.maxFileBytes)}`, true);
+        entry.row.remove();
+        continue;
+      }
+      file._ui = { bar: entry.bar.firstChild, row: entry.row };
+      pending.push(file);
     }
   }
 
@@ -1528,9 +2037,11 @@ function editorForm(initial) {
         ),
       ),
       keyPanel,
+      gamePanel,
+      keySystemPanel,
       h('div', { class: 'panel' },
         h('div', { class: 'panel-title', text: 'Как это работает' }),
-        h('p', { class: 'hint', text: 'При публикации сервер выдаёт ключ редактирования — он остаётся в этом браузере. Секрет нужен, чтобы изменить или удалить запись. Анонимно — одна публикация в сутки с проверкой, с аккаунтом — четыре и без проверки.' }),
+        h('p', { class: 'hint', text: 'При публикации сервер выдаёт ключ редактирования — он остаётся в этом браузере. Секрет нужен, чтобы изменить или удалить запись. Анонимно — одна публикация в сутки с проверкой, с аккаунтом — двенадцать и без проверки.' }),
       ),
     ),
   );
@@ -1550,6 +2061,18 @@ function editorForm(initial) {
       body: state.body,
       visibility: state.visibility,
     };
+    // The game and the key system are sent only when they are filled in, and the
+    // four game fields travel together. Sending gameName without gameId would
+    // be dropped by the server anyway - a name with no id is a chip that points
+    // nowhere - and sending them separately would let the author change the
+    // visible name and keep the id of a different game.
+    if (state.game?.id && state.game?.name) {
+      payload.gameId = state.game.id;
+      payload.gameName = state.game.name;
+      payload.gameAuthor = state.game.author || '';
+      payload.gameCover = state.game.cover || '';
+    }
+    if (state.keySystem) payload.keySystem = state.keySystem;
     // On create, an empty string is the same as no key. On edit it means "keep
     // the current one", so the field is only sent when the author actually
     // typed something or ticked "remove the lock".
@@ -2636,6 +3159,8 @@ async function route() {
   try {
     if (path === '/' || path === '/search' || FEED_TYPE[path]) {
       await viewFeed(path, url);
+    } else if (GAME_PAGE.test(path)) {
+      await viewGame(path.slice('/games/'.length));
     } else if (path === '/new') {
       await viewNew(url);
     } else if (path === '/me') {

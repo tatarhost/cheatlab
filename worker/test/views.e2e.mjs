@@ -55,10 +55,20 @@ class Element extends Node {
    * failure this suite exists to catch. Keep this the only click() in the class
    * body; a second definition further down silently wins and turns clicks into
    * no-ops again.
+   *
+   * The event carries `target` and `currentTarget` pointing at this element,
+   * because that is what a dispatched event has and because the app reads its
+   * value out of `e.target` in every input handler. An event without a target
+   * would make those handlers throw rather than read the field, and the failure
+   * would look like a broken form instead of a broken stub.
    */
   fire(type, extra = {}) {
     let prevented = false;
-    const event = { type, preventDefault() { prevented = true; }, ...extra };
+    const event = {
+      type, target: this, currentTarget: this,
+      preventDefault() { prevented = true; },
+      ...extra,
+    };
     for (const fn of this.listeners.get(type) || []) fn(event);
     return prevented;
   }
@@ -82,16 +92,38 @@ class Element extends Node {
    * choice and the markup never marks one selected. Returning undefined here
    * instead would make every select-driven form submit an empty value and fail
    * for a reason that has nothing to do with the view under test.
+   *
+   * The property wins over the attribute everywhere, because that is the order a
+   * browser resolves them in, and the app assigns `value` as a property. Reading
+   * the attribute alone would report every freshly built field as empty, and a
+   * SELECT would answer with the empty string no matter what its first option
+   * said - which is how a whole moderation queue can come back empty.
    */
   get value() {
     if (this._value !== undefined) return this._value;
     if (this.tagName === 'SELECT') {
       const first = this.children.find((c) => c && c.tagName === 'OPTION');
-      return first ? first.getAttribute('value') ?? '' : '';
+      return first ? first.value : '';
+    }
+    if (this.tagName === 'OPTION' || this.tagName === 'INPUT' || this.tagName === 'TEXTAREA') {
+      return this.getAttribute('value') ?? this.textContent;
     }
     return '';
   }
   set value(v) { this._value = String(v); }
+  /**
+   * Reflected attributes, the way a browser keeps property and attribute in step.
+   *
+   * The carousel assigns `img.src` and the app assigns `a.href`; a browser
+   * mirrors both into the attribute, so a test that reads only the attribute
+   * sees no image at all - a carousel that loaded every picture would look
+   * exactly like one that loaded none. Reading through these accessors keeps the
+   * stub honest about which of the two the view used.
+   */
+  get src() { return this.getAttribute('src') ?? ''; }
+  set src(v) { this.setAttribute('src', String(v)); }
+  get href() { return this.getAttribute('href') ?? ''; }
+  set href(v) { this.setAttribute('href', String(v)); }
 }
 class TextNode extends Node {
   constructor(t) { super(); this.nodeType = 3; this.textContent = String(t); }
@@ -133,6 +165,19 @@ function findAll(node, predicate, out = []) {
 /** A button whose own rendered text contains `label`. */
 function buttonWithLabel(node, label) {
   return findAll(node, (el) => el.tagName === 'BUTTON' && textOf(el).join(' ').includes(label))[0] || null;
+}
+
+/**
+ * Whether an element carries a class.
+ *
+ * Both places a class can live are read. The app's `h()` assigns `className`,
+ * which is the property a real browser mirrors back into the `class` attribute -
+ * a stub cannot mirror anything, so a test that looked at one of the two would
+ * see nothing on half the tree.
+ */
+function hasClass(el, name) {
+  const raw = `${el.className || ''} ${(el.attributes || {}).class || ''}`;
+  return raw.split(/\s+/).includes(name);
 }
 /**
  * The panel that carries `heading` and has a textarea to type into.
@@ -214,6 +259,61 @@ if (fan.status !== 201) throw new Error(`seed: fan register ${fan.status} ${fan.
 await as('e2efan0000000001', `/api/items/${itemId}/like`, { method: 'POST', session: fan.json.token });
 await as('e2efan0000000001', `/api/users/${authorId}/follow`, { method: 'POST', session: fan.json.token });
 
+/* --------------------------------------------------------- gallery seed -- */
+
+/**
+ * Five images on one post, a game and a key system.
+ *
+ * Five rather than two or three, because the number of pictures is what the
+ * lazy loading is about: on a three-picture post "loads what it shows" and
+ * "loads three up front" are the same claim, and a carousel that quietly
+ * downloaded all twenty of a twenty-screenshot post would still pass. The
+ * count also puts dots and the counter under a case that is neither empty nor
+ * trivially small.
+ */
+const gallery = await as('e2eauthor0000001', '/api/items', {
+  method: 'POST', session: token,
+  body: {
+    type: 'image', title: 'галерея снимков', body: 'подпись к скриншотам',
+    gameId: '909090', gameName: 'Fake Game', gameAuthor: 'Fake Studio',
+    gameCover: 'https://tr.rbxcdn.com/icon.png', keySystem: 'Moon',
+  },
+});
+if (gallery.status !== 201) throw new Error(`seed: gallery ${gallery.status} ${gallery.text}`);
+const galleryId = gallery.json.item.id;
+const GALLERY_SHOTS = ['one.png', 'two.png', 'three.png', 'four.png', 'five.png'];
+const shotIds = {};
+for (const [i, name] of GALLERY_SHOTS.entries()) {
+  const shot = new TextEncoder().encode('\x89PNG\r\n\x1a\n' + String(i).repeat(64));
+  const up = await as('e2eauthor0000001', `/api/items/${galleryId}/files`, {
+    method: 'POST', body: shot, headers: { 'x-filename': name, 'content-length': String(shot.length) },
+  });
+  if (up.status !== 201) throw new Error(`seed: upload ${name} ${up.status} ${up.text}`);
+  shotIds[name] = up.json.file.id;
+}
+/** The id the server gave a file by name, or '' if that upload never landed. */
+const fileIdOf = (name) => shotIds[name] || '';
+const oneShot = await as('e2eauthor0000001', '/api/items', {
+  method: 'POST', session: token,
+  body: { type: 'image', title: 'одиночный снимок', body: 'всего один' },
+});
+const singleId = oneShot.json.item.id;
+const lone = new TextEncoder().encode('\x89PNG\r\n\x1a\n' + 'l'.repeat(64));
+await as('e2eauthor0000001', `/api/items/${singleId}/files`, {
+  method: 'POST', body: lone, headers: { 'x-filename': 'solo.png', 'content-length': String(lone.length) },
+});
+
+// A second post about the same game, so the game's page has more than one row
+// and can be told apart from a page that just echoes whatever it was given.
+const secondAboutGame = await as('e2eauthor0000001', '/api/items', {
+  method: 'POST', session: token,
+  body: {
+    type: 'script', title: 'второй скрипт под ту же игру', body: 'print(2)',
+    gameId: '909090', gameName: 'Fake Game', gameAuthor: 'Fake Studio',
+  },
+});
+const secondGameId = secondAboutGame.json.item.id;
+
 /* --------------------------------------------------- boot the app per route */
 
 /**
@@ -247,12 +347,46 @@ async function boot(route, { client, session, editKeys = {}, accessKeys = {} } =
     'cheatlab.access': JSON.stringify(accessKeys),
   }));
 
+  const canvasCalls = [];
+  const sandboxImage = {
+    // The dimensions the next decoded picture will report, and the sizes the
+    // fake encoder will report per output type. A type that is missing from
+    // `encoded` encodes to null, which is what a real canvas does when it cannot
+    // produce that format - that path needs covering too.
+    next: { width: 1920, height: 1080 },
+    encoded: { 'image/png': 900_000, 'image/jpeg': 400_000, 'image/webp': 300_000 },
+    closed: 0,
+    decodeFails: false,
+    calls: canvasCalls,
+  };
+  function makeCanvas() {
+    const ctx = {
+      fillStyle: '',
+      fillRect(...a) { canvasCalls.push({ op: 'fillRect', args: a, fillStyle: ctx.fillStyle }); },
+      drawImage(...a) { canvasCalls.push({ op: 'drawImage', args: a }); },
+    };
+    const canvas = new Element('canvas');
+    canvas.getContext = (kind) => (kind === '2d' ? ctx : null);
+    canvas.toBlob = (cb, type, quality) => {
+      canvasCalls.push({ op: 'toBlob', type, quality, width: canvas.width, height: canvas.height });
+      const size = sandboxImage.encoded[type];
+      const blob = size == null ? null : new Blob([new Uint8Array(size)], { type });
+      queueMicrotask(() => cb(blob));
+    };
+    return canvas;
+  }
+  const createImageBitmap = async () => {
+    if (sandboxImage.decodeFails) throw new Error('undecodable');
+    const d = sandboxImage.next;
+    return { width: d.width, height: d.height, close() { sandboxImage.closed++; } };
+  };
+
   const document = {
     documentElement: new Element('html'),
     body: byId.get('app'),
     head: new Element('head'),
     getElementById: (id) => byId.get(id) ?? null,
-    createElement: (t) => new Element(t),
+    createElement: (t) => (t === 'canvas' ? makeCanvas() : new Element(t)),
     createElementNS: (_n, t) => new Element(t),
     createTextNode: (t) => new TextNode(t),
     createDocumentFragment: () => new Element('#f'),
@@ -291,6 +425,7 @@ async function boot(route, { client, session, editKeys = {}, accessKeys = {} } =
   const sandbox = {
     document, Node, Element,
     location: loc,
+    Blob, File, URLSearchParams, createImageBitmap,
     history: {
       state: null,
       pushState(_s, _t, url) { if (url) route_(Object.assign(loc, { href: new URL(url, loc.origin + loc.pathname).href })); },
@@ -363,6 +498,12 @@ async function boot(route, { client, session, editKeys = {}, accessKeys = {} } =
     hrefs: hrefsOf(view),
     view,
     local,
+    // The image pipeline, for the tests that call downscaleImage() directly. The
+    // fake encoder is reachable so a test can decide what re-encoding "costs" -
+    // the function's job is to respond to that, and a stub that always answered
+    // the same size could not tell a decision from a coincidence.
+    image: sandboxImage,
+    downscale: (file) => sandbox.downscaleImage(file),
     /** Queues the answers the next prompt()/confirm() calls will receive. */
     answer: (...v) => answers.push(...v),
     toast: () => textOf(byId.get('toast')).join(' '),
@@ -767,6 +908,350 @@ check('the right key opens the body', textOf(guesser.view).join(' ').includes('p
 check('and is remembered for next time',
   JSON.parse(guesser.local.get('cheatlab.access') || '{}')[itemId] === 'e2e-secret-key',
   String(guesser.local.get('cheatlab.access')));
+
+/* ------------------------------------------------- gallery, chips, games -- */
+
+/** The first element matching `predicate`, in render order. */
+const firstEl = (node, predicate) => findAll(node, predicate)[0] || null;
+
+/** The text of the red notice a failed view renders, or '' if it rendered fine. */
+const alertText = (node) => textOf(
+  findAll(node, (el) => (el.attributes || {}).role === 'alert')[0] || new TextNode(''),
+).join(' ').trim();
+
+// ---------------------------------------------------------------------------
+// Downscaling before upload
+//
+// The pixels are the encoder's business, not this suite's: what is worth pinning
+// down is the set of decisions app.js makes around them - whether to touch a file
+// at all, which format wins, whether the original survives, and whether the
+// filename follows the new type. The last one is not cosmetic: the server infers
+// a file from its extension, so a re-encode that keeps the old extension hands the
+// gallery a picture it will refuse to render.
+const img = await boot('/new', { client: 'e2eauthor0000001', session: token });
+const photo = (name, type, size) => new File([new Uint8Array(size)], name, { type });
+const reset = (over = {}) => {
+  img.image.next = { width: 1920, height: 1080 };
+  img.image.encoded = { 'image/png': 900_000, 'image/jpeg': 400_000, 'image/webp': 300_000 };
+  img.image.closed = 0;
+  img.image.decodeFails = false;
+  img.image.calls.length = 0;
+  Object.assign(img.image, over);
+};
+
+reset({ next: { width: 4000, height: 3000 } });
+const big = await img.downscale(photo('menu shot.png', 'image/png', 4_000_000));
+check('a big picture is shrunk', big.changed, JSON.stringify(big));
+check('to 1920 on the long edge, keeping the shape',
+  big.file.type === 'image/webp' && /1920×1440/.test(big.note), `${big.file.type} ${big.note}`);
+check('and the name follows the new type, because the server reads the extension',
+  big.file.name === 'menu shot.webp', big.file.name);
+check('the decoded bitmap is released', img.image.closed === 1, `${img.image.closed}`);
+
+// A png keeps its own alpha, so the white fill only happens on the path that
+// flattens: a picture with transparency going out as jpeg, where the transparent
+// areas would otherwise come out black.
+reset({ next: { width: 4000, height: 3000 }, encoded: { 'image/jpeg': 300_000, 'image/webp': 900_000 } });
+const flattened = await img.downscale(photo('logo.webp', 'image/webp', 4_000_000));
+const ops = img.image.calls.map((c) => c.op);
+check('a transparent picture is flattened onto white before it becomes a jpeg',
+  flattened.file.type === 'image/jpeg'
+  && img.image.calls.some((c) => c.op === 'fillRect' && c.fillStyle === '#fff')
+  && ops.indexOf('fillRect') < ops.indexOf('drawImage'),
+  `${flattened.file.type} ${ops.join(',')}`);
+check('and the flattened jpeg is named as one', flattened.file.name === 'logo.jpg', flattened.file.name);
+
+reset({ next: { width: 1200, height: 900 } });
+const small = await img.downscale(photo('icon.png', 'image/png', 400_000));
+check('a picture that is already small enough is left alone', !small.changed && small.file.size === 400_000,
+  `${small.changed} ${small.file.size}`);
+check('and is not decoded at all', img.image.calls.length === 0, JSON.stringify(img.image.calls));
+
+// The animated and vector cases have to be bypassed rather than "handled": one
+// frame of a gif is a wrong picture, not a smaller one. The decoder here
+// deliberately works, because a test that made decoding fail would pass whether
+// or not the bypass exists - it would only be proving that a broken picture
+// survives, which is a different claim. What is asserted is that these types
+// never reach the canvas.
+reset({ next: { width: 4000, height: 3000 } });
+const gif = await img.downscale(photo('loop.gif', 'image/gif', 9_000_000));
+const svg = await img.downscale(photo('logo.svg', 'image/svg+xml', 90_000));
+check('an animated gif is never re-encoded, even though it is huge',
+  !gif.changed && gif.file.size === 9_000_000, JSON.stringify(gif));
+check('nor is a vector', !svg.changed && svg.file.size === 90_000, JSON.stringify(svg));
+check('and neither is decoded, which is why a size of 9 MB is not a problem',
+  img.image.closed === 0 && img.image.calls.length === 0,
+  `${img.image.closed} closed, ${img.image.calls.length} canvas calls`);
+
+reset({ decodeFails: true });
+const undecodable = await img.downscale(photo('broken.png', 'image/png', 500_000));
+check('a file that claims to be an image but will not decode is passed through',
+  !undecodable.changed && undecodable.file.size === 500_000, JSON.stringify(undecodable));
+
+// Re-encoding has to earn its place. A picture large enough to be re-encoded but
+// not large enough to be resized is the only case where "did it shrink?" is the
+// only thing deciding the answer - below the leave-alone size the function
+// returns before it ever reaches the canvas, and above the long edge a resize
+// makes it changed whatever the encoder says.
+reset({ next: { width: 1600, height: 1200 }, encoded: { 'image/png': 3_000_000 } });
+const notWorthIt = await img.downscale(photo('flat.png', 'image/png', 2_000_000));
+check('a re-encode that does not pay for itself is discarded',
+  !notWorthIt.changed && notWorthIt.file.size === 2_000_000, JSON.stringify(notWorthIt));
+reset({ next: { width: 1600, height: 1200 }, encoded: { 'image/png': 900_000 } });
+const worthIt = await img.downscale(photo('flat.png', 'image/png', 2_000_000));
+check('but a genuine saving is taken even with no resize',
+  worthIt.changed && worthIt.file.size === 900_000, JSON.stringify(worthIt));
+
+// WebP wins only by enough to be worth the quality difference. The bar is 20%
+// against whichever format was encoded first - for a png source that is the png,
+// so the jpeg figures here are not what decides it; setting them makes the test
+// readable rather than load-bearing.
+reset({ next: { width: 4000, height: 3000 }, encoded: { 'image/png': 400_000, 'image/jpeg': 900_000, 'image/webp': 330_000 } });
+const closeCall = await img.downscale(photo('flat.png', 'image/png', 4_000_000));
+check('a webp that only shaves 17% is not worth the quality difference',
+  closeCall.file.type === 'image/png', closeCall.file.type);
+reset({ next: { width: 4000, height: 3000 }, encoded: { 'image/png': 900_000, 'image/jpeg': 400_000, 'image/webp': 300_000 } });
+const clearWin = await img.downscale(photo('flat.png', 'image/png', 4_000_000));
+check('but one that halves the size is taken', clearWin.file.type === 'image/webp', clearWin.file.type);
+
+// A canvas that cannot produce the requested format returns null, and the
+// fallback chain has to survive that rather than uploading a zero-byte file.
+reset({ next: { width: 4000, height: 3000 }, encoded: { 'image/png': 900_000 } });
+const noWebp = await img.downscale(photo('shot.png', 'image/png', 4_000_000));
+check('a png whose webp fails to encode still becomes a png',
+  noWebp.changed && noWebp.file.type === 'image/png' && noWebp.file.name === 'shot.png',
+  `${noWebp.file.type} ${noWebp.file.name}`);
+reset({ next: { width: 4000, height: 3000 }, encoded: {} });
+const nothing = await img.downscale(photo('shot.png', 'image/png', 4_000_000));
+check('and a canvas that encodes nothing leaves the original in place',
+  !nothing.changed && nothing.file.size === 4_000_000, JSON.stringify(nothing));
+
+// A jpeg keeps its extension as .jpg, not .jpeg, because mimeOf on the server is
+// the thing that has to recognise it.
+reset({ next: { width: 4000, height: 3000 }, encoded: { 'image/jpeg': 300_000, 'image/webp': 900_000 } });
+const jpeg = await img.downscale(photo('wall.jpg', 'image/jpeg', 4_000_000));
+check('a jpeg that wins as a jpeg keeps a name the server can read',
+  jpeg.file.type === 'image/jpeg' && jpeg.file.name === 'wall.jpg', `${jpeg.file.type} ${jpeg.file.name}`);
+
+const galleryView = await boot(`/i/${galleryId}`, { client: 'e2eguest000000001' });
+// A view that throws renders a notice and nothing else, so every assertion below
+// would report a confusing empty page. This one names the real cause.
+check('the gallery post renders without an error notice', !alertText(galleryView.view), alertText(galleryView.view));
+check('the gallery post renders its caption', galleryView.text.includes('подпись к скриншотам'), galleryView.text.slice(0, 200));
+check('five pictures make a carousel',
+  Boolean(firstEl(galleryView.view, (el) => hasClass(el, 'carousel'))),
+  galleryView.text.slice(0, 200));
+const counter = firstEl(galleryView.view, (el) => hasClass(el, 'carousel-count'));
+check('the carousel says how many there are',
+  textOf(counter || new TextNode('')).join(' ').includes('1 / 5'),
+  textOf(counter || new TextNode('')).join(' ') || 'no counter');
+const dots = findAll(galleryView.view, (el) => hasClass(el, 'carousel-dot'));
+check('and offers one dot per picture', dots.length === 5, `${dots.length} dots`);
+check('and marks which one is showing',
+  dots.filter((d) => (d.attributes || {})['aria-current'] === 'true').length === 1,
+  dots.map((d) => (d.attributes || {})['aria-current']).join(','));
+const sources = findAll(galleryView.view, (el) => el.tagName === 'IMG' && (el.attributes || {}).src);
+/**
+ * Which of the five pictures have actually been asked for, by name.
+ *
+ * Re-read from the tree on every call rather than kept in a list: the whole point
+ * of the lazy loader is that the set grows, and a snapshot taken once would
+ * report the same three names after every arrow press.
+ */
+const loadedNames = () => {
+  const fetched = findAll(galleryView.view, (el) => el.tagName === 'IMG'
+    && String((el.attributes || {}).src || '').includes('/m/'))
+    .map((img) => String(img.attributes.src));
+  return GALLERY_SHOTS.filter((name) => fetched.some((src) => src.includes(fileIdOf(name))));
+};
+check('the picture on screen and the two an arrow press would reach are fetched',
+  loadedNames().join(',') === 'one.png,two.png,five.png', loadedNames().join(','));
+check('and the cover is not one of the gallery pictures',
+  sources.filter((img) => String(img.attributes.src).includes('rbxcdn')).length === 1,
+  sources.map((img) => String(img.attributes.src).slice(-24)).join(' | '));
+
+// The code is the reason the post exists and the pictures illustrate it, so the
+// order is asserted on the rendered tree rather than on a class name: a reader
+// should meet the script before the screenshots either way the markup is written.
+const codeBox = firstEl(galleryView.view, (el) => hasClass(el, 'code'));
+const carousel = firstEl(galleryView.view, (el) => hasClass(el, 'carousel'));
+const renderOrder = [];
+const walk = (el) => {
+  if (el === codeBox) renderOrder.push('code');
+  if (el === carousel) renderOrder.push('gallery');
+  for (const child of el.children || []) walk(child);
+};
+walk(galleryView.view);
+check('the code is rendered above the gallery',
+  renderOrder.indexOf('code') !== -1 && renderOrder.indexOf('code') < renderOrder.indexOf('gallery'),
+  renderOrder.join(' -> '));
+
+// The arrows are the control a reader reaches for first, so they are exercised
+// rather than only counted. The counter is the visible state, and the number of
+// fetched pictures is the one that proves the carousel is really walking the
+// post rather than redrawing the same picture with a new number on it.
+const carouselRoot = firstEl(galleryView.view, (el) => hasClass(el, 'carousel'));
+const nextBtn = findAll(galleryView.view, (el) => el.tagName === 'BUTTON'
+  && (el.attributes || {})['aria-label'] === 'Следующее фото')[0];
+check('the next arrow is a real button', Boolean(nextBtn) && nextBtn.listeners.get('click').length === 1);
+const shownCounter = () => textOf(firstEl(galleryView.view, (el) => hasClass(el, 'carousel-count')) || new TextNode('')).join(' ');
+
+nextBtn.click();
+check('the next arrow moves the counter', shownCounter().includes('2 / 5'), shownCounter());
+check('the picture it lands on was already fetched, and only its new neighbour is added',
+  loadedNames().join(',') === 'one.png,two.png,three.png,five.png', loadedNames().join(','));
+check('and the dot follows', dots[1].getAttribute('aria-current') === 'true'
+  && dots[0].getAttribute('aria-current') === 'false',
+  dots.map((d) => d.getAttribute('aria-current')).join(','));
+check('and only one dot is current at a time',
+  dots.filter((d) => d.getAttribute('aria-current') === 'true').length === 1);
+
+nextBtn.click();
+check('a second press reaches the third picture', shownCounter().includes('3 / 5'), shownCounter());
+check('and the post is now fully fetched, once the reader has walked a third of the way in',
+  loadedNames().length === GALLERY_SHOTS.length, loadedNames().join(','));
+
+carouselRoot.fire('keydown', { key: 'ArrowLeft' });
+check('the left arrow key steps back', shownCounter().includes('2 / 5'), shownCounter());
+carouselRoot.fire('keydown', { key: 'End' });
+check('an unrelated key is left alone', shownCounter().includes('2 / 5'), shownCounter());
+
+dots[4].click();
+check('a dot jumps straight to its picture', shownCounter().includes('5 / 5'), shownCounter());
+check('and wraps no further than the last one', dots[4].getAttribute('aria-current') === 'true');
+nextBtn.click();
+check('past the last picture it comes back to the first', shownCounter().includes('1 / 5'), shownCounter());
+
+const singleView = await boot(`/i/${singleId}`, { client: 'e2eguest000000001' });
+check('a single picture gets no carousel',
+  findAll(singleView.view, (el) => hasClass(el, 'carousel')).length === 0,
+  'carousel chrome present on a one-image post');
+check('but is still rendered', singleView.text.includes('всего один'), singleView.text.slice(0, 200));
+
+check('the post shows its game', galleryView.text.includes('Fake Game'), galleryView.text.slice(0, 300));
+check('and the studio', galleryView.text.includes('Fake Studio'), galleryView.text.slice(0, 300));
+check('and the key system', galleryView.text.includes('Ключевая система') && galleryView.text.includes('Moon'),
+  galleryView.text.slice(0, 300));
+const chipLinks = hrefsOf(galleryView.view).filter((href) => href.endsWith('/games/909090'));
+check('the chip links to the game page', chipLinks.length >= 1, chipLinks.join(', ') || hrefsOf(galleryView.view).slice(0, 14).join(', '));
+const coverSrcs = findAll(galleryView.view, (el) => el.tagName === 'IMG' && String(el.attributes.src || '').includes('rbxcdn'));
+check('the cover is drawn', coverSrcs.length >= 1, `${coverSrcs.length} covers`);
+
+// The feed row carries the chip too, so a game's presence is visible before the
+// post is opened.
+const feedWithGame = await boot('/search?q=галерея', { client: 'e2eguest000000001' });
+check('the feed row carries the game', feedWithGame.text.includes('Fake Game'), feedWithGame.text.slice(0, 300));
+check('and links to it', hrefsOf(feedWithGame.view).some((href) => href.endsWith('/games/909090')),
+  hrefsOf(feedWithGame.view).slice(0, 12).join(', '));
+
+// A post with no game has no chip and no empty gap where one would be.
+check('a post with no game has no chip', !singleView.text.includes('Fake Game'), singleView.text.slice(0, 300));
+
+const gamePage = await boot('/games/909090', { client: 'e2eguest000000001' });
+check('the game page lists only that game\'s posts',
+  gamePage.text.includes('галерея снимков') && gamePage.text.includes('второй скрипт под ту же игру'),
+  gamePage.text.slice(0, 400));
+check('and leaves other posts out', !gamePage.text.includes('открытая заметка'), gamePage.text.slice(0, 400));
+check('the game page is headed by the chip', gamePage.text.includes('Fake Game'), gamePage.text.slice(0, 300));
+
+// A game with a chip but no posts yet. The page still has to be a page and not
+// an error: the lookup is allowed to fail here - the Worker has no Roblox
+// network in this harness - and the list is not conditional on it.
+const unposted = await boot('/games/777777', { client: 'e2eguest000000001' });
+check('a game with no posts renders an empty page, not an error',
+  !alertText(unposted.view) && unposted.read().includes('Ничего не нашлось'),
+  `alert=${JSON.stringify(alertText(unposted.view))} text=${unposted.read().slice(0, 200)}`);
+
+const publishForm = await boot('/new', { client: 'e2eauthor0000001', session: token });
+check('the publish form has a game panel', publishForm.text.includes('Игра'), publishForm.text.slice(0, 400));
+check('and a key system panel', publishForm.text.includes('Ключевая система'), publishForm.text.slice(0, 400));
+check('and takes a game id', publishForm.text.includes('ID игры'), publishForm.text.slice(0, 400));
+check('the form mentions the new quota', publishForm.text.includes('двенадцать'), publishForm.text.slice(-400));
+const field = (view, id) => findAll(view.view, (el) => el.tagName === 'INPUT'
+  && String((el.attributes || {}).id || '') === id)[0] || null;
+check('the form has somewhere to type a cover by hand', Boolean(field(publishForm, 'f-game-cover')),
+  'no cover field in the game panel');
+check('and a key system field', Boolean(field(publishForm, 'f-key-system')), 'no key system field');
+
+// Hand-typing a game, with no lookup at all. This is the case the lookup exists
+// to make rare: a private place, a game Roblox will not name, an author who just
+// knows the id. If the chip only ever came from the lookup button, this would
+// publish a post with the fields visibly filled in and nothing attached to them.
+const typed = await boot('/new', { client: 'e2eauthor0000001', session: token });
+const typedId = field(typed, 'f-game-id');
+const typedName = field(typed, 'f-game-name');
+const typedAuthor = field(typed, 'f-game-author');
+const typedCover = field(typed, 'f-game-cover');
+typedId.value = '515151';
+typedId.fire('input');
+check('an id alone is not enough for a chip', !typed.read().includes('Ручная игра'),
+  'a chip appeared from an id with no name');
+typedName.value = 'Ручная игра';
+typedName.fire('input');
+check('an id and a name typed by hand do make a chip', typed.read().includes('Ручная игра'),
+  typed.read().slice(-400));
+// The chip links to the id alone. That is what makes a hand-written chip useful:
+// the destination resolves the name and cover through the same lookup the
+// publish form uses, so a game nobody has posted about yet still has a page. The
+// risk being guarded against is the opposite one - a link that carries the name
+// it was typed with, which would let a link claim to be a different game.
+const gameHrefs = hrefsOf(typed.view).filter((href) => href.includes('/games/'));
+check('the chip links to the id and nothing else',
+  gameHrefs.length === 1 && gameHrefs[0].endsWith('/games/515151') && !gameHrefs[0].includes('?'),
+  gameHrefs.join(', ') || 'no game link at all');
+typedAuthor.value = 'Someone';
+typedAuthor.fire('input');
+typedCover.value = 'https://tr.rbxcdn.com/manual/Png/noFilter';
+typedCover.fire('input');
+const typedTitle = findAll(typed.view, (el) => el.tagName === 'INPUT'
+  && String((el.attributes || {}).id || '') === 'f-title')[0];
+if (typedTitle) { typedTitle.value = 'написанная игра'; typedTitle.fire('input'); }
+const typedBody = findAll(typed.view, (el) => el.tagName === 'TEXTAREA')[0];
+if (typedBody) { typedBody.value = 'print("руками")'; typedBody.fire('input'); }
+const typedKeySystem = field(typed, 'f-key-system');
+if (typedKeySystem) { typedKeySystem.value = 'Wave'; typedKeySystem.fire('input'); }
+const typedForm = findAll(typed.view, (el) => el.tagName === 'FORM')[0];
+if (typedForm) typedForm.submit();
+await new Promise((r) => setTimeout(r, 150));
+const typedItem = await call(worker, env, '/api/items?limit=60');
+const stored = typedItem.json.items.find((i) => i.title === 'написанная игра');
+check('the hand-written game is actually published', Boolean(stored),
+  JSON.stringify(typedItem.json.items.map((i) => i.title)));
+check('with the id and name that were typed', stored?.game?.id === '515151' && stored?.game?.name === 'Ручная игра',
+  JSON.stringify(stored?.game));
+check('and the studio and cover', stored?.game?.author === 'Someone'
+  && stored?.game?.cover === 'https://tr.rbxcdn.com/manual/Png/noFilter', JSON.stringify(stored?.game));
+check('and the key system', stored?.keySystem === 'Wave', JSON.stringify(stored?.keySystem));
+
+// Clearing the name has to take the chip away again, or a post carries a game
+// the author has just decided it is not about.
+const cleared = await boot('/new', { client: 'e2eauthor0000001', session: token });
+const clearedName = field(cleared, 'f-game-name');
+const clearedId = field(cleared, 'f-game-id');
+clearedId.value = '616161';
+clearedId.fire('input');
+clearedName.value = 'Временная';
+clearedName.fire('input');
+check('the chip is there while both fields are filled', cleared.read().includes('Временная'),
+  cleared.read().slice(-300));
+clearedName.value = '';
+clearedName.fire('input');
+check('and gone as soon as the name is cleared', !cleared.read().includes('Временная'),
+  cleared.read().slice(-300));
+
+const editGallery = await boot(`/edit/${galleryId}`, {
+  client: 'e2eauthor0000001', session: token,
+  editKeys: { [galleryId]: gallery.json.secret },
+});
+check('the editor comes back with the game filled in', editGallery.text.includes('Fake Game'), editGallery.text.slice(0, 400));
+// The key system lives in an input, so it is read the way a person reads it -
+// as the field's value - rather than as page text, which never contains it.
+const keySystemField = findAll(editGallery.view, (el) => el.tagName === 'INPUT'
+  && String((el.attributes || {}).id || '') === 'f-key-system')[0];
+check('and the key system in its field', keySystemField?.value === 'Moon', `got ${JSON.stringify(keySystemField?.value)}`);
+const gameIdField = findAll(editGallery.view, (el) => el.tagName === 'INPUT'
+  && String((el.attributes || {}).id || '') === 'f-game-id')[0];
+check('and the game id in its field', gameIdField?.value === '909090', `got ${JSON.stringify(gameIdField?.value)}`);
 
 console.log(`\n${pass} passed, ${failures.length} failed`);
 for (const f of failures) console.log(`  - ${f}`);

@@ -162,7 +162,7 @@ await t('quota table matches the product rules', async () => {
   const anon = quotaFor(null);
   const reg = quotaFor({ id: 'u_x' });
   check('anonymous 1 item/day', anon.newItemsPerDay === 1, `got ${anon.newItemsPerDay}`);
-  check('registered 4 items/day', reg.newItemsPerDay === 4, `got ${reg.newItemsPerDay}`);
+  check('registered 12 items/day', reg.newItemsPerDay === 12, `got ${reg.newItemsPerDay}`);
   check('anonymous captcha on post', anon.captchaOnPost === true);
   check('registered exempt from captcha', reg.captchaOnPost === false);
   check('anonymous cannot follow', anon.canFollow === false);
@@ -173,7 +173,8 @@ await t('quota table matches the product rules', async () => {
   check('registered storage larger', reg.storageBytes > anon.storageBytes);
   check('registered edits uncapped', reg.editsPerDay === Infinity);
   check('anonymous edits capped', anon.editsPerDay > 0 && anon.editsPerDay < Infinity);
-  check('registered file cap is the KV cap', reg.maxFileBytes === 24 * 1024 * 1024);
+  check('registered file cap is 50 MB', reg.maxFileBytes === 50 * 1024 * 1024);
+  check('anonymous file cap stays under the registered one', anon.maxFileBytes < reg.maxFileBytes);
 
   // The caps are env-overridable so they can be tuned without a redeploy. That
   // only stays safe if the shipped defaults keep matching the values in
@@ -182,7 +183,7 @@ await t('quota table matches the product rules', async () => {
   check('wrangler pins the anonymous cap to the source default',
     cfg.includes('ANON_NEW_ITEMS_PER_DAY = "1"') && quotaFor(null, {}).newItemsPerDay === 1);
   check('wrangler pins the registered cap to the source default',
-    cfg.includes('REG_NEW_ITEMS_PER_DAY = "4"') && quotaFor({ id: 'u_x' }, {}).newItemsPerDay === 4);
+    cfg.includes('REG_NEW_ITEMS_PER_DAY = "12"') && quotaFor({ id: 'u_x' }, {}).newItemsPerDay === 12);
   check('env override applies to the anonymous tier',
     quotaFor(null, { ANON_NEW_ITEMS_PER_DAY: '9' }).newItemsPerDay === 9);
   check('env override applies to the registered tier',
@@ -192,7 +193,7 @@ await t('quota table matches the product rules', async () => {
   check('negative override is ignored', quotaFor(null, { ANON_NEW_ITEMS_PER_DAY: '-5' }).newItemsPerDay === 1);
   check('empty override is ignored', quotaFor(null, { ANON_NEW_ITEMS_PER_DAY: '' }).newItemsPerDay === 1);
   // The registered tier must not be downgradable by the anonymous var.
-  check('tiers do not cross', quotaFor({ id: 'u_x' }, { ANON_NEW_ITEMS_PER_DAY: '99' }).newItemsPerDay === 4);
+  check('tiers do not cross', quotaFor({ id: 'u_x' }, { ANON_NEW_ITEMS_PER_DAY: '99' }).newItemsPerDay === 12);
 });
 
 /* ------------------------------------------------------------ integration */
@@ -219,7 +220,7 @@ await t('register issues a session bound to the client', async (env) => {
 
   const me = await call(worker, env, '/api/auth/me', { session: r.json.token });
   check('me resolves the user', me.json?.user?.nick === 'danil');
-  check('me reports registered quota', me.json?.quota?.newItemsPerDay === 4);
+  check('me reports registered quota', me.json?.quota?.newItemsPerDay === 12, `${me.json?.quota?.newItemsPerDay}`);
   check('me reports no captcha', me.json?.quota?.captchaOnPost === false);
 });
 
@@ -379,17 +380,17 @@ await t('anonymous is capped at 1 new item per day', async (env) => {
   check('reports quota', second.json?.quota?.newItemsPerDay === 1);
 });
 
-await t('registered is capped at 4 new items per day', async (env) => {
+await t('registered is capped at 12 new items per day', async (env) => {
   const reg = await register(env, { nick: 'busy' });
   const s = reg.json.token;
   let last = null;
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 14; i++) {
     last = await call(worker, env, '/api/items', {
       method: 'POST', body: { type: 'paste', title: `p${i}`, body: 'b' }, session: s,
     });
   }
-  check('4 succeeded then blocked', last.status === 429, `got ${last.status}`);
-  check('reports the 4/day quota', last.json?.quota?.newItemsPerDay === 4, JSON.stringify(last.json));
+  check('12 succeeded then blocked', last.status === 429, `got ${last.status}`);
+  check('reports the 12/day quota', last.json?.quota?.newItemsPerDay === 12, JSON.stringify(last.json));
   check('says registered', last.json?.quota?.registered === true);
 });
 
@@ -402,7 +403,7 @@ await t('registered editing stays open after the daily new-post cap', async (env
   check('created', created.status === 201, `got ${created.status}`);
   const { item, secret } = created.json;
   // Burn the new-post budget, then confirm edits still work.
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 13; i++) {
     await call(worker, env, '/api/items', { method: 'POST', body: { type: 'paste', title: `f${i}`, body: 'b' }, session: s });
   }
   const edited = await call(worker, env, `/api/items/${item.id}`, {
@@ -642,7 +643,7 @@ await t('anonymous publishing still works exactly as before', async (env) => {
 await t('config advertises the tiers so the client can render them', async (env) => {
   const r = await call(worker, env, '/api/config');
   check('anonymous quota advertised', r.json?.quota?.anonymous?.newItemsPerDay === 1, JSON.stringify(r.json?.quota));
-  check('registered quota advertised', r.json?.quota?.registered?.newItemsPerDay === 4);
+  check('registered quota advertised', r.json?.quota?.registered?.newItemsPerDay === 12, `${r.json?.quota?.registered?.newItemsPerDay}`);
   check('auth modes advertised', Array.isArray(r.json?.authModes) && r.json.authModes.includes('device'));
   // The browser solves a proof of work to register, so it must be told the
   // difficulty. Without this field the client would guess and either stall or

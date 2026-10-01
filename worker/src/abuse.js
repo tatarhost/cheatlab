@@ -259,11 +259,16 @@ let warnedAboutSecret = false;
  * Numbers come from the product decision, not from taste:
  *
  *   anonymous : 1 new item per day, captcha on each post, no friends/voice
- *   registered: 3-4 new items per day, no captcha, unlimited code edits
+ *   registered: 12 new items per day, no captcha, unlimited code edits
  *
  * Edits are deliberately uncapped for registered users and tightly capped for
  * anonymous ones, because editing an existing item costs no storage while
  * creating one does. That is the whole reason the two limits differ.
+ *
+ * The per-file caps here are a floor under the global MAX_FILE_MB, not a second
+ * source of truth: bytes live on Cloudinary now, so the binding limit is what the
+ * file service and the Worker will accept, and the anonymous tier keeps a lower
+ * ceiling of its own so a guest cannot spend the account budget.
  */
 export const QUOTA = {
   anonymous: {
@@ -278,13 +283,13 @@ export const QUOTA = {
     canVoice: false,
   },
   registered: {
-    newItemsPerDay: 4,
+    newItemsPerDay: 12,
     // "безлимитное обновление кода" - bounded only by burst, not by a daily
     // budget, because it consumes no quota.
     editsPerDay: Infinity,
     editsPerHour: 120,
     storageBytes: 2 * 1024 * 1024 * 1024,
-    maxFileBytes: 24 * 1024 * 1024,
+    maxFileBytes: 50 * 1024 * 1024,
     captchaOnPost: false,
     captchaOnMessage: false,
     canFollow: true,

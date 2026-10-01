@@ -1,5 +1,6 @@
 import { Store } from './store.js';
-import { BlobStore } from './blobs.js';
+import { BlobStore, KV_MAX_PUT_BYTES } from './blobs.js';
+import { previewUrl, thumbUrl, posterUrl, cloudinaryReady } from './cloudinary.js';
 import { PluginHost } from './plugins.js';
 import {
   newId, newSecret, secretHash, secretMatches, normaliseClientId, authorTag,
@@ -28,19 +29,95 @@ const SECURITY_HEADERS = {
   'Cross-Origin-Resource-Policy': 'cross-origin',
 };
 
+/**
+ * Which game a paste is for, and the key system it talks to.
+ *
+ * The names arrive from the browser, which resolves them against the game's own
+ * public API, and are stored as plain strings rather than as a verified lookup:
+ * a paste's title and body are user claims too, and the point of the game chip
+ * is to say which game a script is written for, not to certify it. Everything is
+ * length-capped and stripped of markup because it is rendered as text.
+ */
+function gameFields(payload) {
+  const out = {};
+  // A too-long id is dropped rather than truncated: a cut id is a different id,
+  // and a chip pointing at the wrong game is worse than no chip. The names are
+  // display strings, so cutting those is harmless.
+  const rawId = str(payload.gameId, 400);
+  if (rawId && rawId.length <= 40) {
+    out.game_id = rawId;
+    out.game_name = str(payload.gameName, 120);
+    out.game_author = str(payload.gameAuthor, 80);
+    // A cover is a url the browser is about to put in an <img>, so the check is
+    // the scheme and the shape of the url, not a guess about its file extension.
+    //
+    // An extension check looks tidier and is wrong here: Roblox's thumbnail
+    // service hands back urls that end in a format token, e.g.
+    // `https://tr.rbxcdn.com/180DAY-…/150/150/GameIcon6/Png/noFilter`, so every
+    // cover this Worker fetched automatically would have been thrown away. What
+    // actually has to be refused is a scheme that executes - `javascript:` and
+    // `data:` both do - and a url that could break out of an attribute, so the
+    // rule is https only, with no whitespace or quote characters in it. This is
+    // the same rule the profile logo already uses, which is why a cover and a
+    // logo cannot disagree about what a safe image url is.
+    const cover = str(payload.gameCover, 600);
+    out.game_cover = COVER_URL.test(cover) ? cover : '';
+  }
+  const keySystem = str(payload.keySystem, 40);
+  if (keySystem) out.key_system = keySystem;
+  return out;
+}
+
 function config(env) {
+  // MAX_FILE_MB is what we would like to accept; what we can accept also depends
+  // on where the bytes land. With Cloudinary's four secrets unset the upload path
+  // is KV, whose own ceiling is lower than the configured cap, and a config that
+  // promised 50 MB there would let the browser pre-check a file the store would
+  // then reject mid-upload. So the advertised limit is the smaller of the two,
+  // and the client is told which store is actually in use.
+  const wantedFileBytes = Number(env.MAX_FILE_MB || 50) * 1024 * 1024;
+  const stored = cloudinaryReady(env);
   return {
-    maxFileBytes: Number(env.MAX_FILE_MB || 25) * 1024 * 1024,
+    // 50 MB is the free Workers request body limit divided by two, and also well
+    // under Cloudinary's 100 MB per-file cap, so the Worker never becomes the
+    // bottleneck for a large archive.
+    maxFileBytes: stored ? wantedFileBytes : Math.min(wantedFileBytes, KV_MAX_PUT_BYTES),
+    storage: stored ? 'cloudinary' : 'kv',
     maxTextBytes: Number(env.MAX_TEXT_KB || 256) * 1024,
-    maxFilesPerItem: Number(env.MAX_FILES || 20),
+    maxFilesPerItem: Number(env.MAX_FILES || 60),
     titleMax: Number(env.TITLE_MAX || 120),
     labelMax: Number(env.LABEL_MAX || 24),
     accessKeyMax: 64,
     keyHintMax: 80,
-    writeCap: Number(env.WRITE_CAP || 30),
+    writeCap: Number(env.WRITE_CAP || 90),
     readCap: Number(env.READ_CAP || 240),
     allowOrigin: env.ALLOW_ORIGIN || '*',
   };
+}
+
+/**
+ * What the client needs to render a file. A CDN-backed file carries its own
+ * derived urls, so the browser can ask for a 320 px thumb or a poster frame
+ * without knowing anything about Cloudinary transformations.
+ */
+function fileView(file) {
+  const view = {
+    id: file.id,
+    name: file.name,
+    size: file.size,
+    mime: file.mime,
+    downloads: file.downloads || 0,
+  };
+  if (file.store === 'cloudinary' && file.url) {
+    view.url = file.url;
+    view.preview = previewUrl(file.url);
+    view.thumb = thumbUrl(file.url);
+    if (/^video\//i.test(file.mime || '')) view.poster = posterUrl(file.url);
+  } else {
+    view.preview = `/m/${file.id}`;
+    view.thumb = `/m/${file.id}`;
+  }
+  return view;
 }
 
 const json = (obj, status = 200, headers = {}) =>
@@ -106,9 +183,20 @@ function publicItem(row, files, tag) {
     keyHint: row.key_hint || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    files: files.map(({ id, name, size, mime, sha256, downloads, createdAt }) => ({
-      id, name, size, mime, sha256: sha256.slice(0, 16), downloads, createdAt,
-    })),
+    // Which game the paste is for. Free text on the row rather than a join, so a
+    // game can be renamed upstream without rewriting every paste that mentions
+    // it, and a paste that targets no game simply leaves these empty.
+    game: row.game_id ? {
+      id: row.game_id,
+      name: row.game_name || '',
+      author: row.game_author || '',
+      cover: row.game_cover || '',
+    } : null,
+    keySystem: row.key_system || '',
+    files: files.map((f) => {
+      const view = fileView(f);
+      return { ...view, sha256: String(f.sha256 || '').slice(0, 16), createdAt: f.createdAt ?? f.created_at };
+    }),
     fileSize: files.reduce((a, f) => a + f.size, 0),
   };
   return base;
@@ -183,6 +271,12 @@ async function lockedGate(request, env, itemId, url) {
 /* ---- profile design sanitisation: raw CSS and URLs never touch the page -- */
 
 const LOGO_URL = /^https:\/\/[^\s<>"']{3,280}$/;
+// The same rule for a game cover, with a length of its own. Named separately
+// rather than reused so that widening one of them - a cover host allowlist, say -
+// cannot quietly widen the other. What is refused is a scheme that executes and
+// characters that could break out of an attribute; what is *not* refused is a
+// file extension, because Roblox's own thumbnail urls do not have one.
+const COVER_URL = /^https:\/\/[^\s<>"']{3,600}$/;
 const ACCENT_HEX = /^#[0-9a-fA-F]{6}$/;
 // Allowlist, not a blocklist: anything not spelled out here is dropped. The set
 // is what a gradient actually needs - letters, digits, `,` between stops, `%`
@@ -394,6 +488,10 @@ route('GET', /^\/api\/config$/, async (request, env) => {
       accessKeyMax: c.accessKeyMax,
       keyHintMax: c.keyHintMax,
     },
+    // Which store accepted the advertised maxFileBytes. The site reads this to
+    // stop telling an author a 50 MB archive is fine while the Worker is still on
+    // the KV fallback.
+    storage: c.storage,
     auth: 'device',
     // The client renders limits from this rather than hard-coding them, so the
     // numbers here and the numbers the server enforces cannot drift apart.
@@ -432,6 +530,96 @@ route('GET', /^\/api\/stats$/, async (request, env, _m, url) => {
   }
   return json(stats);
 });
+
+/* ----------------------------------------------------------------- games -- */
+
+/**
+ * Roblox game lookup, proxied.
+ *
+ * The publish form takes a Roblox place or universe id and needs the name, the
+ * group/creator name and an icon to draw on the chip. The browser cannot do that
+ * itself for two reasons: Roblox's APIs send no CORS headers, so a direct fetch
+ * fails before the response is readable, and doing it client-side would hand
+ * every reader's IP to Roblox from a page they may never have wanted to contact.
+ * Both go away by having the Worker do it once and hand back a small object.
+ *
+ * Results are cached because a game chip is read far more often than a game's
+ * name changes, and because the endpoints are public but rate limited. A cold
+ * miss is what the two upstream calls below cost; a hit is one KV read.
+ */
+const GAME_LOOKUP_TTL = 60 * 60 * 24; // a day
+const ROBLOX_TIMEOUT_MS = 4000;
+
+/**
+ * One upstream call with a hard deadline. Without it a slow or hanging Roblox
+ * endpoint would hold the Worker's request open until the platform gave up,
+ * which turns a third-party outage into a publish form that never responds.
+ *
+ * The deadline is env-tunable only so the test can prove the timeout exists
+ * without waiting four real seconds for it; production has no reason to set it.
+ */
+async function robloxGet(env, url) {
+  const res = await fetch(url, {
+    headers: { accept: 'application/json' },
+    signal: AbortSignal.timeout(Number(env.ROBLOX_TIMEOUT_MS) || ROBLOX_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`roblox ${res.status}`);
+  return res.json();
+}
+
+route('GET', /^\/api\/games\/roblox\/(\d{1,20})$/, async (request, env, m) => {
+  const id = m[1];
+  const client = clientOf(request) || 'anon';
+  // Cached per id, so this throttle only bites a script looping over ids.
+  if (!(await env.STORE.throttle(client, 'game-lookup', { cap: 30, windowMs: 60_000 }))) {
+    return fail(429, 'slow down');
+  }
+
+  const cacheKey = `game:roblox:${id}`;
+  const cached = await env.BLOBS.kvGet(cacheKey);
+  if (cached) return json({ ...JSON.parse(cached), cached: true });
+
+  // A Roblox id is ambiguous by nature - the same number is usually a valid
+  // universe id and a valid place id - so both are tried, universe first. The
+  // universe endpoint is the one a game link actually carries, and a hit there
+  // means the number is a real universe rather than a collision.
+  const universe = await resolveRobloxUniverse(env, id);
+  if (!universe) return fail(404, 'игра с таким id не найдена');
+
+  const [details, icon] = await Promise.all([
+    robloxGet(env, `https://games.roblox.com/v1/games?universeIds=${universe}`)
+      .then((d) => d?.data?.[0] || null)
+      .catch(() => null),
+    robloxGet(env, `https://thumbnails.roblox.com/v1/games/icons?universeIds=${universe}&size=512x512&format=Png&isCircular=false`)
+      .then((d) => d?.data?.[0]?.imageUrl || '')
+      .catch(() => ''),
+  ]);
+  // A game with a name but no icon is still worth a chip; only a nameless one
+  // is not a game, so the name is the field that decides success here.
+  if (!details?.name) return fail(404, 'игра с таким id не найдена');
+
+  const game = {
+    gameId: String(universe),
+    gameName: String(details.name).slice(0, 120),
+    gameAuthor: String(details.creator?.name || details.creator?.userName || '').slice(0, 80),
+    gameCover: icon || '',
+  };
+  await env.BLOBS.kvPut(cacheKey, JSON.stringify(game), GAME_LOOKUP_TTL);
+  return json({ ...game, cached: false });
+});
+
+/**
+ * Place id -> universe id. Already an id, already unique, so this is the cheap
+ * and reliable direction; a failure here just means the caller gave a universe
+ * id to begin with and the next step resolves it.
+ */
+async function resolveRobloxUniverse(env, id) {
+  try {
+    const r = await robloxGet(env, `https://apis.roblox.com/universes/v1/places/${id}/universe`);
+    if (Number.isSafeInteger(r?.universeId)) return r.universeId;
+  } catch { /* not a place id - fall through */ }
+  return Number.isSafeInteger(Number(id)) && Number(id) > 0 ? Number(id) : 0;
+}
 
 /* ------------------------------------------------------------- accounts -- */
 
@@ -1039,7 +1227,7 @@ async function removeItemEverywhere(env, id, ctx) {
   const before = await itemView(STORE, row);
   for (const f of await STORE.listFiles(id)) {
     await STORE.deleteFile(f.id);
-    if ((await STORE.otherRefsToSha(f.sha256, f.id)) === 0) await BLOBS.remove(f.sha256);
+    if ((await STORE.otherRefsToSha(f.sha256, f.id)) === 0) await BLOBS.remove(f.sha256, f.store, f.rid, f.url, f.mime);
   }
   await STORE.deleteItem(id);
   await env.PLUGINS.run('item:delete', before, ctx);
@@ -1245,11 +1433,22 @@ route('GET', /^\/api\/items$/, async (request, env, _m, url) => {
   const q = url.searchParams;
   const type = q.get('type') || '';
   if (type && !TYPES.has(type)) return fail(400, 'unknown type');
+  // A game's own page. Only the id is taken from the query - the name and the
+  // cover are read back off the stored item, so a link cannot rename a game.
+  //
+  // A game id that is present but not a number is refused rather than ignored.
+  // Dropping the filter would answer "everything" to a request that asked about
+  // one game, and the caller has no way to tell that from a game that simply has
+  // no posts. An empty or blank value still means "no game filter", because a
+  // stray `&game=` should not empty out an otherwise ordinary feed.
+  const game = str(q.get('game'), 40);
+  if (game && !/^\d{1,20}$/.test(game)) return fail(400, 'game id must be numeric');
   const { items, total } = await STORE.listItems({
     type,
     q: str(q.get('q'), 80),
     tag: str(q.get('tag'), 24).toLowerCase(),
     author: str(q.get('author'), 64),
+    game,
     sort: ['new', 'hot', 'old'].includes(q.get('sort')) ? q.get('sort') : 'new',
     limit: clamp(Number(q.get('limit')) || 30, 1, 60),
     offset: Math.max(0, Number(q.get('offset')) || 0),
@@ -1318,6 +1517,7 @@ route('POST', /^\/api\/items$/, async (request, env) => {
     language: LANGUAGES.includes(payload.language) ? payload.language : 'text',
     tags: tags(payload.tags),
     visibility: VISIBILITY.has(payload.visibility) ? payload.visibility : 'public',
+    ...gameFields(payload),
   };
 
   const { value, rejections } = await env.PLUGINS.run('item:create', draft, ctxOf(request, env));
@@ -1446,6 +1646,12 @@ route('PATCH', /^\/api\/items\/([A-Za-z0-9]{4,16})$/, async (request, env, m) =>
   if (payload.language !== undefined && LANGUAGES.includes(payload.language)) patch.language = payload.language;
   if (payload.tags !== undefined) patch.tags = tags(payload.tags).join(' ');
   if (payload.visibility !== undefined && VISIBILITY.has(payload.visibility)) patch.visibility = payload.visibility;
+  // Game fields are written whole, never merged, so clearing the chip in the
+  // editor clears the row too instead of leaving the old game's name behind.
+  if (payload.gameId !== undefined || payload.keySystem !== undefined) {
+    for (const k of ['game_id', 'game_name', 'game_author', 'game_cover', 'key_system']) patch[k] = '';
+    Object.assign(patch, gameFields(payload));
+  }
 
   // An empty accessKey removes the lock, a new one replaces it. The previous key
   // is not readable, so this is the only way to change it - which is why the
@@ -1476,7 +1682,7 @@ route('DELETE', /^\/api\/items\/([A-Za-z0-9]{4,16})$/, async (request, env, m) =
 
   for (const f of await STORE.listFiles(m[1])) {
     await STORE.deleteFile(f.id);
-    if ((await STORE.otherRefsToSha(f.sha256, f.id)) === 0) await BLOBS.remove(f.sha256);
+    if ((await STORE.otherRefsToSha(f.sha256, f.id)) === 0) await BLOBS.remove(f.sha256, f.store, f.rid, f.url, f.mime);
   }
   await STORE.deleteItem(m[1]);
   await env.PLUGINS.run('item:delete', before, ctxOf(request, env));
@@ -1519,19 +1725,24 @@ route('POST', /^\/api\/items\/([A-Za-z0-9]{4,16})\/files$/, async (request, env,
   if (buffer.byteLength > c.maxFileBytes) return fail(413, 'file too large', { maxBytes: c.maxFileBytes });
 
   const sha = await sha256(buffer);
-  const stored = await BLOBS.put(buffer, sha);
-  Object.assign(value, { size: stored.size, sha256: sha, mime: mimeOf(value.name) });
+  const stored = await BLOBS.put(buffer, sha, { mime: mimeOf(value.name), name: value.name });
+  Object.assign(value, {
+    size: stored.size, sha256: sha, mime: mimeOf(value.name),
+    store: stored.store, url: stored.url, rid: stored.rid,
+  });
   const saved = await STORE.addFile(value);
 
   const after = await env.PLUGINS.run('file:stored', saved, ctxOf(request, env));
   if (after.rejections.length) {
     await STORE.deleteFile(saved.id);
-    if ((await STORE.otherRefsToSha(saved.sha256, saved.id)) === 0) await BLOBS.remove(saved.sha256);
+    if ((await STORE.otherRefsToSha(saved.sha256, saved.id)) === 0) {
+      await BLOBS.remove(saved.sha256, saved.store, saved.rid, saved.url, saved.mime);
+    }
     return fail(422, 'rejected', { reasons: after.rejections });
   }
 
   await STORE.updateItem(m[1], { updated_at: now() });
-  return json({ file: { id: saved.id, name: saved.name, size: saved.size, mime: saved.mime, downloads: 0 } }, 201);
+  return json({ file: fileView(saved) }, 201);
 });
 
 route('DELETE', /^\/api\/files\/([A-Za-z0-9]{4,16})$/, async (request, env, m) => {
@@ -1544,8 +1755,8 @@ route('DELETE', /^\/api\/files\/([A-Za-z0-9]{4,16})$/, async (request, env, m) =
     const ban = await banOnItemWriter(request, env, file.itemId);
     if (ban) return bannedResponse(ban);
   
-    await STORE.deleteFile(m[1]);
-  if ((await STORE.otherRefsToSha(file.sha256, m[1])) === 0) await BLOBS.remove(file.sha256);
+     await STORE.deleteFile(m[1]);
+  if ((await STORE.otherRefsToSha(file.sha256, m[1])) === 0) await BLOBS.remove(file.sha256, file.store, file.rid, file.url, file.mime);
   await env.PLUGINS.run('file:delete', file, ctxOf(request, env));
   return json({ ok: true });
 });
@@ -1592,6 +1803,19 @@ async function serveFile(request, env, file, { inline, render = false }) {
   }
   if (!inline) await env.STORE.incFileDownloads(file.id);
 
+  // Bytes that live on Cloudinary are served by its CDN. A redirect instead of
+  // a copy: the Worker would otherwise pull 50 MB into its heap only to push it
+  // straight back out, and the client would pay for the egress twice. The gate
+  // above has already run, so an unlisted post's attachment still only resolves
+  // for someone who passed the secret or the access key.
+  if (file.store === 'cloudinary' && file.url) {
+    const target = render ? previewUrl(file.url) : file.url;
+    return new Response(null, {
+      status: 302,
+      headers: { Location: target, 'Cache-Control': 'no-store', ...SECURITY_HEADERS },
+    });
+  }
+
   // Explicit range handling: required for video seeking, and clearer than
   // depending on R2's implicit range behaviour.
   const range = request.headers.get('range');
@@ -1604,7 +1828,7 @@ async function serveFile(request, env, file, { inline, render = false }) {
     if (start === null) start = 0;
     if (end === null || end >= size) end = size - 1;
     if (start <= end && start < size) {
-      const object = await env.BLOBS.get(file.sha256, { range: { offset: start, length: end - start + 1 } });
+      const object = await env.BLOBS.get(file.sha256, { range: { offset: start, length: end - start + 1 }, store: file.store });
       if (object) {
         return new Response(object.body, {
           status: 206,
@@ -1622,7 +1846,7 @@ async function serveFile(request, env, file, { inline, render = false }) {
     });
   }
 
-  const object = await env.BLOBS.get(file.sha256);
+  const object = await env.BLOBS.get(file.sha256, { store: file.store });
   if (!object) return fail(404, 'file content missing');
   return new Response(object.body, { status: 200, headers: { ...headers, 'Content-Length': String(file.size) } });
 }
@@ -1654,9 +1878,17 @@ route('GET', /^\/m\/([A-Za-z0-9]{4,16})$/, async (request, env, m, url) => {
     return new Response(null, { status: 304, headers: { ETag: etag, 'Cache-Control': 'public, max-age=31536000, immutable' } });
   }
   await env.STORE.incFileDownloads(file.id);
+  // A CDN file has no bytes for the Worker to copy and no reason to: the preview
+  // rendition is on the CDN too, and it is the one the gallery should show.
+  if (file.store === 'cloudinary' && file.url) {
+    return new Response(null, {
+      status: 302,
+      headers: { Location: previewUrl(file.url), 'Cache-Control': 'no-store', ...SECURITY_HEADERS },
+    });
+  }
   const range = request.headers.get('range');
   if (range) return serveFile(request, env, file, { inline: true, render: true });
-  const object = await env.BLOBS.get(file.sha256);
+  const object = await env.BLOBS.get(file.sha256, { store: file.store });
   if (!object) return fail(404, 'file content missing');
   return new Response(object.body, {
     status: 200,
@@ -1732,7 +1964,7 @@ export default {
     const env = {
       ...rawEnv,
       STORE: new Store(rawEnv.DB),
-      BLOBS: new BlobStore(rawEnv.BUCKET),
+      BLOBS: new BlobStore(rawEnv),
       PLUGINS: pluginHost,
     };
     const origin = config(env).allowOrigin;
