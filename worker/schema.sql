@@ -186,6 +186,91 @@ CREATE TABLE IF NOT EXISTS comment (
 CREATE INDEX IF NOT EXISTS idx_comment_item ON comment(item_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_comment_user ON comment(user_id);
 
+-- Messaging: channels, groups and direct chats between friends.
+-- Mirrors migrations/0006_messaging.sql. See that file for the reasoning; the
+-- short version is that a dm can only be opened between mutual followers, a
+-- channel is world-readable and subscriber-writable, a group is private, and
+-- message bodies live in D1 rather than in the Durable Object so that every ban,
+-- quota and sanitiser check stays on the path that already has them.
+CREATE TABLE IF NOT EXISTS conversation (
+  id          TEXT PRIMARY KEY,
+  kind        TEXT NOT NULL,
+  title       TEXT NOT NULL DEFAULT '',
+  topic       TEXT NOT NULL DEFAULT '',
+  owner       TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  discoverable INTEGER NOT NULL DEFAULT 1,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_conversation_kind ON conversation (kind, updated_at DESC);
+CREATE TABLE IF NOT EXISTS conversation_pair (
+  a         TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  b         TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  conv_id   TEXT NOT NULL REFERENCES conversation(id) ON DELETE CASCADE,
+  PRIMARY KEY (a, b)
+);
+CREATE INDEX IF NOT EXISTS idx_pair_conv ON conversation_pair (conv_id);
+CREATE INDEX IF NOT EXISTS idx_pair_b ON conversation_pair (b);
+CREATE TABLE IF NOT EXISTS conversation_member (
+  conv_id      TEXT NOT NULL REFERENCES conversation(id) ON DELETE CASCADE,
+  user_id      TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  role         TEXT NOT NULL DEFAULT 'member',
+  joined_at    INTEGER NOT NULL,
+  last_read_at INTEGER NOT NULL DEFAULT 0,
+  muted        INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (conv_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_member_user ON conversation_member (user_id, joined_at DESC);
+CREATE TABLE IF NOT EXISTS message (
+  id       TEXT PRIMARY KEY,
+  conv_id  TEXT NOT NULL REFERENCES conversation(id) ON DELETE CASCADE,
+  user_id  TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  body     TEXT NOT NULL DEFAULT '',
+  deleted_at INTEGER,
+  deleted_by TEXT,
+  game_id    TEXT NOT NULL DEFAULT '',
+  game_name  TEXT NOT NULL DEFAULT '',
+  game_cover TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_message_conv ON message (conv_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_message_user ON message (user_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS message_file (
+  id         TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL REFERENCES message(id) ON DELETE CASCADE,
+  name       TEXT NOT NULL,
+  mime       TEXT NOT NULL,
+  size       INTEGER NOT NULL,
+  sha256     TEXT NOT NULL,
+  author     TEXT NOT NULL,
+  store      TEXT NOT NULL DEFAULT 'kv',
+  url        TEXT NOT NULL DEFAULT '',
+  rid        TEXT NOT NULL DEFAULT '',
+  downloads  INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_message_file_msg ON message_file (message_id, created_at);
+CREATE TABLE IF NOT EXISTS message_takedown (
+  id         TEXT PRIMARY KEY,
+  conv_id    TEXT NOT NULL REFERENCES conversation(id) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  action     TEXT NOT NULL,
+  by_user_id TEXT NOT NULL,
+  reason     TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_takedown_conv ON message_takedown (conv_id, user_id);
+CREATE TABLE IF NOT EXISTS chat_ticket (
+  id         TEXT PRIMARY KEY,
+  conv_id    TEXT NOT NULL,
+  user_id    TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at    INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ticket_conv ON chat_ticket (conv_id);
+
 -- Outstanding CAPTCHA challenges. The answer stays on the server: a token the
 -- client can read is not evidence that anyone solved the question. See
 -- migrations/0002_accounts.sql for the reasoning.

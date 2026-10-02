@@ -678,3 +678,185 @@ a.stat-box:hover .stat-label { color: var(--ink); }
   .foot { padding: 14px 18px; }
   .split { grid-template-columns: minmax(0, 1fr); gap: 26px; }
 }
+
+/* ---- chat ---- */
+/* The log is its own scroll container rather than the page, so reading history
+   never scrolls the header or the nav out of reach on a phone. */
+.chat-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+.chat-log {
+  height: min(66vh, 640px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--fog);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+}
+.chat-msgs { display: flex; flex-direction: column; gap: 14px; }
+
+.chat-msg { max-width: 78%; }
+.chat-msg.is-mine { align-self: flex-end; }
+.chat-msg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+.chat-msg.is-mine .chat-msg-head { justify-content: flex-end; }
+.chat-nick { font-weight: 600; font-size: 13px; }
+.chat-time { color: var(--mute); font-size: 12px; }
+.chat-del {
+  border: 0; background: none; color: var(--mute); cursor: pointer;
+  padding: 2px; line-height: 0; border-radius: 4px;
+}
+.chat-del:hover { color: var(--danger); }
+
+.chat-body {
+  margin: 0;
+  padding: 9px 12px;
+  background: var(--fog-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  /* Long words and pasted urls wrap instead of widening the column. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-msg.is-mine .chat-body { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.chat-body.is-deleted { color: var(--mute); font-style: italic; }
+
+.chat-game {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 5px 10px 5px 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.chat-game:hover { border-color: var(--ink); text-decoration: none; }
+.chat-game-cover { width: 30px; height: 30px; object-fit: cover; border-radius: 5px; }
+
+.chat-files { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.chat-file {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--mute);
+}
+
+.chat-more {
+  align-self: center;
+  border: 1px dashed var(--line);
+  background: none;
+  color: var(--mute);
+  border-radius: 999px;
+  padding: 5px 14px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+.chat-more:hover { color: var(--ink); border-color: var(--ink); }
+
+.chat-composer { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+/* The field and the picker share a row so the send button stays aligned with the
+   field rather than with the bottom of a two-line composer. */
+.chat-compose-row { display: flex; flex: 1; gap: 6px; min-width: 0; }
+.chat-attach {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 11px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.chat-attach:hover { color: var(--ink); border-color: var(--ink); }
+.chat-attach:focus-within { outline: 2px solid var(--ink); outline-offset: 1px; }
+.chat-pending {
+  flex: 1 0 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--fog);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.chat-pending span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Available to the screen reader and not to the eye. The file input has to be in
+   the form for the label to work, and a visible one would be a second, uglier
+   control sitting next to the real one. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.chat-input, .chat-kind {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  background: var(--fog);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font: inherit;
+}
+.chat-input:focus, .chat-kind:focus { outline: 2px solid var(--ink); outline-offset: 1px; }
+.chat-input:disabled { opacity: .55; }
+.chat-create { display: flex; gap: 8px; margin-bottom: 18px; }
+/* The rows of people a name matched. They sit under the field rather than over
+   it, so nothing that was typed is covered while a choice is made. */
+.chat-hits { display: flex; flex-wrap: wrap; gap: 6px; margin: -10px 0 18px; }
+.chat-hits:empty { display: none; }
+.chat-chip-self { color: var(--muted); font-size: 12px; }
+
+.chat-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.chat-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 13px 15px;
+  border-bottom: 1px solid var(--line);
+}
+.chat-row:last-child { border-bottom: 0; }
+.chat-row:hover { background: var(--fog); text-decoration: none; }
+.chat-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.chat-row-title { font-weight: 600; }
+.chat-row-sub { color: var(--mute); font-size: 13px; }
+.chat-row.is-unread .chat-row-title { font-weight: 700; }
+.chat-badge {
+  flex: none;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--ink); color: var(--paper);
+  border-radius: 999px; font-size: 12px; font-weight: 700;
+}
+
+@media (max-width: 900px) {
+  .chat-msg { max-width: 90%; }
+  .chat-log { height: 58vh; }
+  .chat-create { flex-wrap: wrap; }
+  .chat-create .chat-input { flex: 1 1 100%; order: 3; }
+}
+.chat-discover { margin-bottom: 18px; }
+.chat-discover summary { cursor: pointer; color: var(--mute); font-size: 14px; }
+.chat-discover-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.chat-chip {
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 13px;
+}
+.chat-chip:hover { border-color: var(--ink); text-decoration: none; }
+.chat-join { display: flex; justify-content: flex-end; }

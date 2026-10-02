@@ -2865,6 +2865,629 @@ async function viewStats() {
   );
 }
 
+/* ------------------------------------------------------------------ chat -- */
+
+/**
+ * The socket, keyed by conversation.
+ *
+ * One connection per open room rather than one for the whole site: a channel and
+ * a direct message have different readers, so a single multiplexed stream would
+ * have to filter by conversation anyway. It also means a room that is busy does
+ * not delay the one you are typing in.
+ *
+ * The ticket is spent on the first handshake, so a socket that drops and has to
+ * be replaced needs a fresh one. That is why `connect` is called again rather
+ * than reusing anything.
+ */
+const chatSockets = new Map();
+let chatRoom = null;
+let chatMessages = [];
+let chatOlder = null;
+let chatBacklog = true;
+// The log and the field are held here rather than looked up by id on every use:
+// both are rebuilt on each render, and the app already treats a small set of
+// static nodes (the view, the toast, the search box) this way.
+let chatLog = null;
+let chatField = null;
+/**
+ * The file waiting to go out with the next message, or null.
+ *
+ * Held here rather than in the composer because a render rebuilds the composer
+ * and would otherwise drop the picked file every time anything else re-painted.
+ */
+let chatPick = null;
+
+/**
+ * The half-typed message, kept here rather than read back off the field.
+ *
+ * The composer is rebuilt on every render, and a render happens for reasons that
+ * have nothing to do with the writer: somebody else's message arrives, a read
+ * marker lands, a slow history page fills in. Reading the draft off the DOM would
+ * mean losing whatever was typed every time one of those happened, so the field
+ * is drawn from this and writes to it.
+ */
+let chatDraft = '';
+
+/** Drops the socket for a room and clears its reconnect timer. */
+function chatClose(convId) {
+  const open = chatSockets.get(convId);
+  if (open?.timer) clearTimeout(open.timer);
+  if (open?.ws) {
+    try { open.ws.close(); } catch { /* already closing */ }
+  }
+  chatSockets.delete(convId);
+}
+
+/**
+ * Opens the live connection for a room.
+ *
+ * The ticket exists because a browser cannot attach the session header to a
+ * WebSocket handshake. It is exchanged over an ordinary authenticated POST, used
+ * once, and expires in a minute - so a ticket that leaks in a log is worthless
+ * almost immediately, unlike a session token in a query string.
+ */
+async function chatConnect(convId) {
+  chatClose(convId);
+  let grant;
+  try {
+    grant = await api(`/api/chats/${convId}/ticket`, { method: 'POST' });
+  } catch {
+    // A reader who may only read cannot hold a socket: the ticket is minted for
+    // people who may post. History still works, it just does not update itself.
+    return;
+  }
+  if (!grant?.ticket || !grant?.url || chatRoom?.id !== convId) return;
+
+  // The API lives on another origin from the page, so the socket has to be built
+  // from the API's origin rather than the page's - and http has to become ws,
+  // which is why the path comes from the server instead of being assembled here.
+  const base = (API || '').replace(/^http/, 'ws') || location.origin.replace(/^http/, 'ws');
+  const query = new URLSearchParams({ id: convId, t: grant.ticketId, ticket: grant.ticket });
+  let ws;
+  try {
+    ws = new WebSocket(`${base}${grant.url}?${query}`);
+  } catch {
+    return;
+  }
+  const entry = { ws, timer: null };
+  chatSockets.set(convId, entry);
+
+  ws.onmessage = (ev) => {
+    let frame;
+    try {
+      frame = JSON.parse(String(ev.data));
+    } catch {
+      return;
+    }
+    if (!frame || typeof frame !== 'object' || chatRoom?.id !== convId) return;
+    // "stale" means something was stored while this room had no subscribers, so
+    // the socket cannot say what - history is re-read once rather than guessed at.
+    if (frame.t === 'stale') { chatOpen(convId); return; }
+    if (frame.t !== 'msg' || !frame.m) return;
+    chatAdd(frame.m);
+  };
+
+  ws.onopen = () => {
+    entry.open = true;
+    if (chatRoom?.id !== convId) return;
+    chatRoom.live = true;
+    // A socket that had to be re-opened missed everything said while it was
+    // down - the room does not replay it - so history is read again once here.
+    // The first connection needs no re-read: chatOpen just fetched it.
+    if (chatRoom.connects++ > 0) chatOpen(convId, { keepSocket: true });
+  };
+
+  ws.onclose = () => {
+    if (chatSockets.get(convId) !== entry) return;
+    chatSockets.delete(convId);
+    entry.open = false;
+    if (chatRoom?.id === convId) chatRoom.live = false;
+    // Only reconnect while the room is still on screen: a background tab must
+    // not keep a socket open, and neither must a room the user has left.
+    if (chatRoom?.id !== convId) return;
+    entry.timer = setTimeout(() => {
+      if (chatRoom?.id === convId) chatConnect(convId);
+    }, 4000);
+  };
+  ws.onerror = () => { /* onclose does the recovery */ };
+}
+
+// A laptop that was asleep comes back with its socket already dead and no error
+// worth reporting, so the room is re-opened when the tab becomes visible again or
+// the network returns. Both are cheap: one ticket, and only if nothing is open.
+addEventListener('online', () => { if (chatRoom?.id && !chatSockets.has(chatRoom.id)) chatConnect(chatRoom.id); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (chatRoom?.id && !chatSockets.has(chatRoom.id)) chatConnect(chatRoom.id);
+});
+
+/**
+ * Reads one page of history and draws the room.
+ *
+ * `keepSocket` re-reads history without touching the connection, which is what a
+ * reconnect needs: the socket is already open, and minting another ticket would
+ * throw away the one that just worked.
+ */
+async function chatOpen(convId, { keepSocket = false } = {}) {
+  if (!convId) return;
+  if (!keepSocket) {
+    chatClose(chatRoom?.id);
+    chatRoom = { id: convId, connects: 0, live: false };
+    chatMessages = [];
+    chatBacklog = true;
+    // A draft belongs to the conversation it was written in. Carrying it into the
+    // next room would post one person's unfinished thought to somebody else.
+    chatDraft = '';
+    chatPick = null;
+  }
+  chatLog = null;
+
+  let data;
+  try {
+    data = await api(`/api/chats/${convId}?limit=60`);
+  } catch (err) {
+    $view.replaceChildren(h('div', { class: 'notice' }, icon('alert'), h('span', { text: err.message || 'чат недоступен' })));
+    return;
+  }
+  if (chatRoom?.id !== convId) return;
+
+  chatRoom.chat = data.chat;
+  // History arrives newest first and is drawn bottom-up, so it is reversed once
+  // here instead of the client sorting on every render.
+  chatMessages = (data.messages || []).slice().reverse();
+  chatBacklog = !!data.hasMore;
+  // The paging cursor is the oldest message on screen, and it is what the next
+  // "earlier" request walks back from.
+  chatOlder = chatMessages[0]?.id || null;
+
+  chatRender();
+  chatMarkRead(convId);
+  if (!keepSocket) chatConnect(convId);
+}
+
+/** Clears the unread badge the moment a room is actually read. */
+async function chatMarkRead(convId) {
+  try {
+    await api(`/api/chats/${convId}/read`, { method: 'POST' });
+    const row = document.querySelector(`[data-chat="${convId}"]`);
+    row?.classList.remove('is-unread');
+    row?.querySelector('.chat-badge')?.remove();
+  } catch { /* the badge is cosmetic; it is corrected on the next list load */ }
+}
+
+/** Pulls the previous page of history, for the button above the log. */
+async function chatOlderPage() {
+  if (!chatBacklog || !chatOlder || !chatRoom) return;
+  try {
+    const data = await api(`/api/chats/${chatRoom.id}?limit=40&before=${encodeURIComponent(chatOlder)}`);
+    const page = (data.messages || []).slice().reverse();
+    if (!page.length) { chatBacklog = false; chatRender(); return; }
+    chatOlder = page[0].id;
+    chatMessages = page.concat(chatMessages);
+    chatRender();
+  } catch {
+    chatBacklog = false;
+    chatRender();
+  }
+}
+
+/**
+ * Adds one message to the open room and repaints.
+ *
+ * The same row arrives from two directions - the answer to the sender's own post
+ * and the frame the Durable Object fans out - so every row is checked by id
+ * before it is added. Without that, sending a message paints it twice.
+ *
+ * `convId` is the room the row belongs to, and it is not assumed to be the open
+ * one. A post takes a round trip, and the reader may well have opened a different
+ * conversation in the time it took; painting their message into that one would
+ * show a person words they never wrote in a room they never spoke in.
+ */
+function chatAdd(msg, convId = chatRoom?.id) {
+  if (!msg || !msg.id || !convId) return;
+  if (!chatRoom || chatRoom.id !== convId) return;
+  if (chatMessages.some((x) => x.id === msg.id)) return;
+  chatMessages.push(msg);
+  chatMessages.sort((a, b) => a.createdAt - b.createdAt);
+  // New rows land at the bottom, so the view stays where it is: a reader who has
+  // scrolled up into history is not yanked back down by someone talking.
+  const atBottom = !chatLog
+    || chatLog.scrollHeight - chatLog.scrollTop - chatLog.clientHeight < 60;
+  chatRender('keep');
+  if (atBottom && chatLog) chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+/**
+ * Sends one message, and the file that goes with it if there is one.
+ *
+ * The two are separate requests because the message has to exist before a file
+ * can hang off it. That means a file on its own is a message with no words, and
+ * an upload that fails has left an empty row behind - so the row is taken back
+ * down here rather than left in the room as a bubble with nothing in it. The
+ * retraction only touches a message this send created, and only while it is
+ * still empty.
+ */
+async function chatSend(text, file = null) {
+  const convId = chatRoom?.id;
+  const body = String(text || '').slice(0, 2000);
+  if (!convId || (!body.trim() && !file)) return false;
+  let saved;
+  try {
+    saved = await api(`/api/chats/${convId}/messages`, {
+      method: 'POST',
+      // `attach` is what tells the server an empty body is deliberate and a file
+      // is coming, rather than a mistake worth refusing.
+      body: { body, attach: !!file },
+    });
+    // Painted from the answer, not waited for on the socket. The fan-out is best
+    // effort by design - the Durable Object can be asleep, upgrading or restarting
+    // - and the message is already stored either way. Painting only on the frame
+    // would let a dropped push swallow a message the server accepted, and the
+    // sender would watch their words vanish from their own room.
+    //
+    // `chatAdd` ignores a row for a room that is no longer open, and a message the
+    // sender left the room while it was in flight belongs to that old room.
+    if (saved?.message) chatAdd(saved.message, convId);
+  } catch (err) {
+    toast(err.message || 'не отправлено', true);
+    return false;
+  }
+
+  if (!file || !saved?.message) return true;
+  try {
+    const up = await api(`/api/chats/${convId}/messages/${saved.message.id}/files`, {
+      method: 'POST', body: file, headers: { 'x-filename': encodeURIComponent(file.name) },
+    });
+    chatAttachFile(saved.message.id, up.file, convId);
+  } catch (err) {
+    // The message is already stored, so the send counts; the file did not make
+    // it and the sender is told, rather than being left to wonder.
+    toast(err.message || 'файл не загрузился', true);
+    if (!body.trim()) await chatRetract(saved.message.id, convId);
+    return !!body.trim();
+  }
+  return true;
+}
+
+/** Hangs an uploaded file on a message that is already drawn. */
+function chatAttachFile(messageId, file, convId = chatRoom?.id) {
+  if (!chatRoom) return;
+  chatMessages = chatMessages.map((m) => (
+    m.id === messageId ? { ...m, files: [...(m.files || []), file] } : m
+  ));
+  chatRender('keep');
+}
+
+/**
+ * Takes down a message this tab just sent, for a send that did not finish.
+ *
+ * The room is named rather than read from the open tab, for the same reason as
+ * above: an upload can fail after the reader has moved on, and a retraction sent
+ * to whatever room happens to be open would delete the wrong thing or nothing.
+ */
+async function chatRetract(messageId, convId = chatRoom?.id) {
+  if (!convId) return;
+  try {
+    await api(`/api/chats/${convId}/messages/${messageId}`, { method: 'DELETE' });
+    if (!chatRoom) return;
+    chatMessages = chatMessages.filter((m) => m.id !== messageId);
+    chatRender('keep');
+  } catch { /* the empty row stays; history is authoritative and it is visible */ }
+}
+
+/** One message line. The body is a text node, never markup. */
+function chatBubble(m) {
+  const mine = account && m.userId === account.id;
+  const when_ = m.createdAt ? ago(m.createdAt) : '';
+  return h('div', { class: `chat-msg${mine ? ' is-mine' : ''}` },
+    h('div', { class: 'chat-msg-head' },
+      h('span', { class: 'chat-nick', text: m.nick || '—' }),
+      m.createdAt ? h('time', { class: 'chat-time', text: when_ }) : null,
+      // The author can always retract; a moderator can too. The flag comes from
+      // the server, and the server re-checks it - a hidden button is not the
+      // control, it is only the affordance.
+      (mine || chatRoom?.chat?.rights?.canManage) && !m.deleted
+        ? h('button', {
+          class: 'chat-del', type: 'button', title: 'Удалить', 'aria-label': 'Удалить сообщение',
+          onClick: async () => {
+            try {
+              await api(`/api/chats/${chatRoom.id}/messages/${m.id}`, { method: 'DELETE' });
+              chatMessages = chatMessages.map((x) => (x.id === m.id ? { ...x, deleted: true, body: '' } : x));
+              chatRender();
+            } catch (err) { toast(err.message || 'не удалено', true); }
+          },
+        }, icon('trash', 'i i-sm'))
+        : null,
+    ),
+    m.deleted
+      ? h('p', { class: 'chat-body is-deleted', text: 'сообщение удалено' })
+      : h('p', { class: 'chat-body', text: m.body || '' }),
+    m.game ? h('a', { class: 'chat-game', href: `/games/${m.game.id}` },
+      m.game.cover ? h('img', { class: 'chat-game-cover', src: m.game.cover, alt: '', loading: 'lazy' }) : null,
+      h('span', { text: m.game.name || `Игра ${m.game.id}` }),
+    ) : null,
+    (m.files || []).length ? h('div', { class: 'chat-files' },
+      ...m.files.map((f) => h('a', {
+        class: 'chat-file', href: f.url, target: '_blank', rel: 'noopener',
+      }, icon('file', 'i i-sm'), h('span', { text: `${f.name} · ${bytes(f.size)}` }))),
+    ) : null,
+  );
+}
+
+/**
+ * Draws the open room.
+ *
+ * The whole log is replaced rather than patched. That is affordable because the
+ * page is capped at a few hundred rows and it removes a whole class of bug where
+ * a re-render leaves a node that was deleted, or duplicates a row that is still
+ * in the list. The scroll position is restored afterwards, so a re-render while
+ * reading history does not throw the reader back to the newest message.
+ */
+function chatRender(scroll = 'bottom') {
+  if (!chatRoom?.chat) return;
+  const chat = chatRoom.chat;
+
+  // Remembered before the nodes are rebuilt: after the swap the old log is gone,
+  // so its geometry has to be taken first.
+  const prev = chatLog;
+  const prevTop = prev ? prev.scrollTop : 0;
+  const prevHeight = prev ? prev.scrollHeight : 0;
+  const keepTop = scroll === 'keep' && prev;
+
+  const list = h('div', { class: 'chat-msgs' },
+    chatBacklog
+      ? h('button', { class: 'chat-more', type: 'button', onClick: chatOlderPage }, 'Показать ранние')
+      : null,
+    ...chatMessages.map(chatBubble),
+  );
+
+  chatField = h('input', {
+    id: 'chat-input', class: 'chat-input', type: 'text', autocomplete: 'off',
+    placeholder: chat.rights?.canPost ? 'Сообщение…' : 'Только чтение',
+    disabled: !chat.rights?.canPost, maxlength: '2000',
+    value: chatDraft,
+    oninput: (e) => { chatDraft = e.target.value; },
+
+  });
+  // A picture on its own is a message with no words, so the picker sits next to
+  // the field rather than behind a menu. The file input is invisible and the
+  // label is the button, which is what a keyboard and a screen reader get for
+  // free - a bare icon would be an unlabelled control.
+  const picker = chat.rights?.canPost
+    ? h('label', { class: 'chat-attach' },
+      icon('file', 'i i-sm'),
+      h('span', { class: 'sr-only', text: 'Прикрепить файл' }),
+      h('input', {
+        type: 'file', class: 'sr-only', tabindex: '-1',
+        onchange: async (e) => {
+          const picked = [...(e.target?.files || [])][0];
+          e.target.value = '';
+          if (!picked) return;
+          // Shrunk on the way in, for the same reason the editor shrinks: the
+          // limit is on the stored file, not on what the camera wrote.
+          const shrunk = await downscaleImage(picked);
+          if (chatRoom?.id !== chat.id) return;
+          chatPick = shrunk.file;
+          chatRender('keep');
+        },
+      }),
+    )
+    : null;
+  const composer = h('form', {
+    class: 'chat-composer',
+    onSubmit: async (e) => {
+      e.preventDefault();
+      // The field is read rather than the draft, because it is the one thing the
+      // browser has actually been given: autofill and paste can fill it without
+      // an input event ever firing, and the words that end up posted should be
+      // the words in the box the reader is looking at.
+      const text = chatField ? chatField.value : chatDraft;
+      const file = chatPick;
+      // Cleared straight away so a slow send does not feel stuck, and put back
+      // if the words really did not go anywhere. The file goes back with them:
+      // it is the same send that failed.
+      //
+      // The state is what gets restored, not the field. This node is about to be
+      // thrown away by the render below, so writing to it would restore nothing.
+      chatDraft = '';
+      chatPick = null;
+      chatRender('keep');
+      if (!(await chatSend(text, file)) && chatRoom?.id === chat.id) {
+        chatDraft = text;
+        chatPick = file;
+        chatRender('keep');
+      }
+    },
+  },
+    chatPick ? h('div', { class: 'chat-pending' },
+      icon('file', 'i i-sm'),
+      h('span', { text: chatPick.name }),
+      h('button', {
+        class: 'chat-del', type: 'button', title: 'Убрать файл', 'aria-label': 'Убрать файл',
+        onClick: () => { chatPick = null; chatRender('keep'); },
+      }, icon('trash', 'i i-sm')),
+    ) : null,
+    h('div', { class: 'chat-compose-row' }, picker, chatField),
+    h('button', { class: 'btn btn-sm', type: 'submit', disabled: !chat.rights?.canPost }, 'Отправить'),
+  );
+
+  // A public channel can be read without joining it, and a reader who cannot post
+  // gets the join button instead of a disabled composer with no explanation.
+  const join = !chat.rights?.canPost && chat.discoverable && !chat.role
+    ? h('button', {
+      class: 'btn btn-sm', type: 'button',
+      onClick: async (e) => {
+        e.target.disabled = true;
+        try {
+          await api(`/api/chats/${chat.id}/members`, { method: 'POST', body: { userId: account.id } });
+          await chatOpen(chat.id, { keepSocket: true });
+        } catch (err) { toast(err.message || 'не удалось вступить', true); }
+      },
+    }, 'Вступить')
+    : null;
+
+  chatLog = h('div', { class: 'chat-log', id: 'chat-log' }, list);
+
+  $view.replaceChildren(
+    h('div', { class: 'page-head' },
+      h('div', {},
+        h('h1', { text: chat.title || 'Чат' }),
+        h('p', { class: 'page-sub', text: `${chat.kind === 'channel' ? 'Канал' : chat.kind === 'group' ? 'Группа' : 'Личный чат'} · участников: ${chat.members ?? '—'}` }),
+      ),
+      h('a', { class: 'btn btn-sm btn-ghost', href: '/chat' }, 'К списку'),
+    ),
+    h('div', { class: 'chat-wrap' }, chatLog, join ? h('div', { class: 'chat-join' }, join) : composer),
+  );
+
+  // Set after the nodes are in the document: until then there is no height to
+  // scroll to, and "bottom" would land in the middle of the first page.
+  if (keepTop) {
+    // An older page was prepended, so the message that was on screen has to stay
+    // on screen - which means shifting down by however much was added above.
+    chatLog.scrollTop = prevTop + (chatLog.scrollHeight - prevHeight);
+  } else if (scroll === 'top') {
+    chatLog.scrollTop = 0;
+  } else {
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
+}
+
+/** Sidebar of rooms plus the ways to start a new one. */
+function chatListView(data, banner) {
+  const rows = (data.chats || []).map((c) => h('a', {
+    class: `chat-row${c.unread ? ' is-unread' : ''}`,
+    href: `/chat/${c.id}`,
+    dataset: { chat: c.id },
+  },
+    h('span', { class: 'chat-row-main' },
+      h('span', { class: 'chat-row-title', text: c.title || 'Личный чат' }),
+      h('span', { class: 'chat-row-sub', text: c.lastAt ? ago(c.lastAt) : 'нет сообщений' }),
+    ),
+    c.unread ? h('span', { class: 'chat-badge', text: String(c.unread) }) : null,
+  ));
+
+  let kindField = null;
+  let titleField = null;
+  const create = h('form', {
+    class: 'chat-create',
+    onSubmit: async (e) => {
+      e.preventDefault();
+      const title = titleField.value.trim();
+      if (!title) return;
+      try {
+        const made = await api('/api/chats', { method: 'POST', body: { kind: kindField.value, title } });
+        navigate(`/chat/${made.chat.id}`);
+      } catch (err) { toast(err.message || 'не создано', true); }
+    },
+  },
+    kindField = h('select', { class: 'chat-kind' },
+      h('option', { value: 'channel', text: 'Канал — читают все' }),
+      h('option', { value: 'group', text: 'Группа — по приглашению' }),
+    ),
+    titleField = h('input', { class: 'chat-input', type: 'text', placeholder: 'Название', maxlength: '80' }),
+    h('button', { class: 'btn btn-sm', type: 'submit' }, 'Создать'),
+  );
+
+  // A direct message needs a person, not a name, so it is started from the two
+  // lists of people below rather than from a title field.
+  //
+  // The field takes either an id or a nick, because both are things a person has.
+  // An id goes straight through; a nick is resolved first, and an ambiguous one is
+  // asked about rather than guessed at - picking the most popular stranger and
+  // opening a conversation with them is not an acceptable guess.
+  let dmField = null;
+  const dmHits = h('div', { class: 'chat-hits' });
+  const openDm = async (userId) => {
+    try {
+      const made = await api(`/api/chats/dm/${encodeURIComponent(userId)}`, { method: 'POST' });
+      navigate(`/chat/${made.chat.id}`);
+      return true;
+    } catch (err) {
+      // "no such account" is not a final answer to something that may equally be a
+      // name, so it is handed back to the caller to try the other reading. Every
+      // other refusal - blocked, not followed, throttled - is a real answer, and
+      // is reported as one instead of being retried as if it were a typo.
+      if (err?.message && err.message !== 'no such account') toast(err.message, true);
+      return false;
+    }
+  };
+  const dm = h('form', {
+    class: 'chat-create',
+    onSubmit: async (e) => {
+      e.preventDefault();
+      const typed = dmField.value.trim().replace(/^@/, '');
+      if (!typed) return;
+      dmHits.replaceChildren();
+      // Most nicks are spelled like ids, so the id is tried first and the name
+      // second. Only a miss at both ends is a miss.
+      if (/^[A-Za-z0-9_-]{3,40}$/.test(typed) && await openDm(typed)) return;
+      try {
+        const found = await api(`/api/users?q=${encodeURIComponent(typed)}`);
+        const people = found.users || [];
+        if (people.length === 1) { await openDm(people[0].id); return; }
+        if (!people.length) { toast('ник не найден', true); return; }
+        dmHits.replaceChildren(...people.map((u) => h('button', {
+          class: 'chat-chip', type: 'button', onClick: () => openDm(u.id),
+        }, u.nick, u.id === account?.id ? h('span', { class: 'chat-chip-self', text: 'это вы' }) : null)));
+      } catch (err) { toast(err.message || 'не найти', true); }
+    },
+  },
+    dmField = h('input', { class: 'chat-input', type: 'text', placeholder: 'Имя или @id для личного чата', maxlength: '40' }),
+    h('button', { class: 'btn btn-sm', type: 'submit' }, 'Написать'),
+  );
+  const dmBlock = h('div', {}, dm, dmHits);
+
+  const channels = h('details', { class: 'chat-discover' },
+    h('summary', { text: 'Публичные каналы' }),
+    h('div', { class: 'chat-discover-list' },
+      ...(data.channels || []).map((c) => h('a', { class: 'chat-chip', href: `/chat/${c.id}` }, `# ${c.title}`)),
+    ),
+  );
+
+  $view.replaceChildren(
+    h('div', { class: 'page-head' },
+      h('div', {}, h('h1', { text: 'Чат' }), h('p', { class: 'page-sub', text: 'Каналы, группы и личные переписки.' })),
+    ),
+    banner || null,
+    create,
+    dmBlock,
+    channels,
+    rows.length
+      ? h('div', { class: 'chat-list' }, ...rows)
+      : h('p', { class: 'hint', text: 'У вас пока нет диалогов. Создайте канал или группу выше.' }),
+  );
+}
+
+async function viewChat(url) {
+  // A signed-out reader is offered the sign-in page rather than an error, since
+  // a chat needs an account for the same reason posting does.
+  if (!account) {
+    $view.replaceChildren(
+      h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Чат' }))),
+      h('p', { class: 'hint', text: 'Войдите, чтобы читать и писать в чатах.' }),
+      h('a', { class: 'btn', href: '/auth' }, 'Войти'),
+    );
+    return;
+  }
+
+  // The room id is taken from the base-stripped path, never from the raw URL.
+  // Every other view here works on the path `route()` already cleaned: on a
+  // static host the site lives under a subdirectory, so the raw pathname is
+  // `/cheatlab/chat/<id>` and slicing a fixed `/chat/` prefix off it yields
+  // `e.../<id>` - a request for a room that does not exist, and an empty view.
+  const convId = stripBase(url.pathname).slice('/chat/'.length).replace(/\/$/, '');
+  if (convId) { await chatOpen(convId); return; }
+
+  // The room list and the public channel list are fetched together: the second is
+  // what lets somebody find a room to join, and a sidebar that only lists what you
+  // are already in is a dead end for a first visit.
+  const [mine, publicRooms] = await Promise.all([
+    api('/api/chats').catch(() => ({ chats: [] })),
+    api('/api/chats/channels').catch(() => ({ channels: [] })),
+  ]);
+  chatListView({ chats: mine.chats || [], channels: publicRooms.channels || [] }, null);
+}
+
 /* ----------------------------------------------------------------- admin --
  * The console is one page with four queues rather than a nested set of admin
  * screens: a moderator's whole job is "look at the open reports, look at the
@@ -3165,6 +3788,8 @@ async function route() {
       await viewNew(url);
     } else if (path === '/me') {
       await viewMe();
+    } else if (path === '/chat' || path.startsWith('/chat/')) {
+      await viewChat(url);
     } else if (path === '/stats') {
       await viewStats();
     } else if (path === '/auth') {

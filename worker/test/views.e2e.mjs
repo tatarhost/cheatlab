@@ -256,6 +256,7 @@ const openId = open.json.item.id;
 // and sets an admin flag so the badge path runs.
 const fan = await register('e2efan0000000001', 'fan');
 if (fan.status !== 201) throw new Error(`seed: fan register ${fan.status} ${fan.text}`);
+const fanId = fan.json.user.id;
 await as('e2efan0000000001', `/api/items/${itemId}/like`, { method: 'POST', session: fan.json.token });
 await as('e2efan0000000001', `/api/users/${authorId}/follow`, { method: 'POST', session: fan.json.token });
 
@@ -332,6 +333,12 @@ async function boot(route, { client, session, editKeys = {}, accessKeys = {} } =
   // returned nothing would make those actions look inert rather than wrong.
   const answers = [];
   const byId = new Map();
+  // Sockets opened while this page ran, so a test can inspect the address the
+  // view built without the harness having to speak the WebSocket protocol.
+  const sockets = [];
+  // Which requests, if any, should fail as a dropped connection would, and which
+  // should be held open instead. See `net` on the returned page.
+  const net = { down: '', hold: '', release: null };
   for (const m of appHtml.matchAll(/\sid="([^"]+)"/g)) byId.set(m[1], new Element('div'));
   byId.set('app', new Element('body'));
   byId.set('view', view);
@@ -443,6 +450,15 @@ async function boot(route, { client, session, editKeys = {}, accessKeys = {} } =
     // headers dropped here would silently turn every call into an anonymous one.
     fetch: async (input, init) => {
       const r = new Request(input, init);
+      if (net.down && new URL(r.url).pathname.includes(net.down)) {
+        // What a browser reports when the request never reached anybody.
+        throw new TypeError('Failed to fetch');
+      }
+      if (net.hold && new URL(r.url).pathname.includes(net.hold)) {
+        // Parked mid-flight, so a test can do what a person does while a slow
+        // post is still on its way: open a different conversation.
+        await new Promise((resolve) => { net.release = resolve; });
+      }
       const res = await worker.fetch(r, env);
       if (process.env.VIEWS_TRACE) {
         const body = await res.clone().text();
@@ -473,6 +489,18 @@ async function boot(route, { client, session, editKeys = {}, accessKeys = {} } =
     matchMedia: () => ({ matches: false, addEventListener() {}, addListener() {} }),
     IntersectionObserver: class { observe() {} unobserve() {} disconnect() {} },
     ResizeObserver: class { observe() {} unobserve() {} disconnect() {} },
+    requestAnimationFrame: (fn) => setTimeout(() => fn(0), 0),
+    // The live socket, recorded rather than opened. A real handshake needs a
+    // Durable Object and a real 101, which a stub cannot provide; what the view
+    // does here is the same either way - ask for a ticket, build the address,
+    // and open. Recording it means a test can assert the address was built from
+    // the API origin rather than the page origin, which is the part that is
+    // actually wrong when it is wrong.
+    WebSocket: class RecordingSocket {
+      constructor(url) { this.url = url; this.sent = []; sockets.push(this); }
+      send(v) { this.sent.push(v); }
+      close() { this.closed = true; }
+    },
     addEventListener: () => {}, removeEventListener: () => {},
     scrollTo: () => {}, scrollBy: () => {},
   };
@@ -480,16 +508,15 @@ async function boot(route, { client, session, editKeys = {}, accessKeys = {} } =
 
   vm.createContext(sandbox);
   await vm.runInContext(appSrc, sandbox, { filename: 'app.js' });
+  // The app's own router, so a test can move the page between conversations the
+  // way a link does. Reached by name rather than by reaching into the context:
+  // asking the page to navigate is what a reader does, poking its internals is
+  // not.
+  const navigateInPage = vm.runInContext('navigate', sandbox);
   // boot() -> route() -> api() against the real Worker is several awaits deep,
   // so poll the view until it stops growing instead of guessing a delay. An
   // empty view after the deadline is itself a failure the checks below report.
-  let last = -1;
-  for (let i = 0; i < 200; i++) {
-    await new Promise((r) => setTimeout(r, 5));
-    const size = view.children.length;
-    if (size && size === last) break;
-    last = size;
-  }
+  await settle();
   return {
     text: textOf(view).join(' '),
     // Re-reads the view after an action. `text` is a snapshot taken at boot, so
@@ -507,7 +534,56 @@ async function boot(route, { client, session, editKeys = {}, accessKeys = {} } =
     /** Queues the answers the next prompt()/confirm() calls will receive. */
     answer: (...v) => answers.push(...v),
     toast: () => textOf(byId.get('toast')).join(' '),
+    /** Every socket the view opened, in order. */
+    sockets: () => sockets.slice(),
+    /**
+     * The network, for taking it away and for slowing it down.
+     *
+     * A send can fail for reasons that have nothing to do with rights - the
+     * connection drops, a deploy is in flight - and that is the case the
+     * composer's put-back exists for, so it has to be reachable. Set `net.down`
+     * to a path fragment and requests matching it fail the way a browser reports
+     * a dropped fetch, rather than being answered from a stub: a stubbed 500 would
+     * be the server's error to render, not the network's.
+     *
+     * `net.hold` parks matching requests instead, for the question of what
+     * happens to work that finishes after the reader has moved on. Call
+     * `net.release()` to let the held request proceed.
+     */
+    net,
+    /** Moves the page the way clicking a link would. */
+    go: (href) => navigateInPage(href),
+    /**
+     * Waits for pending microtasks and timers.
+     *
+     * A click handler that posts and then re-renders is several awaits deep, so a
+     * check that runs immediately after `fire()` reads the view before the view
+     * has been told. `fire` returning a promise would be the obvious fix and the
+     * wrong one: it would make the harness wait for handlers that a real browser
+     * does not wait for either, hiding a genuinely broken async handler behind a
+     * harness that happened to be patient.
+     *
+     * At boot the same wait covers the render chain, so a deep view gets the same
+     * generous drain rather than a poll that stops early on a stable tree.
+     */
+    settle,
   };
+
+  /**
+   * Lets queued work run until nothing is left pending. The view is the only
+   * signal that anything happened, so the loop watches it change and stops when a
+   * full pass produces no change at all - a real settle, not a fixed sleep.
+   */
+  async function settle(passes = 40) {
+    // A fixed drain, not a "did the tree change" poll. Stability in the DOM is
+    // not evidence that no work is pending: the first paint of a room happens
+    // before its POST has even left, so a poll that stops on a stable child count
+    // stops exactly in the middle of the action it was called to wait for. Draining
+    // timers lets every already-queued continuation run to its next await.
+    for (let i = 0; i < passes; i++) {
+      await new Promise((r) => setTimeout(r, 2));
+    }
+  }
 }
 
 /** The client's solvePow, transcribed from public/app.js. */
@@ -1252,6 +1328,308 @@ check('and the key system in its field', keySystemField?.value === 'Moon', `got 
 const gameIdField = findAll(editGallery.view, (el) => el.tagName === 'INPUT'
   && String((el.attributes || {}).id || '') === 'f-game-id')[0];
 check('and the game id in its field', gameIdField?.value === '909090', `got ${JSON.stringify(gameIdField?.value)}`);
+
+/* ------------------------------------------------------------------ chat */
+
+// The chat tab has to work as a view, not just as an endpoint: a tab that
+// renders nothing while the API is fine is still a broken tab. Every assertion
+// below reads the real `public/app.js`, driven by a real Worker.
+const channel = await as('e2eauthor0000001', '/api/chats', {
+  method: 'POST', session: token, body: { kind: 'channel', title: 'Общий чат', topic: 'всё о проектах' },
+});
+check('seed: a channel can be made', channel.status === 201, `${channel.status} ${channel.text.slice(0, 160)}`);
+const channelId = channel.json.chat.id;
+
+const posted = await as('e2eauthor0000001', `/api/chats/${channelId}/messages`, {
+  method: 'POST', session: token, body: { body: 'первое сообщение' },
+});
+check('seed: a message can be posted', posted.status === 201, `${posted.status} ${posted.text.slice(0, 160)}`);
+
+const chatList = await boot('/chat', { client: 'e2eauthor0000001', session: token });
+check('the chat tab lists the room', chatList.text.includes('Общий чат'), chatList.text.slice(0, 300));
+check('and offers to make another', chatList.text.includes('Создать'), chatList.text.slice(0, 300));
+
+const chatRoom = await boot(`/chat/${channelId}`, { client: 'e2eauthor0000001', session: token });
+check('the room shows its title', chatRoom.text.includes('Общий чат'), chatRoom.text.slice(0, 300));
+check('the message that was posted is there', chatRoom.text.includes('первое сообщение'), chatRoom.text.slice(0, 400));
+check('and it says what kind of room this is', chatRoom.text.includes('Канал'), chatRoom.text.slice(0, 300));
+
+// The composer is the whole point of a chat, so it is driven the way a person
+// drives it: the field is given a value and the form is submitted.
+const composer = findAll(chatRoom.view, (el) => el.tagName === 'FORM'
+  && findAll(el, (kid) => String((kid.attributes || {}).id || '') === 'chat-input').length > 0)[0];
+check('there is a composer', !!composer, chatRoom.text.slice(0, 300));
+const chatField = findAll(chatRoom.view, (el) => String((el.attributes || {}).id || '') === 'chat-input')[0];
+chatField.value = 'ответ из теста';
+composer.fire('submit', { preventDefault() {} });
+// The submit handler is async - it posts, then re-renders - and `fire` returns
+// whether the event was prevented, not a promise for the handler, exactly as a
+// real `dispatchEvent` does not wait for `onsubmit` either. The wait is explicit
+// here for that reason.
+await chatRoom.settle();
+const afterSend = await as('e2eauthor0000001', `/api/chats/${channelId}`, { session: token });
+check('submitting the composer stores the message',
+  (afterSend.json.messages || []).some((m) => m.body === 'ответ из теста'),
+  JSON.stringify((afterSend.json.messages || []).map((m) => m.body)));
+// ...and the view shows it, rather than only the database having it. A send that
+// works and a view that never refreshes is the more common bug of the two.
+check('and the room shows the message that was just sent',
+  chatRoom.read().includes('ответ из теста'), chatRoom.read().slice(-300));
+
+// A file on its own is a message with no words. Driven through the real control
+// rather than by setting the client's state, because the picker is the only part
+// a person can actually get wrong.
+const findForm = () => findAll(chatRoom.view, (el) => el.tagName === 'FORM'
+  && findAll(el, (kid) => String((kid.attributes || {}).id || '') === 'chat-input').length > 0)[0];
+const findField = () => findAll(chatRoom.view, (el) => String((el.attributes || {}).id || '') === 'chat-input')[0];
+const findPicker = () => findAll(chatRoom.view, (el) => el.tagName === 'INPUT'
+  && String((el.attributes || {}).type || '') === 'file')[0];
+check('the composer has a file picker', !!findPicker(), chatRoom.read().slice(-300));
+
+findPicker().fire('change', { target: { files: [new File([new Uint8Array(64)], 'смета.txt', { type: 'text/plain' })], value: '' } });
+await chatRoom.settle();
+check('a picked file is shown before it is sent, and can be taken back',
+  chatRoom.read().includes('смета.txt'), chatRoom.read().slice(-300));
+const drop = findAll(chatRoom.view, (el) => el.tagName === 'BUTTON'
+  && String((el.attributes || {}).title || '') === 'Убрать файл')[0];
+check('with a way to remove it', !!drop, chatRoom.read().slice(-300));
+
+findForm().fire('submit', { preventDefault() {} });
+await chatRoom.settle();
+const afterFile = await as('e2eauthor0000001', `/api/chats/${channelId}`, { session: token });
+const carrier = (afterFile.json.messages || []).find((m) => (m.files || []).some((f) => f.name === 'смета.txt'));
+check('sending the picker stores a file on a message with no words',
+  !!carrier && carrier.body === '', JSON.stringify((afterFile.json.messages || []).slice(-2)));
+check('and the room draws it once it is stored', chatRoom.read().includes('смета.txt'), chatRoom.read().slice(-300));
+check('with the field left empty for the next thing to be said',
+  findField()?.value === '', JSON.stringify(findField()?.value));
+
+// A file on its own is a message with no words, and it is created before the file
+// is uploaded. So an upload that fails leaves an empty row behind, and the room
+// must not be left with a bubble that says nothing - on screen now, or on the
+// next reload.
+const lostUpload = await boot(`/chat/${channelId}`, { client: 'e2eauthor0000001', session: token });
+const pickerOf = (page) => findAll(page.view, (el) => el.tagName === 'INPUT'
+  && String((el.attributes || {}).type || '') === 'file')[0];
+pickerOf(lostUpload).fire('change', { target: { files: [new File([new Uint8Array(64)], 'пропал.txt', { type: 'text/plain' })], value: '' } });
+await lostUpload.settle();
+check('the file is waiting to go', lostUpload.read().includes('пропал.txt'), lostUpload.read().slice(-300));
+// Only the upload fails; the message itself is created, which is the situation
+// the retraction exists for.
+lostUpload.net.down = '/files';
+findAll(lostUpload.view, (el) => el.tagName === 'FORM' && hasClass(el, 'chat-composer'))[0]
+  .fire('submit', { preventDefault() {} });
+await lostUpload.settle();
+check('the sender is told the upload failed', /не загрузил|не отправ|ошибк|failed/i.test(lostUpload.toast()),
+  lostUpload.toast());
+check('and the file comes back to try again',
+  lostUpload.read().includes('пропал.txt'), lostUpload.read().slice(-400));
+check('while no empty bubble is left in the room',
+  !lostUpload.read().includes('сообщение удалено'), lostUpload.read().slice(-400));
+const afterLost = await as('e2eauthor0000001', `/api/chats/${channelId}`, { session: token });
+check('and nothing was left in the room on the server either',
+  !(afterLost.json.messages || []).some((m) => !m.deleted && !String(m.body || '').trim() && !(m.files || []).length),
+  (afterLost.json.messages || []).map((m) => `${m.deleted ? 'deleted' : m.body || (m.files || []).map((f) => f.name).join()}`).join(' | '));
+const reloaded = await boot(`/chat/${channelId}`, { client: 'e2eauthor0000001', session: token });
+check('a reload shows no trace of it either',
+  !reloaded.read().includes('сообщение удалено') && !reloaded.read().includes('пропал.txt'),
+  reloaded.read().slice(-400));
+
+// A message body must never become markup. The server stores it as text and the
+// client builds a text node, so a tag in the body has to survive as characters.
+await as('e2eauthor0000001', `/api/chats/${channelId}/messages`, {
+  method: 'POST', session: token, body: { body: '<img src=x onerror=alert(1)>' },
+});
+const hostile = await boot(`/chat/${channelId}`, { client: 'e2eauthor0000001', session: token });
+check('a tag in a message is shown, not executed',
+  hostile.text.includes('<img src=x onerror=alert(1)>'), hostile.text.slice(0, 400));
+check('and no element was built from it',
+  findAll(hostile.view, (el) => el.tagName === 'IMG'
+    && String((el.attributes || {}).src || '') === 'x').length === 0,
+  'an IMG with src=x was built from message text');
+
+/* --------------------------------------------------------------- starting a DM */
+
+// A direct message needs a person, and the thing a person has is a name. So the
+// field takes a name, finds the people it matches and asks, instead of posting
+// the typed text at an endpoint that only understands ids.
+//
+// Two accounts match "fan", on purpose: a field that resolved a name to the most
+// popular stranger and opened a conversation with them would be worse than useless.
+const fan2 = await register('e2efan2000000001', 'fan2');
+if (fan2.status !== 201) throw new Error(`seed: fan2 register ${fan2.status} ${fan2.text}`);
+await as('e2eauthor0000001', `/api/users/${fanId}/follow`, { method: 'POST', session: token });
+await as('e2eauthor0000001', `/api/users/${fan2.json.user.id}/follow`, { method: 'POST', session: token });
+await as('e2efan2000000001', `/api/users/${authorId}/follow`, { method: 'POST', session: fan2.json.token });
+
+const dmFormFor = (page) => findAll(page.view, (el) => el.tagName === 'FORM'
+  && findAll(el, (kid) => String((kid.attributes || {}).placeholder || '').includes('личного чата')).length > 0)[0];
+const chipsFor = (page) => findAll(page.view, (el) => el.tagName === 'BUTTON' && hasClass(el, 'chat-chip'));
+const typeAndSubmit = async (page, value) => {
+  const form = dmFormFor(page);
+  findAll(form, (el) => el.tagName === 'INPUT')[0].value = value;
+  form.fire('submit', { preventDefault() {} });
+  await page.settle();
+  return chipsFor(page);
+};
+
+const dmPage = await boot('/chat', { client: 'e2eauthor0000001', session: token });
+check('there is a form for starting one', !!dmFormFor(dmPage), dmPage.text.slice(0, 300));
+const hits = await typeAndSubmit(dmPage, '@fan');
+check('a name that matches two people asks instead of guessing',
+  hits.length === 2, `${hits.length}`);
+check('naming both of them', ['fan', 'fan2'].every((n) => hits.some((b) => textOf(b).join(' ').includes(n))),
+  hits.map((b) => textOf(b).join(' ')).join(' | '));
+
+const fanChip = hits.find((b) => textOf(b).join(' ').trim() === 'fan');
+fanChip.click();
+await dmPage.settle();
+const dms = await as('e2eauthor0000001', '/api/chats', { session: token });
+const withFan = (dms.json.chats || []).find((c) => c.kind === 'dm' && c.title === 'fan');
+check('picking the person opens the conversation with them', !!withFan,
+  JSON.stringify((dms.json.chats || []).map((c) => c.title)));
+const dmRoom = await boot(`/chat/${withFan.id}`, { client: 'e2eauthor0000001', session: token });
+check('and it opens there', dmRoom.read().includes('fan'), dmRoom.read().slice(0, 300));
+// The heading is the conversation's own name. "Личный чат" appears below it as
+// the kind, which is right, so the title is read from the heading rather than
+// from the page text.
+const dmHeading = findAll(dmRoom.view, (el) => el.tagName === 'H1')[0];
+check('titled after them, not "Личный чат"',
+  textOf(dmHeading)[0] === 'fan', textOf(dmHeading).join(' '));
+
+const dmPage2 = await boot('/chat', { client: 'e2eauthor0000001', session: token });
+const sole = await typeAndSubmit(dmPage2, 'fan2');
+check('a name that matches one person goes straight there, with nothing to choose',
+  sole.length === 0, `${sole.length}`);
+const dms2 = await as('e2eauthor0000001', '/api/chats', { session: token });
+check('and that is the right person',
+  (dms2.json.chats || []).some((c) => c.kind === 'dm' && c.title === 'fan2'),
+  JSON.stringify((dms2.json.chats || []).map((c) => c.title)));
+
+/* ------------------------------------------------------- the live connection */
+
+// The socket is recorded rather than opened, because a real handshake needs a
+// Durable Object and a real 101. What is still checked is the part that is the
+// view's own responsibility: where it dials, what it puts in the query, and what
+// it does with a frame when one arrives. A relative URL here is the exact bug a
+// static host produces, and it is invisible until the tab is opened on the site
+// rather than under the harness.
+const opened = hostile.sockets();
+check('the room opened one socket', opened.length === 1, `${opened.length}`);
+const wsUrl = new URL(String(opened[0]?.url || 'https://nope/'));
+// The scheme becomes `wss` on the way; what matters is that the host is the API
+// host and the page's own origin is not in the address anywhere.
+check('and it dialled the API host, not the page',
+  wsUrl.host === 'api.cheatlab.test' && wsUrl.protocol === 'wss:', String(opened[0]?.url));
+check('addressing this room', wsUrl.pathname === `/api/chats/${channelId}/ws`, wsUrl.pathname);
+check('with the room named in the query, so a mismatched path cannot be used',
+  wsUrl.searchParams.get('id') === channelId, String(wsUrl.search));
+check('and with a ticket that is not the session token',
+  /^[A-Za-z0-9_-]{20,120}$/.test(wsUrl.searchParams.get('ticket') || '')
+  && wsUrl.searchParams.get('ticket') !== token, String(wsUrl.search));
+
+// A frame is how somebody else's message arrives. Delivering one exercises the
+// same path the Durable Object drives, minus the socket.
+const live = { t: 'msg', m: { id: 'frm000000000001', convId: channelId, userId: 'u_someoneelse', nick: 'другой', body: 'пришло по сокету', createdAt: Date.now() } };
+opened[0].onmessage({ data: JSON.stringify(live) });
+await hostile.settle();
+check('a frame from the socket is shown', hostile.read().includes('пришло по сокету'), hostile.read().slice(-300));
+// Two tabs, one room, and a reconnect that replays: the row must land once.
+opened[0].onmessage({ data: JSON.stringify(live) });
+await hostile.settle();
+check('and the same frame twice is still one message',
+  hostile.read().split('пришло по сокету').length === 2, `${hostile.read().split('пришло по сокету').length - 1}`);
+
+/* ------------------------------------------------------------- the composer */
+
+// Somebody typing is the only user of the composer who is doing nothing when a
+// message arrives. The composer is rebuilt on every render, so a draft held only
+// in the field would be destroyed by somebody else talking.
+const typing = await boot(`/chat/${channelId}`, { client: 'e2eauthor0000001', session: token });
+const typeInto = (page, value) => {
+  const field = findAll(page.view, (el) => el.tagName === 'INPUT'
+    && String((el.attributes || {}).id || '') === 'chat-input')[0];
+  field.value = value;
+  field.fire('input');
+  return field;
+};
+const composerField = (page) => findAll(page.view, (el) => el.tagName === 'INPUT'
+  && String((el.attributes || {}).id || '') === 'chat-input')[0];
+
+typeInto(typing, 'черновик, который не должен пропасть');
+check('the draft is there while typing', composerField(typing).value === 'черновик, который не должен пропасть',
+  composerField(typing).value);
+typing.sockets()[0].onmessage({ data: JSON.stringify({ t: 'msg', m: { id: 'frm000000000002', convId: channelId, userId: 'u_someoneelse', nick: 'другой', body: 'пока я пишу', createdAt: Date.now() } }) });
+await typing.settle();
+check('an arriving message does not take the draft with it',
+  composerField(typing).value === 'черновик, который не должен пропасть', composerField(typing).value);
+check('while the message itself is shown', typing.read().includes('пока я пишу'), typing.read().slice(-300));
+
+// A send that is refused must leave the words where they were. Before this the
+// restore wrote to the input node that the clearing render had already thrown
+// away, so a send that failed lost the message silently - the worst possible
+// moment to lose it, because the person had already decided it was worth saying.
+//
+// The failure is a dropped connection, not a rights refusal: this is a room the
+// author can post in, and a browser can drop that post for a hundred reasons the
+// server never heard about.
+const offline = await boot(`/chat/${channelId}`, { client: 'e2eauthor0000001', session: token });
+typeInto(offline, 'это не уйдёт');
+offline.net.down = '/messages';
+findAll(offline.view, (el) => el.tagName === 'FORM' && hasClass(el, 'chat-composer'))[0]
+  .fire('submit', { preventDefault() {} });
+await offline.settle();
+check('a send that failed puts the words back', composerField(offline).value === 'это не уйдёт',
+  composerField(offline).value);
+check('and says so', /не отправлено|Failed|ошибк/i.test(offline.toast()), offline.toast());
+const afterDrop = await as('e2eauthor0000001', `/api/chats/${channelId}`, { session: token });
+check('while nothing was stored',
+  !(afterDrop.json.messages || []).some((m) => m.body === 'это не уйдёт'),
+  JSON.stringify((afterDrop.json.messages || []).map((m) => m.body)));
+
+offline.net.down = '';
+typeInto(offline, 'теперь уйдёт');
+findAll(offline.view, (el) => el.tagName === 'FORM' && hasClass(el, 'chat-composer'))[0]
+  .fire('submit', { preventDefault() {} });
+await offline.settle();
+check('and the retry goes through', composerField(offline).value === '', composerField(offline).value);
+const afterRetry = await as('e2eauthor0000001', `/api/chats/${channelId}`, { session: token });
+check('with the message stored this time',
+  (afterRetry.json.messages || []).some((m) => m.body === 'теперь уйдёт'),
+  JSON.stringify((afterRetry.json.messages || []).map((m) => m.body)));
+
+/* ------------------------------------------------------- posts in slow motion */
+
+// A post takes a round trip. Opening another conversation while one is in flight
+// is ordinary, and the answer belongs to the room it was sent to - not to the
+// room that happens to be open when it comes back.
+const group = await as('e2eauthor0000001', '/api/chats', {
+  method: 'POST', session: token, body: { kind: 'group', title: 'Другая беседа' },
+});
+if (group.status !== 201) throw new Error(`seed: group ${group.status} ${group.text}`);
+const otherId = group.json.chat.id;
+
+const wanderer = await boot(`/chat/${channelId}`, { client: 'e2eauthor0000001', session: token });
+wanderer.net.hold = '/messages';
+typeInto(wanderer, 'это уйдёт в первый разговор');
+findAll(wanderer.view, (el) => el.tagName === 'FORM' && hasClass(el, 'chat-composer'))[0]
+  .fire('submit', { preventDefault() {} });
+await new Promise((r) => setTimeout(r, 60));
+wanderer.go(`/chat/${otherId}`);
+await wanderer.settle();
+check('the reader is now in the other conversation',
+  wanderer.read().includes('Другая беседа'), wanderer.read().slice(0, 200));
+wanderer.net.release();
+await wanderer.settle();
+check('and the late answer did not land in it',
+  !wanderer.read().includes('это уйдёт в первый разговор'), wanderer.read().slice(-400));
+const firstRoom = await as('e2eauthor0000001', `/api/chats/${channelId}`, { session: token });
+check('while it did go to the room it was sent to',
+  (firstRoom.json.messages || []).some((m) => m.body === 'это уйдёт в первый разговор'),
+  JSON.stringify((firstRoom.json.messages || []).map((m) => m.body)));
+const wandered = await boot(`/chat/${otherId}`, { client: 'e2eauthor0000001', session: token });
+check('and reloading that room shows no trace of it',
+  !wandered.read().includes('это уйдёт в первый разговор'), wandered.read().slice(-400));
 
 console.log(`\n${pass} passed, ${failures.length} failed`);
 for (const f of failures) console.log(`  - ${f}`);

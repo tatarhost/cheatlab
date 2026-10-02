@@ -13,6 +13,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ConversationRoom } from '../src/room.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -103,7 +104,129 @@ class KvShim {
   }
 }
 
-/* --------------------------------------------------------------------- env */
+/* ------------------------------------------------------------ DO + socket shim */
+
+/**
+ * A stand-in for one hibernation-capable Durable Object.
+ *
+ * Only the surface `ConversationRoom` uses is here: the socket list, the accept
+ * call, and the response carrying a 101. What matters for a test is not that a
+ * real isolate is woken but that the room is asked the same questions the
+ * platform would ask it - ticket spent, socket accepted, frame written - so a
+ * room that accepted a socket without checking the ticket still fails here.
+ */
+class SocketShim {
+  constructor() {
+    this.sent = [];
+    this.closed = false;
+    this.attachment = null;
+  }
+
+  send(frame) {
+    if (this.closed) throw new Error('socket is closed');
+    this.sent.push(frame);
+  }
+
+  close() { this.closed = true; }
+  serializeAttachment(v) { this.attachment = v; }
+  deserializeAttachment() { return this.attachment; }
+}
+
+// The platform hands a room a pair and the room accepts one half of it. Installing
+// the constructor globally is what lets `room.js` run unmodified; the response
+// carrying the pair is the one step the shim stands in for (see `RoomShim.fetch`).
+if (typeof globalThis.WebSocketPair === 'undefined') {
+  globalThis.WebSocketPair = class WebSocketPairShim {
+    constructor() {
+      this[0] = new SocketShim();
+      this[1] = new SocketShim();
+    }
+  };
+}
+
+export class RoomShim {
+  constructor(env) {
+    this.env = env;
+    // Every socket ever accepted, including closed ones, so a test can assert on
+    // the difference between "was attached" and "is still listening".
+    this.sockets = [];
+    this.state = {
+      // The runtime drops a socket from this list the moment it closes; the shim
+      // does the same, so a room that forgot to handle a close would show it here
+      // as extra deliveries rather than being quietly forgiven.
+      getWebSockets: () => this.sockets.filter((ws) => !ws.closed),
+      acceptWebSocket: (ws) => { this.sockets.push(ws); },
+    };
+    // One instance per object, kept so a test can drive the lifecycle callbacks
+    // the runtime would call (`webSocketClose`) instead of reimplementing them.
+    this.instance = new ConversationRoom(this.state, this.env);
+  }
+
+  get open() { return this.sockets.filter((ws) => !ws.closed); }
+
+  async fetch(input, init) {
+    const req = input instanceof Request ? input : new Request(input, init);
+    try {
+      return await this.instance.fetch(req);
+    } catch (err) {
+      // Node has neither `WebSocketPair` nor a `Response` that accepts a 101, so
+      // the last two lines of a successful upgrade cannot run here. Rather than
+      // teaching the room about tests, the shim stands in for the platform: the
+      // socket has already been accepted and greeted by the time this throws, so
+      // what is missing is only the switch-over response, and the shim reports it.
+      if (err instanceof RangeError) {
+        return upgradeResponse(this.sockets[this.sockets.length - 1]);
+      }
+      throw err;
+    }
+  }
+}
+
+/** The 101 the platform would have returned, described without a real socket. */
+function upgradeResponse(socket) {
+  return {
+    status: 101,
+    ok: false,
+    headers: new Headers(),
+    socket,
+    json: async () => ({ upgraded: true, convId: socket?.attachment?.convId ?? null }),
+    text: async () => '',
+  };
+}
+
+/**
+ * The namespace `roomStub()` addresses. Ids are derived from the name the same
+ * way, so two rooms are two objects and one room is one object - which is the
+ * property a fan-out test depends on.
+ */
+export class ChatRoomNamespace {
+  constructor(env) {
+    this.env = env;
+    this.rooms = new Map();
+  }
+
+  idFromName(name) { return name; }
+
+  get(id) {
+    if (!this.rooms.has(id)) this.rooms.set(id, new RoomShim(this.env));
+    return this.rooms.get(id);
+  }
+}
+
+/** Puts a `CHAT_ROOMS` namespace on an env and returns it. */
+export function withChatRooms(env) {
+  env.CHAT_ROOMS = new ChatRoomNamespace(env);
+  return env.CHAT_ROOMS;
+}
+
+/** The frames a room has written to its open sockets, parsed back into objects. */
+export function framesOf(room, type) {
+  return room.open.flatMap((ws) => ws.sent)
+    .map((f) => JSON.parse(f))
+    .filter((f) => !type || f.t === type);
+}
+
+/* -------------------------------------------------------------------- env */
 
 export function makeEnv(overrides = {}) {
   return {

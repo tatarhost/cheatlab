@@ -35,6 +35,30 @@ migrations_dir = "migrations"
 binding = "BUCKET"
 id = "6394a31d96044562996c00ea83b2f889"
 
+# Live delivery for chats. One room per conversation, addressed by name so the
+# Worker and the browser agree on the id without passing one to the other.
+#
+# A room holds open sockets and nothing else - message bodies are written to D1
+# first and the room is only told to hand them on. So a room can never author a
+# message, and losing a room costs delivery rather than data.
+#
+# new_sqlite_classes is the storage backend. It must be a class that did not
+# exist when the DO was first deployed; changing the list later on a class that
+# already exists is rejected by the platform, which is why the name here matches
+# the class in src/room.js exactly.
+#
+# Hibernation is on, so an empty room costs nothing. The Free plan allows
+# SQLite-backed rooms, with limits far above what chat needs - a room is
+# addressed by a name rather than per user, so the count follows the number of
+# rooms in use, not the number of people signed in.
+[[durable_objects.bindings]]
+name = "CHAT_ROOMS"
+class_name = "ConversationRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ConversationRoom"]
+
 [triggers]
 crons = ["17 * * * *"]
 

@@ -1,6 +1,12 @@
 import { Store } from './store.js';
 import { BlobStore, KV_MAX_PUT_BYTES } from './blobs.js';
 import { previewUrl, thumbUrl, posterUrl, cloudinaryReady } from './cloudinary.js';
+import { LOGO_URL, COVER_URL } from './urls.js';
+import { ConversationRoom, roomNameFor } from './room.js';
+import {
+  ChatStore, rightsFor, messageGame, MESSAGE_MAX, TITLE_MAX as TITLE_MAX_CHAT,
+  TOPIC_MAX as TOPIC_MAX_CHAT, TICKET_TTL_MS,
+} from './chats.js';
 import { PluginHost } from './plugins.js';
 import {
   newId, newSecret, secretHash, secretMatches, normaliseClientId, authorTag,
@@ -270,13 +276,9 @@ async function lockedGate(request, env, itemId, url) {
 
 /* ---- profile design sanitisation: raw CSS and URLs never touch the page -- */
 
-const LOGO_URL = /^https:\/\/[^\s<>"']{3,280}$/;
-// The same rule for a game cover, with a length of its own. Named separately
-// rather than reused so that widening one of them - a cover host allowlist, say -
-// cannot quietly widen the other. What is refused is a scheme that executes and
-// characters that could break out of an attribute; what is *not* refused is a
-// file extension, because Roblox's own thumbnail urls do not have one.
-const COVER_URL = /^https:\/\/[^\s<>"']{3,600}$/;
+// LOGO_URL and COVER_URL live in src/urls.js now that a game cover also appears
+// in chat messages, so all three surfaces are judged by one rule.
+
 const ACCENT_HEX = /^#[0-9a-fA-F]{6}$/;
 // Allowlist, not a blocklist: anything not spelled out here is dropped. The set
 // is what a gradient actually needs - letters, digits, `,` between stops, `%`
@@ -1916,6 +1918,613 @@ route('GET', /^\/r\/([A-Za-z0-9]{4,16})$/, async (request, env, m, url) => {
   });
 });
 
+/* ------------------------------------------------------------------ chats */
+
+/**
+ * Every chat route resolves the viewer, the conversation and their rights before
+ * anything else. `openRoom` is the single gate: a route that forgets to call it
+ * does not get access, it gets nothing at all, because the room row it needs is
+ * only reachable through this helper.
+ */
+async function openRoom(request, env, convKey) {
+  const who = await identity(request, env);
+  if (!who) return { error: fail(401, 'login required') };
+  const chats = env.CHATS || (env.CHATS = new ChatStore(env));
+  const conv = await chats.getConversation(convKey);
+  if (!conv) return { error: fail(404, 'no such conversation') };
+  const member = await chats.getMember(conv.id, who.user.id);
+  // A mute hides the badge but not the room; a kick removes the room. Both are
+  // per-conversation, so nothing here reaches the account as a whole.
+  //
+  // The kick is checked before the rights, because being removed deletes the
+  // membership row, and the rights of "not a member of a private room" and "was
+  // removed from this room" are the same 403. Ordered the other way, the person
+  // who was kicked gets the anonymous stranger's message and never learns why.
+  if ((await chats.sanctionOf(conv.id, who.user.id)) === 'kick') {
+    return { error: fail(403, 'you were removed from this conversation') };
+  }
+  const rights = rightsFor(conv, member);
+  if (!rights.read) return { error: fail(403, 'no access to this conversation') };
+  return { who, chats, conv, member, rights };
+}
+
+/** A conversation as the client sees it. Ids of hidden rooms are not exposed. */
+function convView(row, rights, member) {
+  return {
+    id: row.id,
+    kind: row.kind,
+    // A dm borrows the other person's name. It is only ever shown to a member of
+    // it, and it is the only way a person could tell two dms apart.
+    title: row.kind === 'dm' ? (row.peer_nick || row.title || 'Личный чат') : row.title,
+    peerId: row.kind === 'dm' ? (row.peer_id ?? undefined) : undefined,
+    topic: row.topic,
+    discoverable: !!row.discoverable,
+    members: row.members ?? undefined,
+    messages: row.messages ?? undefined,
+    lastAt: row.last_at ?? undefined,
+    unread: row.unread ?? 0,
+    muted: !!(member && row.muted),
+    role: member?.role || null,
+    // Everything the client needs to decide what to draw, and nothing more: a
+    // stranger to a private room learns nothing from these flags.
+    rights: rights ? {
+      canPost: rights.post, canManage: rights.manage, canInvite: rights.invite, canLeave: rights.leave,
+    } : undefined,
+  };
+}
+
+/** A message as the client sees it, with its attachments and author. */
+function messageView(row, files = []) {
+  return {
+    id: row.id,
+    convId: row.conv_id,
+    userId: row.user_id,
+    nick: row.nick,
+    popular: row.popular,
+    avatarId: row.avatar_id,
+    body: row.deleted_at ? '' : row.body,
+    createdAt: row.created_at,
+    deleted: !!row.deleted_at,
+    game: row.game_id ? { id: row.game_id, name: row.game_name, cover: row.game_cover } : null,
+    files: files.filter((f) => f.message_id === row.id).map((f) => ({
+      id: f.id, name: f.name, mime: f.mime, size: f.size, url: f.url, store: f.store,
+    })),
+  };
+}
+
+/**
+ * The Durable Object for one conversation, or null when no namespace is bound.
+ *
+ * Returning null rather than throwing is deliberate: it keeps the whole feature
+ * working as plain HTTP when the binding is absent, which is exactly the
+ * situation in the test harness and in any local `wrangler dev` started before
+ * the binding was added. Live delivery is the enhancement; the message is never
+ * dependent on it.
+ */
+function roomStub(env, convId) {
+  return env.CHAT_ROOMS ? env.CHAT_ROOMS.get(env.CHAT_ROOMS.idFromName(roomNameFor(convId))) : null;
+}
+
+/** Opens (or creates) the direct conversation with another account. */
+async function openDm(env, a, b) {
+  const chats = env.CHATS || (env.CHATS = new ChatStore(env));
+  const found = await chats.findDm(a, b);
+  if (found) return found;
+  const conv = await chats.createConversation({
+    kind: 'dm', owner: a, discoverable: false, at: now(),
+  });
+  await chats.addMember(conv.id, b, 'member', now());
+  await chats.linkDm(a, b, conv.id);
+  return conv;
+}
+
+/** The viewer's conversations, for the sidebar. */
+route('GET', /^\/api\/chats$/, async (request, env) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  const chats = new ChatStore(env);
+  const rows = await chats.listForUser(who.user.id);
+  return json({
+    chats: rows.map((r) => {
+      const rights = rightsFor(r, { role: r.role });
+      return convView(r, rights, { role: r.role, muted: r.muted });
+    }),
+  });
+});
+
+/**
+ * Opens the direct conversation with another account.
+ *
+ * Both sides must already follow each other. That is the whole privacy model of a
+ * dm here: the site has no separate "message me" button, and a message button on
+ * every profile would let anybody start a private room with a stranger. Mutual
+ * follows are the one thing two people have agreed to in public, so they are what
+ * is asked for.
+ */
+route('POST', /^\/api\/chats\/dm\/([A-Za-z0-9_-]{3,40})$/, async (request, env, m) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  const banned = requireUnbanned(who);
+  if (banned) return banned;
+
+  const target = m[1];
+  if (target === who.user.id) return fail(400, 'you cannot message yourself');
+  const other = await env.STORE.getUser(target);
+  if (!other) return fail(404, 'no such account');
+  if (!(await env.STORE.isFollowing(who.user.id, target))) {
+    return fail(403, 'follow them first');
+  }
+  if (!(await env.STORE.isFollowing(target, who.user.id))) {
+    return fail(403, 'they do not follow you yet');
+  }
+
+  const client = clientOf(request);
+  if (!(await env.STORE.throttle(`chat-dm:${who.user.id}`, 'write', { cap: 60, windowMs: 60 * 60 * 1000 }))) {
+    return fail(429, 'too many new conversations, try later');
+  }
+
+  const conv = await openDm(env, who.user.id, target);
+  const chats = env.CHATS;
+  return json({
+    chat: convView(await chats.getConversationFor(conv.id, who.user.id), rightsFor({ kind: 'dm' }, { role: 'member' }), { role: 'member' }),
+  });
+});
+
+/** Public channels, for the browse list. */
+route('GET', /^\/api\/chats\/channels$/, async (request, env, _m, url) => {
+  const chats = new ChatStore(env);
+  const rows = await chats.listChannels({
+    limit: clamp(Number(url.searchParams.get('limit')) || 30, 1, 50),
+    offset: Math.max(0, Number(url.searchParams.get('offset')) || 0),
+  });
+  // Browsing is public, but the rights attached to each row are not: an owner and
+  // a stranger reading the same list have to get different answers, or the list
+  // tells the owner they cannot post in their own channel.
+  const who = await identity(request, env);
+  const views = [];
+  for (const row of rows) {
+    const member = who ? await chats.getMember(row.id, who.user.id) : null;
+    views.push(convView(row, rightsFor(row, member), member));
+  }
+  return json({ channels: views });
+});
+
+/** Creates a channel or a group. Both need an account; a dm needs no setup. */
+route('POST', /^\/api\/chats$/, async (request, env) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required to create a room');
+  const banned = requireUnbanned(who);
+  if (banned) return banned;
+  const { STORE } = env;
+  const client = clientOf(request);
+  if (!(await STORE.throttle(`chat-create:${client || who.user.id}`, 'write', { cap: 10, windowMs: 60 * 60 * 1000 }))) {
+    return fail(429, 'too many rooms created, try later');
+  }
+
+  let payload;
+  try {
+    payload = await readJson(request, config(env).maxTextBytes);
+  } catch (err) {
+    return fail(err.code === 'TOO_LARGE' ? 413 : 400, err.message);
+  }
+  const kind = str(payload.kind, 10);
+  if (kind !== 'channel' && kind !== 'group') return fail(400, 'kind must be channel or group');
+
+  const title = str(payload.title, TITLE_MAX_CHAT);
+  if (!title) return fail(400, 'title is required');
+  const chats = new ChatStore(env);
+  const conv = await chats.createConversation({
+    kind,
+    owner: who.user.id,
+    title,
+    topic: str(payload.topic, TOPIC_MAX_CHAT),
+    // A group is private by definition; a channel is public unless asked otherwise.
+    discoverable: kind === 'channel' ? payload.discoverable !== false : false,
+    at: now(),
+  });
+
+  // Invited members arrive with the room. A missing invite list is not an error:
+  // a person can make an empty room and fill it later.
+  for (const raw of Array.isArray(payload.members) ? payload.members.slice(0, 40) : []) {
+    const uid = str(raw, 40);
+    if (uid && /^[A-Za-z0-9_-]{3,40}$/.test(uid) && uid !== who.user.id && (await STORE.getUser(uid))) {
+      await chats.addMember(conv.id, uid, 'member', now());
+    }
+  }
+  return json({ chat: convView(await chats.getConversation(conv.id), rightsFor({ kind }, { role: 'owner' }), { role: 'owner' }) }, 201);
+});
+
+/** One room: its metadata, its members and the newest page of messages. */
+route('GET', /^\/api\/chats\/([A-Za-z0-9]{6,24})$/, async (request, env, m, url) => {
+  const room = await openRoom(request, env, m[1]);
+  if (room.error) return room.error;
+  const { chats, conv, rights } = room;
+
+  const before = str(url.searchParams.get('before'), 24) || null;
+  const limit = clamp(Number(url.searchParams.get('limit')) || 50, 1, 100);
+  const rows = await chats.listMessages(conv.id, { limit, before });
+  const files = rows.length ? await chats.listFilesForConversation(conv.id) : [];
+
+  // Marking read is a side effect of looking, but only up to the oldest message
+  // on screen, so a deep page does not silently swallow what arrived after it.
+  const oldest = rows[rows.length - 1];
+  if (oldest && room.member) await chats.markRead(conv.id, room.who.user.id, oldest.created_at);
+
+  const view = convView({
+    ...(await chats.getConversationFor(conv.id, room.who.user.id)),
+    members: await chats.memberCount(conv.id),
+  }, rights, room.member);
+
+  return json({
+    chat: view,
+    // Newest first, so the client reverses once rather than guessing per page.
+    messages: rows.map((r) => messageView(r, files)),
+    hasMore: rows.length === limit,
+  });
+});
+
+/**
+ * Post a message.
+ *
+ * The body may be empty only when a file is coming: the message has to exist
+ * before a file can hang off it, so a picture on its own is created first and
+ * uploaded to afterwards. `attach: true` is that promise, and it is checked
+ * rather than assumed - without it, an empty POST would be an empty row that
+ * nobody can ever fill in, which is worse than a refusal.
+ */
+route('POST', /^\/api\/chats\/([A-Za-z0-9]{6,24})\/messages$/, async (request, env, m) => {
+  const room = await openRoom(request, env, m[1]);
+  if (room.error) return room.error;
+  const { who, chats, conv, rights } = room;
+  const banned = requireUnbanned(who);
+  if (banned) return banned;
+  if (!rights.post) return fail(403, 'you cannot post in this conversation');
+  if ((await chats.sanctionOf(conv.id, who.user.id)) === 'mute') {
+    return fail(403, 'you are muted in this conversation');
+  }
+
+  const { STORE } = env;
+  const client = clientOf(request);
+  if (!(await STORE.throttle(`chat-msg:${who.user.id}`, 'write', { cap: 40, windowMs: 60_000 }))) {
+    return fail(429, 'slow down');
+  }
+
+  let payload;
+  try {
+    payload = await readJson(request, config(env).maxTextBytes);
+  } catch (err) {
+    return fail(err.code === 'TOO_LARGE' ? 413 : 400, err.message);
+  }
+  const body = str(payload.body, MESSAGE_MAX);
+  const game = messageGame(payload.game || {});
+  const expectsFile = payload.attach === true;
+  if (!body && !game && !expectsFile) return fail(400, 'message is empty');
+
+  const message = await chats.addMessage({
+    convId: conv.id, userId: who.user.id, body, game, at: now(),
+  });
+  // Read receipts move with the sender: you cannot be "unread" in a room where
+  // you just spoke.
+  await chats.markRead(conv.id, who.user.id, message.created_at);
+
+  const view = messageView({
+    ...message,
+    nick: who.user.nick,
+    popular: who.user.popular,
+    avatar_id: who.user.avatar_id,
+  }, []);
+
+  // Stored first, then handed to the room. A room that is asleep or unreachable
+  // costs the live feed, not the message: history over HTTP is authoritative.
+  env.waitUntil?.(
+    (async () => {
+      const stub = roomStub(env, conv.id);
+      if (!stub) return;
+      await stub.fetch(`https://room.internal/publish?id=${conv.id}`, {
+        method: 'POST',
+        body: JSON.stringify(view),
+      });
+    })().catch(() => {}),
+  );
+
+  return json({ message: view }, 201);
+});
+
+/**
+ * Attaches a file to a message that was just posted.
+ *
+ * The upload is a separate request rather than part of the message POST because
+ * the message has to exist before a file can hang off it, and because a failed
+ * upload must not cost the words that were typed next to it. A message may end
+ * up with no file, which is fine; a file may never end up without a message.
+ */
+route('POST', /^\/api\/chats\/([A-Za-z0-9]{6,24})\/messages\/([A-Za-z0-9]{6,24})\/files$/, async (request, env, m) => {
+  const room = await openRoom(request, env, m[1]);
+  if (room.error) return room.error;
+  const { chats, who } = room;
+  const banned = requireUnbanned(who);
+  if (banned) return banned;
+
+  const message = await chats.getMessage(m[2]);
+  if (!message || message.conv_id !== room.conv.id) return fail(404, 'no such message');
+  // Only the author may attach to their own message, and only while it is the
+  // newest one - otherwise a file could be added to history that has already been
+  // read by everyone else.
+  if (message.user_id !== who.user.id) return fail(403, 'you cannot attach to this message');
+  const newest = (await chats.listMessages(room.conv.id, { limit: 1 }))[0];
+  if (newest && newest.id !== message.id) return fail(409, 'that message is no longer the last one');
+
+  const c = config(env);
+  if ((await chats.listMessageFiles(message.id)).length >= 4) return fail(409, 'too many files on one message');
+  const client = clientOf(request);
+  if (!(await env.STORE.throttle(`chat-file:${who.user.id}`, 'write', { cap: 20, windowMs: 60 * 60 * 1000 }))) {
+    return fail(429, 'slow down');
+  }
+
+  const name = safeFilename(decodeHeaderName(request.headers.get('x-filename')));
+  const { value, rejections } = await env.PLUGINS.run('file:upload', {
+    id: newId(10), name, mime: mimeOf(name), size: 0, sha256: '', author: client, created_at: now(),
+  }, ctxOf(request, env));
+  if (rejections.length) return fail(422, 'rejected', { reasons: rejections });
+  if (!value.name) return fail(400, 'invalid filename');
+
+  const declared = Number(request.headers.get('content-length') || 0);
+  if (declared > c.maxFileBytes) return fail(413, 'file too large', { maxBytes: c.maxFileBytes });
+  let buffer;
+  try {
+    buffer = await request.arrayBuffer();
+  } catch {
+    return fail(413, 'file too large', { maxBytes: c.maxFileBytes });
+  }
+  if (buffer.byteLength === 0) return fail(400, 'empty file');
+  if (buffer.byteLength > c.maxFileBytes) return fail(413, 'file too large', { maxBytes: c.maxFileBytes });
+
+  const sha = await sha256(buffer);
+  const stored = await env.BLOBS.put(buffer, sha, { mime: mimeOf(value.name), name: value.name });
+  const saved = await chats.addMessageFile({
+    id: newId(10),
+    message_id: message.id,
+    name: value.name,
+    mime: mimeOf(value.name),
+    size: stored.size,
+    sha256: sha,
+    author: client,
+    store: stored.store,
+    url: stored.url,
+    rid: stored.rid,
+    created_at: now(),
+  });
+
+  return json({
+    file: {
+      id: saved.id, name: saved.name, mime: saved.mime, size: saved.size, url: saved.url, store: saved.store,
+    },
+  }, 201);
+});
+
+/** Reads a room up to now. */
+route('POST', /^\/api\/chats\/([A-Za-z0-9]{6,24})\/read$/, async (request, env, m) => {
+  const room = await openRoom(request, env, m[1]);
+  if (room.error) return room.error;
+  await room.chats.markRead(room.conv.id, room.who.user.id, now());
+  return json({ ok: true });
+});
+
+/** Subscribe to a channel, or accept an invitation to a group. */
+route('POST', /^\/api\/chats\/([A-Za-z0-9]{6,24})\/members$/, async (request, env, m) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  const chats = new ChatStore(env);
+  const conv = await chats.getConversation(m[1]);
+  if (!conv) return fail(404, 'no such conversation');
+  const mine = await chats.getMember(conv.id, who.user.id);
+  const rights = rightsFor(conv, mine);
+
+  let payload = {};
+  try {
+    payload = await readJson(request, config(env).maxTextBytes);
+  } catch (err) {
+    if (err.code !== 'TOO_LARGE') return fail(400, err.message);
+  }
+  const target = str(payload.userId, 40);
+  if (!target) return fail(400, 'userId is required');
+
+  // Joining a public channel needs no permission at all. Joining a group does:
+  // the room is private, so either you are already in, or somebody inside may
+  // add you. "Public" is a property of the channel, not of the person asking.
+  const self = target === who.user.id;
+  if (!self && !rights.invite) return fail(403, 'you cannot invite here');
+  if (self && !mine && !conv.discoverable && !rights.invite) {
+    return fail(403, 'no access to this conversation');
+  }
+  if (!(await env.STORE.getUser(target))) return fail(404, 'no such account');
+  if ((await chats.sanctionOf(conv.id, target)) === 'kick') return fail(403, 'that account was removed');
+
+  await chats.addMember(conv.id, target, 'member', now());
+  return json({ ok: true, chatId: conv.id, userId: target }, 201);
+});
+
+/** Leave a room, or remove someone from it. */
+route('DELETE', /^\/api\/chats\/([A-Za-z0-9]{6,24})\/members\/([A-Za-z0-9_-]{3,40})$/, async (request, env, m) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  const chats = new ChatStore(env);
+  const conv = await chats.getConversation(m[1]);
+  if (!conv) return fail(404, 'no such conversation');
+  const mine = await chats.getMember(conv.id, who.user.id);
+  const rights = rightsFor(conv, mine);
+  const target = m[2];
+
+  const leaving = target === who.user.id;
+  if (!leaving && !rights.manage) return fail(403, 'you cannot remove anyone here');
+  if (leaving && !rights.leave) return fail(403, 'you cannot leave');
+  // The last person cannot leave: an empty room cannot be joined again unless it
+  // is public, and a public channel with no members is a room nobody moderates.
+  if (leaving && (await chats.memberCount(conv.id)) <= 1) return fail(409, 'a room needs at least one member');
+
+  await chats.removeMember(conv.id, target);
+  if (!leaving) {
+    await chats.addTakedown({
+      convId: conv.id, userId: target, action: 'kick', byUserId: who.user.id, reason: 'removed', at: now(),
+    });
+  }
+  return json({ ok: true });
+});
+
+/** Rename a room, or change whether a channel is listed publicly. */
+route('PATCH', /^\/api\/chats\/([A-Za-z0-9]{6,24})$/, async (request, env, m) => {
+  const room = await openRoom(request, env, m[1]);
+  if (room.error) return room.error;
+  if (!room.rights.manage) return fail(403, 'you cannot manage this conversation');
+  const banned = requireUnbanned(room.who);
+  if (banned) return banned;
+
+  let payload;
+  try {
+    payload = await readJson(request, config(env).maxTextBytes);
+  } catch (err) {
+    return fail(err.code === 'TOO_LARGE' ? 413 : 400, err.message);
+  }
+  const patch = {};
+  if (payload.title !== undefined) {
+    const title = str(payload.title, TITLE_MAX_CHAT);
+    if (!title) return fail(400, 'title is required');
+    patch.title = title;
+  }
+  if (payload.topic !== undefined) patch.topic = str(payload.topic, TOPIC_MAX_CHAT);
+  if (payload.discoverable !== undefined) {
+    // Only a channel can be listed publicly. A group that could be would stop
+    // being a group the moment somebody flipped a flag.
+    if (room.conv.kind !== 'channel') return fail(400, 'only a channel can be public');
+    patch.discoverable = !!payload.discoverable;
+  }
+  if (!Object.keys(patch).length) return fail(400, 'nothing to change');
+
+  const updated = await room.chats.updateConversation(room.conv.id, patch);
+  return json({ chat: convView(updated, room.rights, room.member) });
+});
+
+/** Take a single message down. The row stays, so the thread keeps its shape. */
+route('DELETE', /^\/api\/chats\/([A-Za-z0-9]{6,24})\/messages\/([A-Za-z0-9]{6,24})$/, async (request, env, m) => {
+  const room = await openRoom(request, env, m[1]);
+  if (room.error) return room.error;
+  const banned = requireUnbanned(room.who);
+  if (banned) return banned;
+
+  const message = await room.chats.getMessage(m[2]);
+  if (!message || message.conv_id !== room.conv.id) return fail(404, 'no such message');
+  // Your own message, or a moderator's judgement. Nobody else.
+  if (message.user_id !== room.who.user.id && !room.rights.manage) {
+    return fail(403, 'you cannot remove this message');
+  }
+  // A message with neither words nor files was never readable by anybody, so it is
+  // removed outright instead of leaving a tombstone in every future copy of the
+  // room. Anything with content in it keeps the ordinary soft delete.
+  const removed = await room.chats.removeEmptyMessage(message.id);
+  if (removed) return json({ ok: true, messageId: message.id, deleted: true, removed: true });
+  await room.chats.softDeleteMessage(message.id, room.who.user.id, now());
+  return json({ ok: true, messageId: message.id, deleted: true });
+});
+
+/**
+ * Hands a WebSocket upgrade to the room.
+ *
+ * This route does almost nothing on purpose. It cannot authenticate the request -
+ * a browser sends no session header on an upgrade - so the answer was already
+ * given when the ticket was minted, and the DO re-checks that ticket against D1
+ * before accepting anything. What this route is for is the 426: a plain GET on the
+ * same path, and anything not addressed to a room, should be refused here where
+ * it costs one request instead of waking a Durable Object.
+ */
+route('GET', /^\/api\/chats\/([A-Za-z0-9]{6,24})\/ws$/, async (request, env, m, url) => {
+  if ((request.headers.get('Upgrade') || '').toLowerCase() !== 'websocket') {
+    return new Response('expected Upgrade: websocket', {
+      status: 426,
+      headers: { 'Content-Type': 'text/plain', 'Upgrade': 'websocket' },
+    });
+  }
+  const stub = roomStub(env, m[1]);
+  // No binding means no live delivery, and saying so plainly beats a socket that
+  // accepts and then never says anything.
+  if (!stub) return new Response('live delivery is not configured', { status: 503 });
+  if (!/^[A-Za-z0-9_-]{20,120}$/.test(url.searchParams.get('ticket') || '')) {
+    return new Response('bad ticket', { status: 403 });
+  }
+  return stub.fetch(request);
+});
+
+/**
+ * Mutes or unmutes somebody in a room.
+ *
+ * The sanction is per-room and never global: being shouted down in one channel
+ * has not earned a ban from the site. `muted: false` clears the mute rather than
+ * adding an "unmute", because a list of takedowns that can only grow is a list
+ * nobody can undo.
+ */
+route('POST', /^\/api\/chats\/([A-Za-z0-9]{6,24})\/members\/([A-Za-z0-9_-]{3,40})\/mute$/, async (request, env, m) => {
+  const room = await openRoom(request, env, m[1]);
+  if (room.error) return room.error;
+  if (!room.rights.manage) return fail(403, 'you cannot moderate this conversation');
+
+  let payload = {};
+  try {
+    payload = await readJson(request, config(env).maxTextBytes);
+  } catch (err) {
+    return fail(400, err.message);
+  }
+  const target = m[2];
+  const member = await room.chats.getMember(room.conv.id, target);
+  if (!member) return fail(404, 'that account is not in this conversation');
+  // An owner who cannot talk cannot moderate, and a moderator who can silence
+  // the owner has stopped being a moderator.
+  if (member.role === 'owner' && payload.muted !== false) {
+    return fail(403, 'the owner cannot be muted');
+  }
+  if (member.role === 'owner' && target !== room.who.user.id) {
+    return fail(403, 'you cannot change the owner');
+  }
+
+  await room.chats.setSanction(room.conv.id, target, payload.muted === false ? null : 'mute', {
+    byUserId: room.who.user.id, reason: str(payload.reason, 200), at: now(),
+  });
+  return json({ ok: true, userId: target, muted: payload.muted !== false });
+});
+
+/**
+ * Mints a ticket for one WebSocket handshake.
+ *
+ * The browser cannot set a request header when it opens a WebSocket, and the
+ * session token must not travel in a query string where it lands in access logs
+ * and `Referer`. So the client exchanges a normal authenticated POST for a
+ * single-use ticket that lives for a minute, and the socket carries that.
+ */
+route('POST', /^\/api\/chats\/([A-Za-z0-9]{6,24})\/ticket$/, async (request, env, m) => {
+  const room = await openRoom(request, env, m[1]);
+  if (room.error) return room.error;
+  if (!room.rights.post) return fail(403, 'you cannot join this conversation');
+
+  const token = newSecret();
+  // secretHash is async; without the await this would store a Promise's string
+  // form as the digest and the handshake could never compare against it.
+  const tokenHash = await secretHash(token);
+  const expiresAt = now() + TICKET_TTL_MS;
+  const id = await room.chats.createTicket({
+    convId: room.conv.id, userId: room.who.user.id, tokenHash, expiresAt, at: now(),
+  });
+  // Expiry is belt and braces: the handshake checks it, and the sweeper clears
+  // spent rows so the table does not grow into a log.
+  env.waitUntil?.(room.chats.dropExpiredTickets(now() + TICKET_TTL_MS * 10).catch(() => {}));
+
+  return json({
+    ticket: token,
+    ticketId: id,
+    // A path, not a URL: the client builds the socket address from the API
+    // origin, which is not the origin the page was served from.
+    url: `/api/chats/${room.conv.id}/ws`,
+    expiresAt,
+  });
+});
+
 route('GET', /^\/$/, async (_r, env) => json({
   service: 'CHEATLAB API',
   docs: 'https://github.com/tatarhost/cheatlab',
@@ -1959,6 +2568,7 @@ function withCors(response, origin, preflight) {
 let pluginHost = null;
 
 export default {
+  ConversationRoom,
   async fetch(request, rawEnv) {
     if (!pluginHost) pluginHost = await new PluginHost().load(rawEnv);
     const env = {
@@ -1984,7 +2594,13 @@ export default {
         const m = r.pattern.exec(url.pathname);
         if (!m) continue;
         try {
-          return withCors(await r.handler(request, env, m, url), origin);
+          const out = await r.handler(request, env, m, url);
+          // A 101 carries the socket in the response object itself, so rebuilding
+          // it - which is all the CORS wrapper does - would throw the socket away
+          // and leave the client hanging. A handshake also has no origin to
+          // police: the browser sends one, and the ticket is the credential.
+          if (out.status === 101) return out;
+          return withCors(out, origin);
         } catch (err) {
           // Internal detail is not echoed to callers; it is logged for us. An
           // earlier build returned err.message, which leaked SQL text.
