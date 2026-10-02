@@ -2619,3 +2619,9 @@ export default {
     ctx.waitUntil(new Store(env.DB).sweepRate());
   },
 };
+
+// The Durable Object has to be exported from the entrypoint by name, not merely
+// imported: the bundler reads the class out of this file to build it, and an
+// import that is only used internally leaves the deploy with a room it cannot
+// instantiate.
+export { ConversationRoom };
