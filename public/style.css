@@ -683,6 +683,7 @@ a.stat-box:hover .stat-label { color: var(--ink); }
 /* The log is its own scroll container rather than the page, so reading history
    never scrolls the header or the nav out of reach on a phone. */
 .chat-wrap {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -699,6 +700,36 @@ a.stat-box:hover .stat-label { color: var(--ink); }
 }
 .chat-msgs { display: flex; flex-direction: column; gap: 14px; }
 
+/* A run of messages from one person is one block: the bubbles touch, the gap
+   before the first of them is the gap that separates two speakers. Grouping is
+   decided in JS, this is only how the gap is drawn. */
+.chat-msgs > .chat-msg.is-grouped { margin-top: -8px; }
+
+.chat-day {
+  align-self: center;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 6px 0 2px;
+  padding: 3px 12px;
+  font-size: 12px;
+  color: var(--mute);
+  background: var(--fog);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+/* The edge of the unread part, drawn where it starts rather than described. */
+.chat-new {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0;
+  font-size: 12px;
+  color: var(--danger);
+}
+.chat-new::before, .chat-new::after { content: ''; flex: 1; height: 1px; background: currentColor; opacity: .5; }
+
 .chat-msg { max-width: 78%; }
 .chat-msg.is-mine { align-self: flex-end; }
 .chat-msg-head {
@@ -708,12 +739,20 @@ a.stat-box:hover .stat-label { color: var(--ink); }
   margin-bottom: 3px;
 }
 .chat-msg.is-mine .chat-msg-head { justify-content: flex-end; }
+/* In a run the head keeps only the stamp (the nick is left out in JS), so it
+   stays short without having to be hidden - which would also hide the retract
+   control and take it out of reach. */
+.chat-msg.is-grouped .chat-msg-head { margin-bottom: 1px; }
 .chat-nick { font-weight: 600; font-size: 13px; }
 .chat-time { color: var(--mute); font-size: 12px; }
+/* Hidden until the message is under the pointer or focused from the keyboard -
+   a trash icon on every line is a line of noise for a control used rarely. */
 .chat-del {
   border: 0; background: none; color: var(--mute); cursor: pointer;
   padding: 2px; line-height: 0; border-radius: 4px;
+  opacity: 0;
 }
+.chat-msg:hover .chat-del, .chat-del:focus-visible { opacity: 1; }
 .chat-del:hover { color: var(--danger); }
 
 .chat-body {
@@ -721,13 +760,59 @@ a.stat-box:hover .stat-label { color: var(--ink); }
   padding: 9px 12px;
   background: var(--fog-2);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  /* Asymmetric corners: the tight pair points at the speaker, which is what
+     makes a stack of bubbles read as speech rather than as a form. */
+  border-radius: 14px 14px 14px 4px;
   /* Long words and pasted urls wrap instead of widening the column. */
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.chat-msg.is-mine .chat-body { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.chat-msg.is-mine .chat-body {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+  border-radius: 14px 14px 4px 14px;
+}
+.chat-msg.is-grouped .chat-body { border-top-left-radius: 4px; }
+.chat-msg.is-mine.is-grouped .chat-body { border-top-right-radius: 4px; }
 .chat-body.is-deleted { color: var(--mute); font-style: italic; }
+
+/* Live indicator next to the room title. */
+.chat-top { position: sticky; top: 0; z-index: 3; background: var(--paper); }
+.chat-title { min-width: 0; }
+.chat-title .page-sub { display: flex; align-items: center; gap: 8px; }
+.chat-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px;
+  font-size: 12px;
+  color: var(--mute);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+.chat-live .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--mute); }
+.chat-live.is-on { color: var(--green, #1f8b4c); }
+.chat-live.is-on .dot { background: currentColor; }
+
+/* Floats over the log, centred, out of the way until there is something to say. */
+.chat-jump {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 2;
+  padding: 6px 16px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--paper);
+  background: var(--ink);
+  border: 0;
+  border-radius: 999px;
+  box-shadow: 0 4px 14px rgb(0 0 0 / .18);
+  cursor: pointer;
+}
+.chat-jump:hover { opacity: .88; }
 
 .chat-game {
   display: inline-flex;
@@ -814,6 +899,14 @@ a.stat-box:hover .stat-label { color: var(--ink); }
 }
 .chat-input:focus, .chat-kind:focus { outline: 2px solid var(--ink); outline-offset: 1px; }
 .chat-input:disabled { opacity: .55; }
+/* The composer grows with what is typed into it (see chatAutoGrow) instead of
+   scrolling inside itself: a message being written should stay visible in full. */
+.chat-field {
+  resize: none;
+  overflow-y: auto;
+  max-height: 160px;
+  line-height: 1.45;
+}
 .chat-create { display: flex; gap: 8px; margin-bottom: 18px; }
 /* The rows of people a name matched. They sit under the field rather than over
    it, so nothing that was typed is covered while a choice is made. */
@@ -848,6 +941,14 @@ a.stat-box:hover .stat-label { color: var(--ink); }
   .chat-log { height: 58vh; }
   .chat-create { flex-wrap: wrap; }
   .chat-create .chat-input { flex: 1 1 100%; order: 3; }
+}
+/* On a phone the log takes the screen instead of a slice of it: a chat that ends
+   under the browser chrome is a chat with a composer you cannot reach. */
+@media (max-width: 640px) {
+  .chat-top { padding-top: 10px; }
+  .chat-log { height: calc(100dvh - 260px); min-height: 240px; }
+  .chat-log { padding-bottom: 56px; }
+  .chat-jump { bottom: 10px; }
 }
 .chat-discover { margin-bottom: 18px; }
 .chat-discover summary { cursor: pointer; color: var(--mute); font-size: 14px; }

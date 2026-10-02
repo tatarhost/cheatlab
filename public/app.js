@@ -2908,6 +2908,46 @@ let chatPick = null;
  */
 let chatDraft = '';
 
+/**
+ * How many messages have arrived while the reader was scrolled up, and the first
+ * of them.
+ *
+ * The count is for the button that takes them back down; the id is for the line
+ * drawn through the log, because "you have missed something" is only useful if
+ * the something has an edge you can see.
+ */
+let chatMissed = 0;
+let chatUnreadFrom = null;
+
+/** Resets both when a different conversation is opened. */
+function chatClearMissed() {
+  chatMissed = 0;
+  chatUnreadFrom = null;
+}
+
+const dayKey = (ms) => {
+  const d = new Date(ms || 0);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+};
+
+/** "Сегодня" beats a date the reader has to work out themselves. */
+function dayLabel(ms) {
+  const then = new Date(ms || 0);
+  const today = new Date();
+  const yesterday = new Date(today.getTime() - 86400000);
+  if (dayKey(then.getTime()) === dayKey(today.getTime())) return 'Сегодня';
+  if (dayKey(then.getTime()) === dayKey(yesterday.getTime())) return 'Вчера';
+  return then.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+/**
+ * True when `b` is another message from the same person, close enough in time and
+ * same day, that repeating their name above it would only be noise.
+ */
+const sameRun = (a, b) => !!a && !!b && a.userId === b.userId
+  && dayKey(a.createdAt) === dayKey(b.createdAt)
+  && (b.createdAt || 0) - (a.createdAt || 0) < 5 * 60 * 1000;
+
 /** Drops the socket for a room and clears its reconnect timer. */
 function chatClose(convId) {
   const open = chatSockets.get(convId);
@@ -3036,6 +3076,7 @@ async function chatOpen(convId, { keepSocket = false } = {}) {
   // here instead of the client sorting on every render.
   chatMessages = (data.messages || []).slice().reverse();
   chatBacklog = !!data.hasMore;
+  chatClearMissed();
   // The paging cursor is the oldest message on screen, and it is what the next
   // "earlier" request walks back from.
   chatOlder = chatMessages[0]?.id || null;
@@ -3093,6 +3134,13 @@ function chatAdd(msg, convId = chatRoom?.id) {
   // scrolled up into history is not yanked back down by someone talking.
   const atBottom = !chatLog
     || chatLog.scrollHeight - chatLog.scrollTop - chatLog.clientHeight < 60;
+  // Read up the screen: remember where the unread part starts so the log can mark
+  // it, and how much of it there is so the reader can be told without scrolling.
+  // The reader's own messages do not count - they were not told anything.
+  if (!atBottom && msg.userId !== account?.id) {
+    chatMissed += 1;
+    if (!chatUnreadFrom) chatUnreadFrom = msg.id;
+  }
   chatRender('keep');
   if (atBottom && chatLog) chatLog.scrollTop = chatLog.scrollHeight;
 }
@@ -3176,13 +3224,18 @@ async function chatRetract(messageId, convId = chatRoom?.id) {
 }
 
 /** One message line. The body is a text node, never markup. */
-function chatBubble(m) {
+function chatBubble(m, grouped = false) {
   const mine = account && m.userId === account.id;
   const when_ = m.createdAt ? ago(m.createdAt) : '';
-  return h('div', { class: `chat-msg${mine ? ' is-mine' : ''}` },
+  // A run of messages from one person names them once. Repeating the name above
+  // every line of a paragraph they are typing turns the log into a list of forms.
+  const stamp = m.createdAt
+    ? h('time', { class: 'chat-time', text: when_, title: new Date(m.createdAt).toLocaleString('ru-RU') })
+    : null;
+  return h('div', { class: `chat-msg${mine ? ' is-mine' : ''}${grouped ? ' is-grouped' : ''}` },
     h('div', { class: 'chat-msg-head' },
-      h('span', { class: 'chat-nick', text: m.nick || '—' }),
-      m.createdAt ? h('time', { class: 'chat-time', text: when_ }) : null,
+      grouped ? null : h('span', { class: 'chat-nick', text: m.nick || '—' }),
+      stamp,
       // The author can always retract; a moderator can too. The flag comes from
       // the server, and the server re-checks it - a hidden button is not the
       // control, it is only the affordance.
@@ -3215,6 +3268,79 @@ function chatBubble(m) {
 }
 
 /**
+ * The message bubbles, plus the lines a reader needs to navigate them: a date
+ * whenever the day turns over, and a marker at the first message they missed.
+ *
+ * These are drawn here rather than inside the log so the ordering rules stay in
+ * one place. Grouping is decided by `sameRun`, which looks at the message before
+ * the one being drawn - so a re-render or an older page arriving keeps the same
+ * answer without any state to carry.
+ */
+function chatRows() {
+  const out = [];
+  let prev = null;
+  let prevDay = null;
+  for (const m of chatMessages) {
+    const day = dayKey(m.createdAt);
+    if (day !== prevDay) {
+      out.push(h('div', { class: 'chat-day', text: dayLabel(m.createdAt) }));
+      prevDay = day;
+      prev = null;
+    }
+    if (m.id === chatUnreadFrom) {
+      out.push(h('div', { class: 'chat-new' }, h('span', { text: 'Непрочитанные' })));
+    }
+    out.push(chatBubble(m, sameRun(prev, m)));
+    prev = m;
+  }
+  return out;
+}
+
+/**
+ * Posts whatever is in the composer and clears it.
+ *
+ * Enter and the send button both land here, so the two can never disagree about
+ * what counts as a send. `roomId` is checked after the round trip because the
+ * reader is allowed to leave mid-send, and restoring a draft into a conversation
+ * they are no longer reading would be worse than losing it.
+ */
+async function sendComposer(roomId) {
+  // The field is read rather than the draft, because it is the one thing the
+  // browser has actually been given: autofill and paste can fill it without an
+  // input event ever firing, and the words that end up posted should be the words
+  // in the box the reader is looking at.
+  const text = chatField ? chatField.value : chatDraft;
+  const file = chatPick;
+  // Cleared straight away so a slow send does not feel stuck, and put back if the
+  // words really did not go anywhere. The file goes back with them: it is the
+  // same send that failed.
+  //
+  // The state is what gets restored, not the field. This node is about to be
+  // thrown away by the render below, so writing to it would restore nothing.
+  chatDraft = '';
+  chatPick = null;
+  chatRender('keep');
+  if (!(await chatSend(text, file)) && chatRoom?.id === roomId) {
+    chatDraft = text;
+    chatPick = file;
+    chatRender('keep');
+    chatField?.focus?.();
+  }
+}
+
+/**
+ * Grows the composer with its content, up to a point.
+ *
+ * An unbounded textarea pushes the send button off the screen on a long message,
+ * which is the moment the reader most needs to see it.
+ */
+function chatAutoGrow(el) {
+  if (!el || !el.style) return;
+  el.style.height = 'auto';
+  el.style.height = `${Math.min(el.scrollHeight || 0, 160)}px`;
+}
+
+/**
  * Draws the open room.
  *
  * The whole log is replaced rather than patched. That is affordable because the
@@ -3238,16 +3364,23 @@ function chatRender(scroll = 'bottom') {
     chatBacklog
       ? h('button', { class: 'chat-more', type: 'button', onClick: chatOlderPage }, 'Показать ранние')
       : null,
-    ...chatMessages.map(chatBubble),
+    ...chatRows(),
   );
 
-  chatField = h('input', {
-    id: 'chat-input', class: 'chat-input', type: 'text', autocomplete: 'off',
+  chatField = h('textarea', {
+    id: 'chat-input', class: 'chat-input chat-field', rows: '1', autocomplete: 'off',
     placeholder: chat.rights?.canPost ? 'Сообщение…' : 'Только чтение',
     disabled: !chat.rights?.canPost, maxlength: '2000',
     value: chatDraft,
-    oninput: (e) => { chatDraft = e.target.value; },
-
+    oninput: (e) => { chatDraft = e.target.value; chatAutoGrow(e.target); },
+    // Enter sends because a one-line box is what a conversation mostly is;
+    // Shift+Enter is the way out for the times it is not. Without this the
+    // textarea would swallow the send entirely.
+    onkeydown: (e) => {
+      if (e.key !== 'Enter' || e.shiftKey) return;
+      e.preventDefault();
+      sendComposer(chat.id);
+    },
   });
   // A picture on its own is a message with no words, so the picker sits next to
   // the field rather than behind a menu. The file input is invisible and the
@@ -3275,29 +3408,7 @@ function chatRender(scroll = 'bottom') {
     : null;
   const composer = h('form', {
     class: 'chat-composer',
-    onSubmit: async (e) => {
-      e.preventDefault();
-      // The field is read rather than the draft, because it is the one thing the
-      // browser has actually been given: autofill and paste can fill it without
-      // an input event ever firing, and the words that end up posted should be
-      // the words in the box the reader is looking at.
-      const text = chatField ? chatField.value : chatDraft;
-      const file = chatPick;
-      // Cleared straight away so a slow send does not feel stuck, and put back
-      // if the words really did not go anywhere. The file goes back with them:
-      // it is the same send that failed.
-      //
-      // The state is what gets restored, not the field. This node is about to be
-      // thrown away by the render below, so writing to it would restore nothing.
-      chatDraft = '';
-      chatPick = null;
-      chatRender('keep');
-      if (!(await chatSend(text, file)) && chatRoom?.id === chat.id) {
-        chatDraft = text;
-        chatPick = file;
-        chatRender('keep');
-      }
-    },
+    onSubmit: (e) => { e.preventDefault(); sendComposer(chat.id); },
   },
     chatPick ? h('div', { class: 'chat-pending' },
       icon('file', 'i i-sm'),
@@ -3328,15 +3439,42 @@ function chatRender(scroll = 'bottom') {
 
   chatLog = h('div', { class: 'chat-log', id: 'chat-log' }, list);
 
+  const kindLabel = chat.kind === 'channel' ? 'Канал' : chat.kind === 'group' ? 'Группа' : 'Личный чат';
+  // The reader cannot tell a dropped socket from a quiet room, and the two ask
+  // for opposite behaviour: one wants a reconnect, the other nothing at all.
+  const live = h('span', { class: `chat-live${chatRoom.live ? ' is-on' : ''}` },
+    h('i', { class: 'dot' }),
+    h('span', { text: chatRoom.live ? 'в сети' : 'переподключение' }),
+  );
+
   $view.replaceChildren(
-    h('div', { class: 'page-head' },
-      h('div', {},
+    h('div', { class: 'page-head chat-top' },
+      h('div', { class: 'chat-title' },
         h('h1', { text: chat.title || 'Чат' }),
-        h('p', { class: 'page-sub', text: `${chat.kind === 'channel' ? 'Канал' : chat.kind === 'group' ? 'Группа' : 'Личный чат'} · участников: ${chat.members ?? '—'}` }),
+        h('p', { class: 'page-sub' },
+          h('span', { text: `${kindLabel} · участников: ${chat.members ?? '—'}` }),
+          live,
+        ),
       ),
       h('a', { class: 'btn btn-sm btn-ghost', href: '/chat' }, 'К списку'),
     ),
-    h('div', { class: 'chat-wrap' }, chatLog, join ? h('div', { class: 'chat-join' }, join) : composer),
+    h('div', { class: 'chat-wrap' },
+      // Floated over the log rather than below it: the point is to be reachable
+      // from wherever the reader has scrolled to, and a bar pinned to the bottom
+      // of the screen would be exactly where they are not looking.
+      chatMissed
+        ? h('button', {
+          class: 'chat-jump', type: 'button',
+          onClick: () => {
+            chatClearMissed();
+            chatRender('bottom');
+            chatField?.focus?.();
+          },
+        }, chatMissed === 1 ? '1 новое' : `${chatMissed} новых`)
+        : null,
+      chatLog,
+      join ? h('div', { class: 'chat-join' }, join) : composer,
+    ),
   );
 
   // Set after the nodes are in the document: until then there is no height to

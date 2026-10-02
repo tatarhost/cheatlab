@@ -36,6 +36,13 @@ class Element extends Node {
     this.classList = { add() {}, remove() {}, toggle() {}, contains: () => false };
     this.textContent = '';
     this.innerHTML = '';
+    // Scroll geometry, at zero by default: an element with no overflow is scrolled
+    // to its bottom, which is what a browser reports. Left undefined instead, every
+    // arithmetic on them in the app yields NaN, and a NaN comparison is never less
+    // than anything - so "am I at the bottom?" would quietly answer "no".
+    this.scrollTop = 0;
+    this.scrollHeight = 0;
+    this.clientHeight = 0;
     // h() wires handlers through addEventListener, so they are kept rather than
     // dropped - otherwise no click could ever be simulated and a button would be
     // indistinguishable from a label.
@@ -1546,15 +1553,17 @@ check('and the same frame twice is still one message',
 // message arrives. The composer is rebuilt on every render, so a draft held only
 // in the field would be destroyed by somebody else talking.
 const typing = await boot(`/chat/${channelId}`, { client: 'e2eauthor0000001', session: token });
+// The composer is a textarea so Enter can send and Shift+Enter can break a line,
+// so it is found by id rather than by being "an input".
+const chatFieldOf = (page) => findAll(page.view, (el) => (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')
+  && String((el.attributes || {}).id || '') === 'chat-input')[0];
 const typeInto = (page, value) => {
-  const field = findAll(page.view, (el) => el.tagName === 'INPUT'
-    && String((el.attributes || {}).id || '') === 'chat-input')[0];
+  const field = chatFieldOf(page);
   field.value = value;
   field.fire('input');
   return field;
 };
-const composerField = (page) => findAll(page.view, (el) => el.tagName === 'INPUT'
-  && String((el.attributes || {}).id || '') === 'chat-input')[0];
+const composerField = (page) => chatFieldOf(page);
 
 typeInto(typing, 'черновик, который не должен пропасть');
 check('the draft is there while typing', composerField(typing).value === 'черновик, который не должен пропасть',
@@ -1630,6 +1639,114 @@ check('while it did go to the room it was sent to',
 const wandered = await boot(`/chat/${otherId}`, { client: 'e2eauthor0000001', session: token });
 check('and reloading that room shows no trace of it',
   !wandered.read().includes('это уйдёт в первый разговор'), wandered.read().slice(-400));
+
+/* --------------------------------------------------- reading a long thread */
+
+// The rest of the chat view is about reading rather than sending: a conversation
+// nobody can follow is not a conversation. These drive the same room and assert
+// on the structure a reader actually navigates by.
+const reading = await boot(`/chat/${channelId}`, { client: 'e2eauthor0000001', session: token });
+const now = Date.now();
+const pushed = (id, userId, nick, body, createdAt) => ({
+  id, convId: channelId, userId, nick, body, createdAt,
+});
+// `atBottom` is what the reader is doing when the frame lands, and it is the whole
+// difference between "they see it arrive" and "they are told about it later".
+const push = async (m, atBottom = true) => {
+  if (atBottom) scrollToBottom();
+  reading.sockets()[0].onmessage({ data: JSON.stringify({ t: 'msg', m }) });
+  await reading.settle();
+};
+const bubbles = () => findAll(reading.view, (el) => hasClass(el, 'chat-msg'));
+const dayMarks = () => findAll(reading.view, (el) => hasClass(el, 'chat-day'));
+const logNow = () => findAll(reading.view, (el) => String((el.attributes || {}).id || '') === 'chat-log')[0];
+const nickIn = (bubble) => findAll(bubble, (el) => hasClass(el, 'chat-nick'))
+  .map((el) => el.textContent).join('');
+// Puts the reader at the bottom of the log, which is where they start and where
+// they stay unless they go looking. Every push re-creates the log, so this has to
+// be re-asserted rather than set once.
+const scrollToBottom = () => {
+  const el = logNow();
+  el.scrollHeight = 1200;
+  el.clientHeight = 400;
+  el.scrollTop = 800;
+};
+
+// Two in a row from one person, a minute apart, then somebody else.
+await push(pushed('run000000000001', 'u_friend', 'знакомый', 'подряд, первое', now - 60000));
+await push(pushed('run000000000002', 'u_friend', 'знакомый', 'подряд, второе', now - 30000));
+await push(pushed('run000000000003', 'u_other', 'другой', 'а это уже другой человек', now - 20000));
+
+const mine = bubbles().filter((b) => hasClass(b, 'is-mine'));
+const theirs = bubbles().filter((b) => !hasClass(b, 'is-mine'));
+const secondOfRun = theirs.find((b) => textOf(b).join(' ').includes('подряд, второе'));
+const firstOfRun = theirs.find((b) => textOf(b).join(' ').includes('подряд, первое'));
+const otherSpeaker = theirs.find((b) => textOf(b).join(' ').includes('другой человек'));
+
+check('the first message of a run still names its author',
+  nickIn(firstOfRun) === 'знакомый', nickIn(firstOfRun));
+check('the rest of the run does not repeat it',
+  !!secondOfRun && hasClass(secondOfRun, 'is-grouped'), secondOfRun?.className || 'not found');
+check('and leaves the name out entirely', nickIn(secondOfRun) === '',
+  nickIn(secondOfRun));
+check('a different speaker starts a new run anyway',
+  !!otherSpeaker && !hasClass(otherSpeaker, 'is-grouped'), otherSpeaker?.className || 'not found');
+check('the reader sees their own messages as theirs', mine.length >= 1, String(mine.length));
+
+// Days turn over inside one log, and the reader needs to be able to see when.
+await push(pushed('run000000000004', 'u_friend', 'знакомый', 'это было три дня назад', now - 3 * 86400000));
+check('a day gets a marker of its own', dayMarks().length >= 2, String(dayMarks().length));
+check('named plainly rather than as a date to decode',
+  dayMarks().some((el) => textOf(el).join('') === 'Сегодня'), dayMarks().map((el) => textOf(el).join('')).join(' | '));
+
+// Enter sends because a chat is mostly one line long; Shift+Enter is the way out
+// for when it is not.
+typeInto(reading, 'отправлено по enter');
+composerField(reading).fire('keydown', { key: 'Enter', shiftKey: false, preventDefault() {} });
+await reading.settle();
+const afterEnter = await as('e2eauthor0000001', `/api/chats/${channelId}`, { session: token });
+check('Enter sends',
+  (afterEnter.json.messages || []).some((m) => m.body === 'отправлено по enter'),
+  JSON.stringify((afterEnter.json.messages || []).map((m) => m.body)));
+
+typeInto(reading, 'перенос строки');
+composerField(reading).fire('keydown', { key: 'Enter', shiftKey: true, preventDefault() {} });
+await reading.settle();
+const afterShift = await as('e2eauthor0000001', `/api/chats/${channelId}`, { session: token });
+check('Shift+Enter does not',
+  !(afterShift.json.messages || []).some((m) => m.body === 'перенос строки'),
+  JSON.stringify((afterShift.json.messages || []).map((m) => m.body)));
+check('and leaves the words in the box', composerField(reading).value === 'перенос строки',
+  composerField(reading).value);
+
+// Reading history while somebody talks: the log must not move under the reader,
+// and what arrived has to be both marked and reachable.
+const log = logNow();
+log.scrollHeight = 1200;
+log.clientHeight = 400;
+log.scrollTop = 0;
+await push(pushed('run000000000005', 'u_friend', 'знакомый', 'пришло, пока я читал', now - 1000), false);
+const jump = findAll(reading.view, (el) => hasClass(el, 'chat-jump'))[0];
+check('a message that arrives while you are reading up is counted', !!jump, 'no jump button');
+check('and told about in words', textOf(jump).join(' ') === '1 новое', textOf(jump).join(' ') || 'none');
+check('the log marks where the unread part starts',
+  findAll(reading.view, (el) => hasClass(el, 'chat-new')).length === 1,
+  String(findAll(reading.view, (el) => hasClass(el, 'chat-new')).length));
+// The property, not a number: the reader's place in the log is preserved rather
+// than reset to the newest message, which is the same arithmetic the app uses.
+const left = logNow();
+check('while the view did not scroll itself away',
+  !(left.scrollHeight - left.scrollTop - left.clientHeight < 60),
+  `scrollTop=${left.scrollTop} of ${left.scrollHeight}`);
+
+jump.fire('click');
+await reading.settle();
+check('following the button brings you back to the bottom',
+  findAll(reading.view, (el) => hasClass(el, 'chat-jump')).length === 0,
+  String(findAll(reading.view, (el) => hasClass(el, 'chat-jump')).length));
+check('and clears the unread marker with it',
+  findAll(reading.view, (el) => hasClass(el, 'chat-new')).length === 0,
+  String(findAll(reading.view, (el) => hasClass(el, 'chat-new')).length));
 
 console.log(`\n${pass} passed, ${failures.length} failed`);
 for (const f of failures) console.log(`  - ${f}`);

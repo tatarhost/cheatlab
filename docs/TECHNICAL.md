@@ -86,7 +86,7 @@ worker/                Cloudflare Worker — единственный бэкен
   plugins/             upload-guard, denylist, webhooks
   schema.sql           схема D1
   migrations/          миграции для wrangler d1 execute
-  test/                1181 проверок на локальных шимах D1 и KV
+  test/                1197 проверок на локальных шимах D1 и KV
 
 scripts/set-api-url.mjs   вписывает адрес Worker в public/index.html
 tools/screens.py          рисует og.png и скриншоты из docs/
