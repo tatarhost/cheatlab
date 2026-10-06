@@ -3905,6 +3905,265 @@ function notFound() {
   );
 }
 
+// ---------------------------------------------------------------- app key
+
+const APP_KEY_SECRET = 'bb02463e752b83a89bab11f14064d60625efef46914cbe9749a6db93485a4a0d';
+
+/** RFC 4648 base32, lowercase, no padding — must match the app's verifier. */
+function appKeyB32(bytes) {
+  const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = 0;
+  let value = 0;
+  let out = '';
+  for (const byte of bytes) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      out += A[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) out += A[(value << (5 - bits)) & 31];
+  return out.toLowerCase();
+}
+
+/** HMAC-SHA256 key for «фикс картинок»: clab1-<payload>-<mac>, signed in-browser. */
+async function makeAppKey(nick) {
+  const enc = new TextEncoder();
+  const payload = enc.encode(`v1|${nick}|${Math.floor(Date.now() / 1000)}`);
+  const secret = Uint8Array.from(APP_KEY_SECRET.match(/.{2}/g).map((b) => parseInt(b, 16)));
+  const k = await crypto.subtle.importKey('raw', secret, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const mac = new Uint8Array(await crypto.subtle.sign('HMAC', k, payload)).slice(0, 12);
+  return `clab1-${appKeyB32(payload)}-${appKeyB32(mac)}`;
+}
+
+/**
+ * The key page: two families on one screen.
+ *
+ *   clab2-… — a server-signed link that signs the browser into the site
+ *             account (quick login via /key?k=…, no password).
+ *   clab1-… — the desktop app's gate key, signed here in the browser and
+ *             verified offline by «фикс картинок» (one key, three launches).
+ */
+async function viewKey(url) {
+  // A quick-login link arrives as ?k=clab2-…. The key is a credential, so it
+  // is taken out of the address bar before anything else renders — history,
+  // restored URLs and a copied link must not keep carrying it after the visit.
+  const incoming = (url && url.searchParams.get('k')) || '';
+  if (incoming) history.replaceState({}, '', url.pathname + url.hash);
+
+  const err = h('p', { class: 'form-error', role: 'alert' });
+  const keyField = h('input', {
+    class: 'input', readonly: true, spellcheck: false, autocomplete: 'off',
+    'aria-label': 'Ключ приложения', style: 'font-family:var(--mono);font-size:14px',
+  });
+  const signedIn = !!(account && account.nick);
+  const nickField = h('input', {
+    class: 'input', maxlength: 32, spellcheck: false, autocomplete: 'off',
+    value: signedIn ? account.nick : `guest${Math.floor(1000 + Math.random() * 9000)}`,
+    placeholder: 'ник для ключа', ...(signedIn ? { readonly: true } : {}),
+  });
+
+  const issue = async () => {
+    err.textContent = '';
+    const nick = nickField.value.trim().replace(/\s+/g, '_').replace(/[|]/g, '-');
+    if (nick.length < 3) {
+      err.textContent = 'В нике должно быть минимум 3 символа';
+      return;
+    }
+    nickField.value = nick;
+    try {
+      keyField.value = await makeAppKey(nick);
+    } catch {
+      err.textContent = 'Браузер не разрешил подписать ключ — обновите страницу';
+    }
+  };
+
+  /* ---------------------------------------------------------- site login key */
+
+  const loginErr = h('p', { class: 'form-error', role: 'alert' });
+  const loginKeyField = h('input', {
+    class: 'input', readonly: true, spellcheck: false, autocomplete: 'off',
+    'aria-label': 'Ключ входа', placeholder: 'clab2-…',
+    style: 'font-family:var(--mono);font-size:14px',
+  });
+  const loginLinkField = h('input', {
+    class: 'input', readonly: true, spellcheck: false, autocomplete: 'off',
+    'aria-label': 'Ссылка для входа', placeholder: 'ссылка появится после выпуска ключа',
+    style: 'font-family:var(--mono);font-size:13px',
+  });
+  const loginHint = h('span', { class: 'hint', text: 'Ключ действует 90 дней. Не передавайте ссылку: с неё войдут в ваш аккаунт.' });
+
+  const issueLoginKey = async () => {
+    loginErr.textContent = '';
+    try {
+      const res = await api('/api/auth/key', { method: 'POST' });
+      loginKeyField.value = res.key;
+      loginLinkField.value = location.origin + appPath('/key') + '?k=' + res.key;
+      return res.key;
+    } catch (error) {
+      loginErr.textContent = error.message;
+      return null;
+    }
+  };
+
+  /* ------------------------------------------------------------ key check */
+
+  const checkField = h('input', {
+    class: 'input', spellcheck: false, autocomplete: 'off',
+    placeholder: 'clab2-…', 'aria-label': 'Ключ для проверки',
+    style: 'font-family:var(--mono);font-size:14px',
+  });
+  const checkResult = h('p', { class: 'hint', role: 'status' });
+  const checkBtn = h('button', { class: 'btn btn-ghost', type: 'button' }, icon('check', 'i i-sm'), 'Проверить');
+  checkBtn.addEventListener('click', async () => {
+    checkResult.textContent = 'Проверяю…';
+    checkBtn.disabled = true;
+    try {
+      const res = await api('/api/auth/keylogin', {
+        method: 'POST', noAuth: true, body: { key: checkField.value.trim(), verify: true },
+      });
+      checkResult.textContent = `Ключ подтверждён: @${res.nick} — аккаунт зарегистрирован.`;
+    } catch (error) {
+      checkResult.textContent = error.message;
+    } finally {
+      checkBtn.disabled = false;
+    }
+  });
+
+  /* ------------------------------------------------ incoming quick-login key */
+
+  const incomingPanel = incoming ? h('div', { class: 'panel' },
+    h('h2', { style: 'margin:0 0 10px;font-size:14px' }, icon('key', 'i i-sm'), ' Быстрый вход'),
+    h('p', { class: 'hint', id: 'incomingStatus', text: 'Проверяю ключ…' }),
+  ) : null;
+
+  const blocks = [
+    h('div', { class: 'page-head' },
+      h('div', {},
+        h('h1', { text: 'Ключи CheatLab' }),
+        h('p', { class: 'page-sub', text: 'Ключ входа — быстрый вход на сайт по ссылке. Ключ приложения — три захода в «фикс картинок».' }),
+      ),
+    ),
+    incomingPanel,
+    h('div', { class: 'panel' },
+      h('h2', { style: 'margin:0 0 10px;font-size:14px' }, icon('key', 'i i-sm'), ' Ключ входа на сайт'),
+      signedIn
+        ? h('p', { style: 'margin-top:0' },
+          'Подписанный ключ вашего аккаунта: откройте ссылку в любом браузере — и вход '
+          + 'выполнится без пароля. Ключ подписан сервером, проверяется офлайн и действует 90 дней.')
+        : h('p', { style: 'margin-top:0' },
+          'Ключ входа привязан к аккаунту, поэтому сначала нужен вход: ',
+          h('a', { href: '/auth' }, 'войдите'),
+          ' или ',
+          h('a', { href: '/auth?mode=register' }, 'создайте аккаунт'),
+          '.'),
+      h('div', { class: 'field' },
+        h('span', { class: 'label' }, icon('key', 'i i-sm'), 'Ключ'),
+        loginKeyField,
+        loginHint,
+      ),
+      h('div', { class: 'field' },
+        h('span', { class: 'label' }, icon('link', 'i i-sm'), 'Ссылка для быстрого входа'),
+        loginLinkField,
+        h('span', { class: 'hint', text: 'Откройте её — сайт войдёт в аккаунт автоматически. Работает и на телефоне.' }),
+      ),
+      loginErr,
+      signedIn
+        ? h('div', { class: 'btn-row', style: 'display:flex;gap:10px;flex-wrap:wrap;margin-top:4px' },
+          h('button', { class: 'btn btn-primary', type: 'button', onclick: issueLoginKey },
+            icon('refresh', 'i i-sm'), 'Выпустить ключ'),
+          h('button', {
+            class: 'btn btn-ghost', type: 'button',
+            onclick: () => copy(loginKeyField.value, 'Ключ входа скопирован'),
+          }, icon('copy', 'i i-sm'), 'Копировать ключ'),
+          h('button', {
+            class: 'btn btn-ghost', type: 'button',
+            onclick: () => copy(loginLinkField.value, 'Ссылка скопирована'),
+          }, icon('link', 'i i-sm'), 'Копировать ссылку'),
+        )
+        : h('div', { class: 'btn-row', style: 'display:flex;gap:10px;flex-wrap:wrap;margin-top:4px' },
+          h('a', { class: 'btn btn-primary', href: '/auth' }, icon('user', 'i i-sm'), 'Войти'),
+          h('a', { class: 'btn btn-ghost', href: '/auth?mode=register' }, 'Нет аккаунта — создать'),
+        ),
+      h('hr', { style: 'border:none;border-top:1px solid var(--line,#232326);margin:16px 0 12px' }),
+      h('div', { class: 'field' },
+        h('span', { class: 'label' }, icon('shield', 'i i-sm'), 'Проверка ключа'),
+        checkField,
+        h('span', { class: 'hint', text: 'Вставьте ключ clab2-… — сайт подтвердит подпись и скажет, зарегистрирован ли аккаунт, без выполнения входа.' }),
+      ),
+      h('div', { class: 'btn-row', style: 'margin-top:4px' }, checkBtn),
+      checkResult,
+    ),
+    h('div', { class: 'panel' },
+      h('h2', { style: 'margin:0 0 10px;font-size:14px' }, icon('lock', 'i i-sm'), ' Ключ для приложения'),
+      h('p', { style: 'margin-top:0' },
+        'Ключ подписывается прямо здесь и проверяется офлайн. Вставьте его в приложении один раз — дальше оно само считает заходы. '
+        + 'Когда заходы закончатся, получите на этой странице новый ключ и активируйте его.'),
+      h('div', { class: 'field' },
+        h('span', { class: 'label' }, icon('key', 'i i-sm'), 'Ключ'),
+        keyField,
+        h('span', { class: 'hint', text: 'clab1-… — не передавайте ключ другим, он привязан к нику' }),
+      ),
+      err,
+      h('div', { class: 'btn-row', style: 'display:flex;gap:10px;flex-wrap:wrap;margin-top:4px' },
+        h('button', {
+          class: 'btn btn-primary', type: 'button',
+          onclick: () => copy(keyField.value, 'Ключ скопирован'),
+        }, icon('copy', 'i i-sm'), 'Копировать ключ'),
+        h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => issue() },
+          icon('refresh', 'i i-sm'), 'Новый ключ'),
+      ),
+    ),
+    h('div', { class: 'panel' },
+      h('h2', { style: 'margin:0 0 10px;font-size:14px', text: 'Как активировать' }),
+      h('ol', { style: 'margin:0;padding-left:20px;line-height:1.7' },
+        h('li', {}, 'Запустите «фикс картинок от CheatLab» на Windows — потребуются права администратора.'),
+        h('li', {}, 'На экране входа вставьте ключ и нажмите «Войти».'),
+        h('li', {}, 'Примите условия использования — приложение запомнит выбор.'),
+        h('li', {}, 'Проверьте IP и нажмите «Применить фикс», затем полностью перезапустите Roblox.'),
+      ),
+      h('div', { class: 'field', style: 'margin-top:14px;max-width:340px' },
+        h('span', { class: 'label', text: 'Ник в ключе' }),
+        nickField,
+      ),
+    ),
+    h('div', { class: 'panel' },
+      h('h2', { style: 'margin:0 0 10px;font-size:14px', text: 'Что делает приложение' }),
+      h('p', { style: 'margin:0' },
+        'Правит файл hosts локально: направляет tr.rbxcdn.com на рабочий IP из публичного DNS 9.9.9.9. '
+        + 'Ключи и заходы хранятся только на вашем компьютере, никакие данные не отправляются. '
+        + 'Откат в один клик — строка из hosts удаляется, бэкап сохраняется.'),
+    ),
+  ].filter(Boolean);
+  $view.replaceChildren(...blocks);
+
+  await issue();
+
+  // The arriving key decides the top panel: a real key signs this browser in
+  // and says who it became; a bad one explains itself and changes nothing.
+  if (incoming) {
+    const status = () => document.getElementById('incomingStatus');
+    try {
+      const res = await api('/api/auth/keylogin', {
+        method: 'POST', noAuth: true, body: { key: incoming },
+      });
+      saveSession({ token: res.token });
+      await refreshAccount();
+      if (status()) {
+        status().textContent = `Вход выполнен: @${res.user.nick}. Ссылка больше не используется — можно закрыть её из адресной строки.`;
+        status().style.color = 'var(--ok,#3fb950)';
+      }
+      toast('Вход по ключу выполнен');
+    } catch (error) {
+      if (status()) {
+        status().textContent = `Ссылка-ключ не подошла: ${error.message}`;
+        status().style.color = 'var(--danger)';
+      }
+    }
+  }
+}
+
 // ---------------------------------------------------------------- router
 
 let renderToken = 0;
@@ -3943,6 +4202,8 @@ async function route() {
       viewPrivacy();
     } else if (path === '/report') {
       await viewReport();
+    } else if (path === '/key') {
+      await viewKey(url);
     } else if (/^\/u\/[A-Za-z0-9_-]{3,32}$/.test(path)) {
       await viewProfile(path.slice(3));
     } else if (/^\/u\/[A-Za-z0-9_-]{3,32}\/followers$/.test(path)) {

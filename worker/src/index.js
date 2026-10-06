@@ -16,6 +16,7 @@ import {
   hashPassword, verifyPassword, passwordProblems, nickProblems, nickKey,
   newUserId, newSession, sessionValid, publicUser, adminOf, SESSION_TTL_MS,
 } from './accounts.js';
+import { issueLoginKey, verifyLoginKey } from './loginkeys.js';
 import {
   checkPow, newPowChallenge, issueCaptcha, verifyCaptcha,
   quotaFor, storageUsed, powBits, QUOTA, DAY_MS,
@@ -767,6 +768,91 @@ route('POST', /^\/api\/auth\/logout$/, async (request, env) => {
   const id = await identity(request, env);
   if (id) await env.STORE.deleteSession(id.tokenHash);
   return json({ ok: true });
+});
+
+/* ------------------------------------------------------------- login keys --
+ * A signed link for the account: minted while signed in, opened anywhere to
+ * sign in without a password, checkable on its own to answer "is this account
+ * registered" without creating a session. The signing secret never leaves the
+ * Worker — see src/loginkeys.js for why that is the whole point.
+ */
+
+/** Mints a login key for the signed-in account. */
+route('POST', /^\/api\/auth\/key$/, async (request, env) => {
+  const { STORE } = env;
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  const banned = requireUnbanned(who);
+  if (banned) return banned;
+
+  const client = clientOf(request);
+  if (!client) return fail(401, 'missing client id');
+  // Cheap to call, expensive to be wrong: a key is minted on demand and a
+  // session already proved the caller is an account, so the cap exists only to
+  // stop a signed-in script from hammering the HMAC in a loop.
+  if (!(await STORE.throttle(`keyissue:${client}`, 'auth', { cap: 30, windowMs: 15 * 60 * 1000 }))) {
+    return fail(429, 'too many keys requested, try later');
+  }
+
+  const secret = env.LOGIN_KEY_SECRET;
+  if (!secret) return fail(503, 'login keys are not configured');
+
+  const key = await issueLoginKey(secret, who.user.id);
+  return json({ key, issuedAt: Date.now() });
+});
+
+/**
+ * Verifies a login key: with `verify` it only answers whether the key is real
+ * and its account is registered; without it, it establishes a session exactly
+ * like /api/auth/login does — same response shape, same client binding.
+ */
+route('POST', /^\/api\/auth\/keylogin$/, async (request, env) => {
+  const { STORE } = env;
+  const c = config(env);
+  const client = clientOf(request);
+  if (!client) return fail(401, 'missing client id');
+
+  // This is a credential-guessing surface like login: same bucket, same cap.
+  if (!(await STORE.throttle(`keylogin:${client}`, 'auth', { cap: 10, windowMs: 15 * 60 * 1000 }))) {
+    return fail(429, 'too many login attempts, try later');
+  }
+
+  let payload;
+  try {
+    payload = await readJson(request, c.maxTextBytes);
+  } catch (err) {
+    return fail(err.code === 'TOO_LARGE' ? 413 : 400, err.message);
+  }
+
+  const secret = env.LOGIN_KEY_SECRET;
+  if (!secret) return fail(503, 'login keys are not configured');
+
+  // One message for every way a key can fail. The caller cannot tell a bad
+  // signature from a deleted account, so probing a key says nothing about
+  // which account ids exist.
+  const parsed = await verifyLoginKey(secret, str(payload.key, 300));
+  if (!parsed) return fail(401, 'key is not valid or has expired');
+
+  const user = await STORE.getUser(parsed.userId);
+  if (!user) return fail(401, 'key is not valid or has expired');
+
+  // Verification mode: the answer the key page shows for "is this account
+  // registered", with no session minted and nothing to replay.
+  if (payload.verify) {
+    return json({ ok: true, nick: user.nick, userId: user.id, expiresAt: parsed.expiresAt });
+  }
+
+  const { token, tokenHash } = await newSession();
+  await STORE.createSession({
+    tokenHash,
+    userId: user.id,
+    createdAt: now(),
+    expiresAt: now() + SESSION_TTL_MS,
+    clientId: client,
+    userAgent: str(request.headers.get('user-agent'), 200),
+  });
+
+  return json({ user: publicUser(user, env), token, expiresAt: now() + SESSION_TTL_MS });
 });
 
 /** Who am I, and which tier am I on. The frontend calls this on boot. */

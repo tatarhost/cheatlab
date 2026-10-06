@@ -247,6 +247,9 @@ export function makeEnv(overrides = {}) {
     // Signs captcha handles. Set as a Worker secret in production; present here
     // so the tests exercise the real signed path rather than the fallback.
     CAPTCHA_SECRET: 'test-captcha-secret',
+    // Signs login keys (clab2-…). Server-only in production; present here so
+    // the key routes run their real verification path instead of failing closed.
+    LOGIN_KEY_SECRET: 'test-login-key-secret',
     // Tests must not pay 4M hashes per proof of work. 8 bits is ~256 hashes, so
     // the same code path runs and the assertions still mean something. The
     // production value lives in wrangler.toml.
