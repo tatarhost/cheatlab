@@ -8,7 +8,11 @@
      the app root is a subpath. <base> makes relative assets resolve correctly
      from any depth, and app.js reads it back to prefix its own routes. Deploy
      under a domain root instead? Delete this line. -->
-<base href="/cheatlab/">
+<script>
+document.write('<base href="' +
+(location.hostname === 'tatarhost.github.io' ? '/cheatlab/' : '/') +
+'">');
+</script>
 
 <title>CHEATLAB — скрипты, пасты, медиа и файлы</title>
 <meta name="description" content="CHEATLAB — публикация скриптов, кода, изображений, видео и любых файлов. Анонимно или с аккаунтом, без ограничений по региону.">
