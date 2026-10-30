@@ -5,13 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CHEATLAB</title>
 <meta name="robots" content="noindex">
-<link rel="icon" href="/cheatlab/assets/logo.png">
+<link rel="icon" href="assets/logo.png">
 
 <!-- GitHub Pages serves this project from https://tatarhost.github.io/cheatlab/,
      so the app root is a subpath. Same <base> as index.html, which makes the
      relative replace below resolve to /cheatlab/ no matter how deep the
      requested URL was. Deploy under a domain root instead? Change both files. -->
-<base href="/cheatlab/">
+<script>
+document.write('<base href="' +
+(location.hostname === 'tatarhost.github.io' ? '/cheatlab/' : '/') +
+'">');
+</script>
 
 <!-- GitHub Pages has no rewrite rules, so any app route (/i/abc, /u/abc,
      /edit/abc) is a path with no file behind it and Pages answers 404. This file
