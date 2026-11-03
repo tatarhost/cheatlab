@@ -1,6 +1,6 @@
 # CheatLab Mail — architecture and launch requirements
 
-Status: architecture foundation only. No mailbox is live until the domain and mail provider are onboarded and DNS is verified.
+Status: Resend send/receive integration is implemented on the feature branch. It is not live until the Worker secrets, webhook, D1 migration, and deployment are configured.
 
 ## Product contract
 
@@ -51,7 +51,9 @@ GitHub Pages is static hosting and cannot run SMTP/IMAP daemons. A free inbound-
 - Added account-authenticated mailbox listing/creation/deletion APIs, with a server-side maximum of five addresses per account and unique `@cheatlab.fun` local parts.
 - Added private message-list API and a message reader that detects common one-time verification-code patterns and offers one-click copy.
 - Added D1 schema and migration `0007_mail.sql`.
-- Mailboxes are deliberately created with `pending` status. No inbound provider is connected yet; the outbound endpoint returns HTTP 503 rather than pretending a message was sent. The UI explains this.
+- Added Resend outbound send API integration and a signed `email.received` webhook handler. Incoming content is retrieved from Resend's Receiving API, mapped to a mailbox, and stored in D1; provider IDs are deduplicated.
+- Sending is rate-limited and only reports success after Resend returns a message ID. Webhook signatures and timestamps are verified before processing.
+- Mailboxes are marked active when the provider secrets are present; existing pending mailboxes become active when a verified inbound message arrives.
 
 ## Deploy prerequisites
 
@@ -68,3 +70,31 @@ The site deploy workflow only publishes `public/` to GitHub Pages. The Worker an
 ## Credentials
 
 Never commit API tokens, SMTP passwords, private keys, Cloudinary API secrets, or Firebase service-account credentials. Put provider credentials in Cloudflare Worker secrets. Firebase's web config is public by design but still needs strict Firestore/Storage Security Rules if Firebase is used for any separate purpose. A Cloudinary API key alone is not sufficient to sign private uploads; the API secret must remain server-side.
+
+
+## Resend setup (feature branch)
+
+1. In Resend, open **API Keys** and create a key with email sending permission for the verified `cheatlab.fun` domain. Copy it once.
+2. In the repository's `worker/` directory, authenticate Wrangler to the Cloudflare account that owns the existing `cheatlab` Worker, then set the key as a Worker secret (never as a `[vars]` value):
+   ```sh
+   npx wrangler secret put RESEND_API_KEY --config wrangler.toml
+   ```
+   Paste the key into Wrangler's hidden prompt.
+3. In Resend, open **Webhooks** and create a webhook:
+   - Endpoint: `https://cheatlab.tatarhost.workers.dev/api/mail/webhook`
+   - Event: `email.received`
+   Copy the signing secret (starts with `whsec_`).
+4. Set that secret in the same Worker:
+   ```sh
+   npx wrangler secret put RESEND_WEBHOOK_SECRET --config wrangler.toml
+   ```
+5. Apply the migration and deploy the Worker:
+   ```sh
+   npx wrangler d1 migrations apply cheatlab --remote --config wrangler.toml
+   npx wrangler deploy --config wrangler.toml
+   ```
+6. Test inbound by sending a message from an external mailbox to an address created in CheatLab. Test outbound by sending from that address to an external mailbox.
+
+The Resend domain must remain verified for sending and receiving. Its root MX record routes incoming mail for the whole `cheatlab.fun` domain to Resend; do not add another provider's MX record unless intentionally migrating mail routing. The webhook receives metadata only, so the Worker separately fetches the message body from Resend before saving it. See [Resend receiving guide](https://github.com/resend/resend-skills/blob/main/skills/resend/references/receiving.md) and [webhook signature guide](https://resend.com/docs/dashboard/webhooks/introduction).
+
+Do not paste either secret into chat, browser devtools, `public/`, GitHub files, or `wrangler.toml`. If a key is exposed, revoke it in Resend and create a replacement.
