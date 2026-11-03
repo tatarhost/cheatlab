@@ -449,7 +449,7 @@ const powBits = () => Math.min(30, Math.max(8, Number(config?.powBits) || 18));
  */
 async function registerAccount({ nick, password }, onProgress) {
   const { challenge } = await api('/api/auth/pow', { noAuth: true });
-  const nonce = await solvePow(challenge, powBits(), onProgress);
+  const nonce = await solvePow(challenge, Number(config.powBits) || 18, onProgress);
   // The proof travels in headers, not the body: powGate reads it from there so a
   // body field can never be replayed as if it were the verified work.
   return api('/api/auth/register', {
