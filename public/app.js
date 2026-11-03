@@ -3729,6 +3729,8 @@ async function viewMail(url) {
   async function openMessage(msg) {
     const body = h('div', { class: 'mail-message-body' });
     body.textContent = msg.textBody || 'Текст письма отсутствует.';
+    const codeMatch = (msg.subject + '\\n' + msg.textBody).match(/(?:код|code|verification|verify|login|otp)[^\\d]{0,36}(\\d{4,8})|\\b(\\d{6})\\b/i);
+    const verificationCode = codeMatch ? (codeMatch[1] || codeMatch[2]) : '';
     main.replaceChildren(
       h('div', { class: 'mail-toolbar' }, h('button', { class: 'btn btn-ghost', type: 'button', onclick: paintMessages }, '← Назад'),
         h('span', { class: 'spacer' }), h('span', { class: 'hint', text: new Date(msg.createdAt).toLocaleString('ru') })),
@@ -3736,6 +3738,11 @@ async function viewMail(url) {
         h('h2', { text: msg.subject || '(без темы)' }),
         h('p', { class: 'hint', text: 'От: ' + (msg.fromAddress || '—') }),
         h('p', { class: 'hint', text: 'Кому: ' + (msg.toAddress || activeBox.address) }),
+        verificationCode ? h('div', { class: 'mail-code-card' },
+          h('span', { class: 'label', text: 'КОД ПОДТВЕРЖДЕНИЯ' }),
+          h('strong', { class: 'mail-code-value', text: verificationCode }),
+          h('button', { class: 'btn btn-primary', type: 'button', onclick: () => copy(verificationCode, 'Код скопирован') }, icon('copy','i i-sm'), 'Скопировать код'),
+        ) : null,
         h('div', { class: 'mail-message-body' }, body.textContent),
       ),
     );
