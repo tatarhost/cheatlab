@@ -3631,7 +3631,7 @@ async function viewChat(url) {
 function safeMailHtml(raw) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(String(raw || ''), 'text/html');
-  const allowed = new Set(['A','B','BLOCKQUOTE','BR','CAPTION','CODE','DIV','EM','H1','H2','H3','H4','HR','I','IMG','LI','OL','P','PRE','S','SMALL','SPAN','STRONG','SUB','SUP','TABLE','TBODY','TD','TH','THEAD','TR','U','UL']);
+  const allowed = new Set(['A','B','BLOCKQUOTE','BR','CAPTION','CODE','DIV','EM','H1','H2','H3','H4','HR','I','IMG','LI','OL','P','PRE','S','SMALL' ,'SPAN','STRONG','STYLE','SUB','SUP','TABLE','TBODY','TD','TH','THEAD','TR','U','UL']);
   const clean = (node) => {
     for (const child of [...node.childNodes]) {
       if (child.nodeType === Node.COMMENT_NODE) { child.remove(); continue; }
@@ -3648,7 +3648,7 @@ function safeMailHtml(raw) {
           child.removeAttribute(attr.name); continue;
         }
         if (name === 'href' && !/^(https:\/\/|mailto:)/i.test(value)) child.removeAttribute(attr.name);
-        if (name === 'src' && !(child.tagName === 'IMG' && /^https:\/\//i.test(value))) child.removeAttribute(attr.name);
+        if (name === 'src') { const imageUrl = value.startsWith('//') ? 'https:' + value : value; if (child.tagName === 'IMG' && /^https:\/\//i.test(imageUrl)) { child.setAttribute('src', imageUrl); child.setAttribute('referrerpolicy', 'no-referrer'); child.setAttribute('loading', 'eager'); } else child.removeAttribute(attr.name); }
         if (name === 'target') child.setAttribute('rel','noopener noreferrer');
       }
       clean(child);
@@ -3780,7 +3780,9 @@ async function viewMail(url) {
     if (msg.direction === 'inbox' && !msg.isRead) {
       try { await updateMessage(msg, { isRead: true }); } catch (e) { toast('Не удалось отметить письмо прочитанным', true); }
     }
-    const codeMatch = (msg.subject + '\n' + (msg.textBody || '')).match(/(?:код|code|verification|verify|login|otp)[^\d]{0,36}(\d{4,8})|\b(\d{6})\b/i);
+    const htmlText = msg.htmlBody ? new DOMParser().parseFromString(msg.htmlBody, 'text/html').body.textContent : '';
+    const searchableCodeText = [msg.subject, msg.textBody, htmlText].filter(Boolean).join('\n');
+    const codeMatch = searchableCodeText.match(/(?:код|code|verification|verify|login|otp|one[- ]time)[^\d]{0,60}(\d{4,8})|\b(\d{6})\b/i);
     const verificationCode = codeMatch ? (codeMatch[1] || codeMatch[2]) : '';
     const content = msg.htmlBody
       ? h('iframe', { class: 'mail-html-frame', title: 'Содержимое письма', sandbox: '', srcdoc: '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src https: data:; style-src \'unsafe-inline\';"><style>body{font:14px Arial,sans-serif;color:#202124;line-height:1.55;margin:18px;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%;border-collapse:collapse}a{color:#1769aa}pre{white-space:pre-wrap}</style></head><body>' + safeMailHtml(msg.htmlBody) + '</body></html>' })
