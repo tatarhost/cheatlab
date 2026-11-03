@@ -607,7 +607,7 @@ route('GET', /^\/api\/mail\/messages$/, async (request, env, _m, url) => {
     "SELECT id, direction, from_address, to_address, subject, text_body, html_body, created_at, is_read, is_starred FROM mail_message WHERE mailbox_id = ? AND ((? = 'starred' AND is_starred = 1) OR (? <> 'starred' AND direction = ?)) ORDER BY created_at DESC LIMIT 100",
     box, folder, folder, folder === 'sent' ? 'sent' : 'inbox',
   );
-  return json({ messages: rows.map(r => ({ id:r.id, direction:r.direction, fromAddress:r.from_address, toAddress:r.to_address, subject:r.subject, textBody:r.text_body, htmlBody:r.html_body, createdAt:r.created_at, isRead:!!r.is_read, isStarred:!!r.is_starred })) });
+  return json({ messages: rows.map(r => ({ id:r.id, direction:r.direction, fromAddress:r.from_address, toAddress:r.to_address, subject:r.subject, textBody:r.text_body, htmlBody:r.html_body, attachments:(()=>{try{return JSON.parse(r.attachments_json||'[]')}catch{return []}})(), createdAt:r.created_at, isRead:!!r.is_read, isStarred:!!r.is_starred })) });
 });
 
 route('PATCH', /^\/api\/mail\/messages\/([A-Za-z0-9_-]{8,32})$/, async (request, env, m) => {
@@ -655,7 +655,7 @@ route('POST', /^\/api\/mail\/send$/, async (request, env) => {
     const bytes = Math.floor(content.length * 3 / 4);
     attachmentBytes += bytes;
     if (bytes > 3 * 1024 * 1024 || attachmentBytes > 5 * 1024 * 1024) return fail(413, 'attachments exceed the 5 MB total limit');
-    attachments.push({ filename, content, contentType });
+    attachments.push({ filename, content });
   }
   if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]{2,}$/.test(to)) return fail(400, 'enter a valid recipient email');
   if (!subject && !textBody.trim() && !attachments.length) return fail(400, 'write a subject or message');
@@ -671,8 +671,8 @@ route('POST', /^\/api\/mail\/send$/, async (request, env) => {
   if (!response.ok || !result.id) return fail(502, 'mail provider rejected the message; it was not sent', { providerStatus: response.status });
   const id = newId(12);
   await env.STORE.db.prepare(
-    "INSERT INTO mail_message (id, mailbox_id, direction, from_address, to_address, subject, text_body, created_at, provider_message_id) VALUES (?, ?, 'sent', ?, ?, ?, ?, ?, ?)"
-  ).bind(id, box.id, box.address, to, subject, textBody, Date.now(), result.id).run();
+    "INSERT INTO mail_message (id, mailbox_id, direction, from_address, to_address, subject, text_body, created_at, provider_message_id, attachments_json) VALUES (?, ?, 'sent', ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(id, box.id, box.address, to, subject, textBody, Date.now(), result.id, JSON.stringify(incoming.map(f => ({ filename: str(f.filename, 180), contentType: str(f.contentType, 120), size: Math.floor(String(f.content || '').length * 3 / 4) })))).run();
   await env.STORE.db.prepare("UPDATE mail_mailbox SET status = 'active' WHERE id = ?").bind(box.id).run();
   return json({ ok: true, id, providerId: result.id });
 });
