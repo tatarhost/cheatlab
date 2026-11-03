@@ -21,3 +21,7 @@ CREATE TABLE IF NOT EXISTS mail_message (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_mail_message_box ON mail_message(mailbox_id, direction, created_at DESC);
+
+-- Provider id is used for inbound/outbound deduplication.
+ALTER TABLE mail_message ADD COLUMN provider_message_id TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mail_message_provider ON mail_message(provider_message_id) WHERE provider_message_id IS NOT NULL;
