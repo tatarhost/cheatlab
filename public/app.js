@@ -3810,20 +3810,87 @@ async function viewMail(url) {
     const to = h('input', { class: 'input', type: 'email', placeholder: 'Получатель', value: recipient, required: true });
     const subject = h('input', { class: 'input', placeholder: 'Тема', value: replyTo ? (/^Re:/i.test(replyTo.subject || '') ? replyTo.subject : 'Re: ' + (replyTo.subject || '')) : '' });
     const text = h('textarea', { class: 'textarea', rows: 10, placeholder: 'Напишите письмо…', required: true });
+    const picker = h('input', { type: 'file', multiple: true, accept: 'image/*,.pdf,.txt,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.json,.js,.html,.css' });
+    const attachmentList = h('div', { class: 'mail-attachment-list' });
+    const projectSelect = h('select', { class: 'input' }, h('option', { value: '', text: 'Выберите опубликованный проект…' }));
+    const projectStatus = h('span', { class: 'hint', text: '' });
     const error = h('p', { class: 'form-error' });
-    main.replaceChildren(h('div', { class: 'mail-toolbar' }, h('h2', { text: replyTo ? 'Ответить' : 'Новое письмо' }),
-      h('button', { class: 'btn btn-ghost', type: 'button', onclick: paintMessages }, 'Отмена')),
+    let selectedFiles = [];
+    const renderFiles = () => {
+      attachmentList.replaceChildren(...selectedFiles.map((file, i) => h('div', { class: 'mail-attachment-chip' },
+        file.type.startsWith('image/') ? h('img', { src: URL.createObjectURL(file), alt: '', class: 'mail-attachment-thumb' }) : icon('file','i i-sm'),
+        h('span', { text: file.name + ' · ' + bytes(file.size) }),
+        h('button', { type: 'button', class: 'mail-attachment-remove', title: 'Убрать файл', onclick: () => {
+          selectedFiles.splice(i,1); renderFiles();
+        } }, '×'))));
+    };
+    picker.addEventListener('change', () => {
+      const incoming = [...(picker.files || [])];
+      const combined = [...selectedFiles, ...incoming];
+      if (combined.length > 5) { error.textContent = 'Можно прикрепить не более 5 файлов.'; return; }
+      if (combined.some(f => f.size > 3 * 1024 * 1024) || combined.reduce((n,f) => n + f.size,0) > 5 * 1024 * 1024) {
+        error.textContent = 'Лимит вложений: до 3 МБ на файл и 5 МБ суммарно.'; return;
+      }
+      selectedFiles = combined; error.textContent = ''; renderFiles(); picker.value = '';
+    });
+    const loadProjects = async () => {
+      projectStatus.textContent = 'Загружаю твои проекты…';
+      try {
+        const data = await api('/api/me');
+        const items = data.items || [];
+        projectSelect.replaceChildren(h('option', { value: '', text: 'Выберите опубликованный проект…' }),
+          ...items.map(item => h('option', { value: item.id, text: item.title + ' · ' + item.type })));
+        projectStatus.textContent = items.length ? 'Выбери проект и нажми «Вставить ссылку».' : 'Опубликованных проектов пока нет.';
+      } catch (e) { projectStatus.textContent = 'Не удалось загрузить проекты: ' + e.message; }
+    };
+    const insertProject = () => {
+      const item = projectSelect.options[projectSelect.selectedIndex];
+      if (!projectSelect.value) { projectStatus.textContent = 'Сначала выбери проект.'; return; }
+      const link = location.origin + '/i/' + encodeURIComponent(projectSelect.value);
+      text.value += '\n\nМой проект CheatLab: ' + item.textContent + '\n' + link + '\n';
+      projectStatus.textContent = 'Ссылка на проект добавлена в письмо.';
+      text.focus();
+    };
+    const toBase64 = async file => {
+      const buffer = new Uint8Array(await file.arrayBuffer());
+      let binary = '';
+      const chunk = 0x8000;
+      for (let i = 0; i < buffer.length; i += chunk) binary += String.fromCharCode(...buffer.subarray(i, i + chunk));
+      return btoa(binary);
+    };
+    main.replaceChildren(
+      h('div', { class: 'mail-toolbar' }, h('h2', { text: replyTo ? 'Ответить' : 'Новое письмо' }),
+        h('button', { class: 'btn btn-ghost', type: 'button', onclick: paintMessages }, 'Отмена')),
       h('form', { class: 'panel mail-compose', onsubmit: async e => {
         e.preventDefault();
         const submit = e.submitter;
         if (submit) submit.disabled = true;
+        error.textContent = '';
         try {
-          await api('/api/mail/send', { method: 'POST', body: { mailboxId: activeBox.id, to: to.value, subject: subject.value, textBody: text.value } });
+          const attachments = await Promise.all(selectedFiles.map(async file => ({
+            filename: file.name.replace(/[\\/\r\n\0]/g, '_').slice(0,180),
+            contentType: file.type || 'application/octet-stream',
+            content: await toBase64(file),
+          })));
+          await api('/api/mail/send', { method: 'POST', body: {
+            mailboxId: activeBox.id, to: to.value, subject: subject.value,
+            textBody: text.value, attachments,
+          } });
           toast('Письмо принято почтовым провайдером'); folder = 'sent'; query = ''; await paintMessages();
         } catch (err) { error.textContent = err.message; if (submit) submit.disabled = false; }
       } },
-      field('Кому', to), field('Тема', subject), field('Сообщение', text), error,
-      h('button', { class: 'btn btn-primary', type: 'submit' }, icon('send','i i-sm'), 'Отправить')));
+      field('Кому', to), field('Тема', subject), field('Сообщение', text),
+      h('div', { class: 'mail-compose-tools' },
+        h('label', { class: 'btn btn-ghost mail-file-button' }, icon('paperclip','i i-sm'), 'Прикрепить фото или файл', picker),
+        h('div', { class: 'mail-project-share' }, h('strong', { text: 'Поделиться проектом' }),
+          projectSelect, h('button', { class: 'btn btn-ghost', type: 'button', onclick: insertProject }, icon('share-2','i i-sm'), 'Вставить ссылку'),
+          h('button', { class: 'btn btn-ghost', type: 'button', onclick: loadProjects }, icon('refresh-cw','i i-sm'), 'Загрузить проекты'),
+          projectStatus)),
+      attachmentList, error,
+      h('div', { class: 'mail-compose-footer' },
+        h('span', { class: 'hint', text: 'До 5 вложений · 5 МБ суммарно' }),
+        h('button', { class: 'btn btn-primary', type: 'submit' }, icon('send','i i-sm'), 'Отправить'))));
+    await loadProjects();
     to.focus();
   }
   await refresh();
