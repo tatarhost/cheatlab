@@ -477,6 +477,78 @@ async function storageGate(store, user, clientId, env) {
 const routes = [];
 const route = (method, pattern, handler) => routes.push({ method, pattern, handler });
 
+
+/* -------------------------------------------------------------- CheatLab Mail */
+/* Mailbox records are account-private. A mailbox remains pending until a real
+ * inbound/outbound provider and the domain DNS have been configured. */
+route('GET', /^\/api\/mail\/boxes$/, async (request, env) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  const rows = await env.STORE.rows(
+    'SELECT id, local_part, address, status, created_at FROM mail_mailbox WHERE owner_user_id = ? ORDER BY created_at',
+    who.user.id,
+  );
+  return json({ mailboxes: rows.map(r => ({ id:r.id, localPart:r.local_part, address:r.address, status:r.status, createdAt:r.created_at })) });
+});
+
+route('POST', /^\/api\/mail\/boxes$/, async (request, env) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  const banned = requireUnbanned(who);
+  if (banned) return banned;
+  if (!(await env.STORE.throttle('mailbox:' + who.user.id, 'mail', { cap: 10, windowMs: 60 * 60 * 1000 }))) return fail(429, 'too many mailbox requests');
+  let payload;
+  try { payload = await readJson(request, 2048); } catch (err) { return fail(400, err.message); }
+  const local = str(payload.localPart, 32).toLowerCase();
+  if (!/^[a-z0-9](?:[a-z0-9._-]{0,30}[a-z0-9])?$/.test(local) || /\.\.|[._-]{2}/.test(local)) return fail(400, 'use 1–32 latin letters, numbers, dots, hyphens or underscores');
+  const count = await env.STORE.db.prepare('SELECT COUNT(*) AS n FROM mail_mailbox WHERE owner_user_id = ?').bind(who.user.id).first();
+  if (Number(count?.n || 0) >= 5) return fail(409, 'maximum five email addresses per account');
+  const id = newId(12);
+  const address = local + '@cheatlab.fun';
+  try {
+    const result = await env.STORE.db.prepare(
+      "INSERT INTO mail_mailbox (id, owner_user_id, local_part, address, status, created_at) SELECT ?, ?, ?, ?, 'pending', ? WHERE (SELECT COUNT(*) FROM mail_mailbox WHERE owner_user_id = ?) < 5"
+    ).bind(id, who.user.id, local, address, now(), who.user.id).run();
+    if (!(result.meta?.changes > 0)) return fail(409, 'maximum five email addresses per account');
+  } catch (err) {
+    if (/unique|constraint/i.test(String(err))) return fail(409, 'this email address is already taken');
+    throw err;
+  }
+  return json({ mailbox: { id, localPart: local, address, status: 'pending', createdAt: now() } }, 201);
+});
+
+route('DELETE', /^\/api\/mail\/boxes\/([A-Za-z0-9_-]{8,32})$/, async (request, env, m) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  const result = await env.STORE.db.prepare('DELETE FROM mail_mailbox WHERE id = ? AND owner_user_id = ?').bind(m[1], who.user.id).run();
+  if (!(result.meta?.changes > 0)) return fail(404, 'mailbox not found');
+  return json({ ok: true });
+});
+
+route('GET', /^\/api\/mail\/messages$/, async (request, env, _m, url) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  const box = str(url.searchParams.get('mailbox'), 32);
+  const folder = url.searchParams.get('folder') === 'sent' ? 'sent' : 'inbox';
+  const owned = await env.STORE.db.prepare('SELECT id,address FROM mail_mailbox WHERE id = ? AND owner_user_id = ?').bind(box, who.user.id).first();
+  if (!owned) return fail(404, 'mailbox not found');
+  const rows = await env.STORE.rows(
+    'SELECT id, direction, from_address, to_address, subject, text_body, created_at FROM mail_message WHERE mailbox_id = ? AND direction = ? ORDER BY created_at DESC LIMIT 100',
+    box, folder,
+  );
+  return json({ messages: rows.map(r => ({ id:r.id, direction:r.direction, fromAddress:r.from_address, toAddress:r.to_address, subject:r.subject, textBody:r.text_body, createdAt:r.created_at })) });
+});
+
+/* The send route deliberately refuses to fake delivery. It becomes live only
+ * after a provider binding is configured and verified for cheatlab.fun. */
+route('POST', /^\/api\/mail\/send$/, async (request, env) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  const banned = requireUnbanned(who);
+  if (banned) return banned;
+  return fail(503, 'mail sending is not configured yet; no message was sent');
+});
+
 route('GET', /^\/api\/config$/, async (request, env) => {
   const c = config(env);
   return json({
