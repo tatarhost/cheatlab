@@ -3945,7 +3945,19 @@ async function makeAppKey(nick) {
  *   clab1-… — the desktop app's gate key, signed here in the browser and
  *             verified offline by «фикс картинок» (one key, three launches).
  */
-async function viewKey(url) {
+async 
+
+/* --------------------------------------------------------------- mail -- */
+async function viewMail() {
+  const head = h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Email' }), h('p', { class: 'page-sub', text: 'Почта CHEATLAB · адреса @cheatlab.fun' })));
+  if (!account) {
+    $view.replaceChildren(head, h('div', { class: 'notice' }, icon('lock'), h('div', {}, h('strong', { text: 'Войдите в аккаунт' }), h('p', { style: 'margin-top:6px', text: 'Почтовые адреса будут привязаны к вашему аккаунту CHEATLAB.' }), h('a', { class: 'btn btn-primary', href: '/auth', style: 'margin-top:12px' }, 'Войти / регистрация'))));
+    return;
+  }
+  $view.replaceChildren(head, h('section', { class: 'panel' }, h('div', { class: 'panel-title', text: 'CHEATLAB MAIL' }), h('h2', { text: 'Почта подключается' }), h('p', { style: 'margin-top:10px;max-width:620px', text: 'Приём и отправка писем пока не включены на сервере, поэтому создание адресов временно отключено.' }), h('p', { class: 'hint', style: 'margin-top:14px', text: 'Не вводите здесь пароли от сторонней почты и не публикуйте API-ключи.' }), h('div', { class: 'notice', style: 'margin-top:16px' }, icon('shield'), h('span', { text: 'После подключения здесь можно будет создать адрес вида имя@cheatlab.fun.' }))));
+}
+
+function viewKey(url) {
   // A quick-login link arrives as ?k=clab2-…. The key is a credential, so it
   // is taken out of the address bar before anything else renders — history,
   // restored URLs and a copied link must not keep carrying it after the visit.
@@ -4202,6 +4214,8 @@ async function route() {
       viewPrivacy();
     } else if (path === '/report') {
       await viewReport();
+    } else if (path === '/mail') {
+      await viewMail();
     } else if (path === '/key') {
       await viewKey(url);
     } else if (/^\/u\/[A-Za-z0-9_-]{3,32}$/.test(path)) {
