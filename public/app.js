@@ -3945,7 +3945,6 @@ async function makeAppKey(nick) {
  *   clab1-… — the desktop app's gate key, signed here in the browser and
  *             verified offline by «фикс картинок» (one key, three launches).
  */
-async 
 
 /* --------------------------------------------------------------- mail -- */
 async function viewMail() {
