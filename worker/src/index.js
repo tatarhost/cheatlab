@@ -637,18 +637,35 @@ route('POST', /^\/api\/mail\/send$/, async (request, env) => {
   if (!env.RESEND_API_KEY) return fail(503, 'mail sending is not configured; no message was sent');
   if (!(await env.STORE.throttle('mail-send:' + who.user.id, 'mail-send', { cap: 20, windowMs: 60 * 60 * 1000 }))) return fail(429, 'sending limit reached; try later');
   let payload;
-  try { payload = await readJson(request, 70000); } catch (err) { return fail(400, err.message); }
+  try { payload = await readJson(request, 8 * 1024 * 1024); } catch (err) { return fail(err.code === 'TOO_LARGE' ? 413 : 400, err.message); }
   const box = await env.STORE.db.prepare('SELECT id,address FROM mail_mailbox WHERE id = ? AND owner_user_id = ?').bind(str(payload.mailboxId, 32), who.user.id).first();
   if (!box) return fail(404, 'mailbox not found');
   const to = str(payload.to, 320).trim().toLowerCase();
   const subject = str(payload.subject, 200).trim();
   const textBody = str(payload.textBody, 50000);
+  const incoming = Array.isArray(payload.attachments) ? payload.attachments : [];
+  if (incoming.length > 5) return fail(400, 'up to 5 attachments are allowed');
+  let attachmentBytes = 0;
+  const attachments = [];
+  for (const file of incoming) {
+    const filename = str(file?.filename, 180).replace(/[\\/\r\n\0]/g, '_');
+    const content = str(file?.content, 7 * 1024 * 1024);
+    const contentType = str(file?.contentType, 120) || 'application/octet-stream';
+    if (!filename || !/^[A-Za-z0-9+/_=-]+$/.test(content)) return fail(400, 'invalid attachment');
+    const bytes = Math.floor(content.length * 3 / 4);
+    attachmentBytes += bytes;
+    if (bytes > 3 * 1024 * 1024 || attachmentBytes > 5 * 1024 * 1024) return fail(413, 'attachments exceed the 5 MB total limit');
+    attachments.push({ filename, content, contentType });
+  }
   if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]{2,}$/.test(to)) return fail(400, 'enter a valid recipient email');
-  if (!subject && !textBody.trim()) return fail(400, 'write a subject or message');
+  if (!subject && !textBody.trim() && !attachments.length) return fail(400, 'write a subject or message');
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + env.RESEND_API_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: box.address, to: [to], subject: subject || '(без темы)', text: textBody }),
+    body: JSON.stringify({
+      from: box.address, to: [to], subject: subject || '(без темы)', text: textBody,
+      ...(attachments.length ? { attachments } : {}),
+    }),
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok || !result.id) return fail(502, 'mail provider rejected the message; it was not sent', { providerStatus: response.status });
