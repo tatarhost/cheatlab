@@ -3,6 +3,8 @@ name: Mail feature checks
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [feature/cheatlab-mail-reguru]
   workflow_dispatch:
 
 permissions:
