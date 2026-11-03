@@ -1003,3 +1003,20 @@ a.stat-box:hover .stat-label { color: var(--ink); }
 .mail-code-card{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:18px 0;padding:15px;border:1px solid var(--line);background:var(--fog)}
 .mail-code-card .label{margin-right:auto}
 .mail-code-value{font:600 25px var(--mono);letter-spacing:.12em}
+
+
+/* Gmail-like mail improvements */
+.mail-search{width:100%;margin:0 0 14px}
+.mail-actions{display:flex;align-items:center;gap:8px}
+.mail-row{display:flex;gap:8px;align-items:center;padding:0 8px}
+.mail-row-open{display:grid;grid-template-columns:minmax(110px,1fr) minmax(120px,2.2fr) auto;gap:14px;align-items:center;flex:1;min-width:0;padding:14px 0;border:0;background:transparent;color:var(--ink);text-align:left;cursor:pointer}
+.mail-row.is-unread .mail-row-from,.mail-row.is-unread .mail-row-subject{font-weight:750}
+.mail-row-subject{color:var(--mute)}
+.mail-star{flex:none;border:0;background:transparent;color:var(--mute);padding:8px;cursor:pointer}
+.mail-star.is-starred{color:#c28b19}
+.mail-star.is-starred svg{fill:currentColor}
+.mail-meta{display:grid;gap:4px;color:var(--mute);font-size:13px}
+.mail-html-frame{width:100%;min-height:520px;border:1px solid var(--line);border-radius:12px;background:#fff;margin-top:18px}
+.mail-message-body{padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--paper)}
+.mail-message{max-width:920px}
+@media(max-width:760px){.mail-row-open{grid-template-columns:1fr auto;gap:5px}.mail-row-subject{grid-column:1/-1;grid-row:2}.mail-row-date{grid-column:2;grid-row:1}.mail-actions{gap:5px}.mail-html-frame{min-height:480px}}
