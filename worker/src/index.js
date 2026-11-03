@@ -547,6 +547,7 @@ route('POST', /^\/api\/mail\/webhook$/, async (request, env) => {
     if (/unique|constraint/i.test(String(err))) return json({ ok: true, duplicate: true });
     throw err;
   }
+  await env.STORE.db.prepare("UPDATE mail_mailbox SET status = 'active' WHERE id = ?").bind(box.id).run();
   return json({ ok: true });
 });
 
@@ -635,6 +636,7 @@ route('POST', /^\/api\/mail\/send$/, async (request, env) => {
   await env.STORE.db.prepare(
     "INSERT INTO mail_message (id, mailbox_id, direction, from_address, to_address, subject, text_body, created_at, provider_message_id) VALUES (?, ?, 'sent', ?, ?, ?, ?, ?, ?)"
   ).bind(id, box.id, box.address, to, subject, textBody, Date.now(), result.id).run();
+  await env.STORE.db.prepare("UPDATE mail_mailbox SET status = 'active' WHERE id = ?").bind(box.id).run();
   return json({ ok: true, id, providerId: result.id });
 });
 
