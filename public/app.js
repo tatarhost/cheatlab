@@ -3956,7 +3956,7 @@ async function viewMail() {
   $view.replaceChildren(head, h('section', { class: 'panel' }, h('div', { class: 'panel-title', text: 'CHEATLAB MAIL' }), h('h2', { text: 'Почта подключается' }), h('p', { style: 'margin-top:10px;max-width:620px', text: 'Приём и отправка писем пока не включены на сервере, поэтому создание адресов временно отключено.' }), h('p', { class: 'hint', style: 'margin-top:14px', text: 'Не вводите здесь пароли от сторонней почты и не публикуйте API-ключи.' }), h('div', { class: 'notice', style: 'margin-top:16px' }, icon('shield'), h('span', { text: 'После подключения здесь можно будет создать адрес вида имя@cheatlab.fun.' }))));
 }
 
-function viewKey(url) {
+async function viewKey(url) {
   // A quick-login link arrives as ?k=clab2-…. The key is a credential, so it
   // is taken out of the address bar before anything else renders — history,
   // restored URLs and a copied link must not keep carrying it after the visit.
