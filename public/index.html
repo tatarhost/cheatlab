@@ -35,7 +35,7 @@ document.write('<base href="' +
 <!-- v=3 on both assets: GitHub Pages serves stale copies to returning
      browsers otherwise, and every deploy since can leave old code doing the
      work. Bump the query when the site (not the Worker) changes. -->
-<link rel="stylesheet" href="style.css?v=6">
+<link rel="stylesheet" href="style.css?v=7">
 
 <!-- Applied before first paint: without this the page flashes white before
      app.js gets a chance to set the stored preference. -->
@@ -71,6 +71,9 @@ document.write('<base href="' +
   <symbol id="i-next" viewBox="0 0 24 24"><path d="m12 5 7 7-7 7"/><path d="M5 12h14"/></symbol>
   <symbol id="i-game" viewBox="0 0 24 24"><path d="M6 11h4"/><path d="M8 9v4"/><path d="M15 12h.01"/><path d="M18 10h.01"/><rect width="20" height="14" x="2" y="6" rx="2"/></symbol>
   <!-- deslop-ignore-next-line 24 Lucide user, ISC -->
+  <symbol id="i-mail" viewBox="0 0 24 24"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-10 6L2 7"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 4h16l2 12h-6l-2 3h-4l-2-3H2Z"/><path d="M2 16h6l2 3h4l2-3h6"/></symbol>
   <symbol id="i-user" viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
   <!-- deslop-ignore-next-line 24 Lucide moon, ISC -->
   <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9"/></symbol>
@@ -131,7 +134,8 @@ document.write('<base href="' +
       <a class="nav-link" href="./files"><svg class="i"><use href="#i-file"/></svg>Файлы</a>
       <a class="nav-link" href="./me"><svg class="i"><use href="#i-user"/></svg>Мои загрузки</a>
   <a class="nav-link" href="./chat"><svg class="i"><use href="#i-hash"/></svg>Чат</a>
-  <a class="nav-link" href="./key"><svg class="i"><use href="#i-key"/></svg>Ключи CheatLab</a>
+  <a class="nav-link" href="./mail"><svg class="i"><use href="#i-mail"/></svg>Email</a>
+      <a class="nav-link" href="./key"><svg class="i"><use href="#i-key"/></svg>Ключи CheatLab</a>
     </nav>
 
     <!-- Own row rather than inside .rail-foot, which the mobile layout hides:
@@ -186,6 +190,6 @@ document.write('<base href="' +
 
 <div id="toast" class="toast" hidden></div>
 
-  <script src="app.js?v=7" type="module"></script>
+  <script src="app.js?v=8" type="module"></script>
 </body>
 </html>
