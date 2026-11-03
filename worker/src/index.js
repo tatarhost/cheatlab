@@ -537,12 +537,13 @@ route('POST', /^\/api\/mail\/webhook$/, async (request, env) => {
   ).bind(recipient).first();
   if (!box) return json({ ok: true, ignored: true });
   const textBody = str(payload.text || payload.html?.replace(/<[^>]*>/g, ' ') || '', 60000);
+  const htmlBody = str(payload.html || '', 180000);
   const messageId = newId(12);
   try {
     await env.STORE.db.prepare(
-      "INSERT INTO mail_message (id, mailbox_id, direction, from_address, to_address, subject, text_body, created_at, provider_message_id) VALUES (?, ?, 'inbox', ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO mail_message (id, mailbox_id, direction, from_address, to_address, subject, text_body, created_at, provider_message_id, html_body) VALUES (?, ?, 'inbox', ?, ?, ?, ?, ?, ?, ?)"
     ).bind(messageId, box.id, str(payload.from || event.data.from, 320), recipient,
-      str(payload.subject || event.data.subject, 500), textBody, Date.now(), providerId).run();
+      str(payload.subject || event.data.subject, 500), textBody, Date.now(), providerId, htmlBody).run();
   } catch (err) {
     if (/unique|constraint/i.test(String(err))) return json({ ok: true, duplicate: true });
     throw err;
@@ -603,10 +604,29 @@ route('GET', /^\/api\/mail\/messages$/, async (request, env, _m, url) => {
   const owned = await env.STORE.db.prepare('SELECT id,address FROM mail_mailbox WHERE id = ? AND owner_user_id = ?').bind(box, who.user.id).first();
   if (!owned) return fail(404, 'mailbox not found');
   const rows = await env.STORE.rows(
-    'SELECT id, direction, from_address, to_address, subject, text_body, created_at FROM mail_message WHERE mailbox_id = ? AND direction = ? ORDER BY created_at DESC LIMIT 100',
-    box, folder,
+    "SELECT id, direction, from_address, to_address, subject, text_body, html_body, created_at, is_read, is_starred FROM mail_message WHERE mailbox_id = ? AND ((? = 'starred' AND is_starred = 1) OR (? <> 'starred' AND direction = ?)) ORDER BY created_at DESC LIMIT 100",
+    box, folder, folder, folder === 'sent' ? 'sent' : 'inbox',
   );
-  return json({ messages: rows.map(r => ({ id:r.id, direction:r.direction, fromAddress:r.from_address, toAddress:r.to_address, subject:r.subject, textBody:r.text_body, createdAt:r.created_at })) });
+  return json({ messages: rows.map(r => ({ id:r.id, direction:r.direction, fromAddress:r.from_address, toAddress:r.to_address, subject:r.subject, textBody:r.text_body, htmlBody:r.html_body, createdAt:r.created_at, isRead:!!r.is_read, isStarred:!!r.is_starred })) });
+});
+
+route('PATCH', /^\/api\/mail\/messages\/([A-Za-z0-9_-]{8,32})$/, async (request, env, m) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  let payload;
+  try { payload = await readJson(request, 2048); } catch (err) { return fail(400, err.message); }
+  const message = await env.STORE.db.prepare(
+    'SELECT mail_message.id FROM mail_message JOIN mail_mailbox ON mail_mailbox.id = mail_message.mailbox_id WHERE mail_message.id = ? AND mail_mailbox.owner_user_id = ?'
+  ).bind(m[1], who.user.id).first();
+  if (!message) return fail(404, 'message not found');
+  const updates = [];
+  const values = [];
+  if (payload.isRead !== undefined) { updates.push('is_read = ?'); values.push(payload.isRead ? 1 : 0); }
+  if (payload.isStarred !== undefined) { updates.push('is_starred = ?'); values.push(payload.isStarred ? 1 : 0); }
+  if (!updates.length) return fail(400, 'nothing to update');
+  values.push(m[1]);
+  await env.STORE.db.prepare('UPDATE mail_message SET ' + updates.join(', ') + ' WHERE id = ?').bind(...values).run();
+  return json({ ok: true });
 });
 
 route('POST', /^\/api\/mail\/send$/, async (request, env) => {
