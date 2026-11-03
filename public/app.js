@@ -3802,6 +3802,11 @@ async function viewMail(url) {
           h('span', { class: 'label', text: 'КОД ПОДТВЕРЖДЕНИЯ' }),
           h('strong', { class: 'mail-code-value', text: verificationCode }),
           h('button', { class: 'btn btn-primary', type: 'button', onclick: () => copy(verificationCode, 'Код скопирован') }, icon('copy','i i-sm'), 'Скопировать код')) : null,
+        msg.attachments?.length ? h('div', { class: 'mail-saved-attachments' },
+          h('strong', { text: 'Вложения (' + msg.attachments.length + ')' }),
+          ...msg.attachments.map(file => h('div', { class: 'mail-saved-attachment' },
+            icon(file.contentType?.startsWith('image/') ? 'image' : 'file','i i-sm'),
+            h('span', { text: file.filename + ' · ' + bytes(file.size) })))) : null,
         content),
     );
   }
