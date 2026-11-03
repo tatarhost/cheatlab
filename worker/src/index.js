@@ -477,6 +477,169 @@ async function storageGate(store, user, clientId, env) {
 const routes = [];
 const route = (method, pattern, handler) => routes.push({ method, pattern, handler });
 
+
+/* -------------------------------------------------------------- CheatLab Mail */
+function equalBytes(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+async function verifyResendWebhook(request, env, raw) {
+  const secret = String(env.RESEND_WEBHOOK_SECRET || '');
+  if (!secret.startsWith('whsec_')) return false;
+  const id = request.headers.get('svix-id') || '';
+  const timestamp = request.headers.get('svix-timestamp') || '';
+  const signatures = request.headers.get('svix-signature') || '';
+  if (!id || !/^\d+$/.test(timestamp) || !signatures) return false;
+  if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) return false;
+  let keyBytes;
+  try {
+    const binary = atob(secret.slice(6));
+    keyBytes = Uint8Array.from(binary, c => c.charCodeAt(0));
+  } catch { return false; }
+  const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const signed = new TextEncoder().encode(id + '.' + timestamp + '.' + raw);
+  const digest = new Uint8Array(await crypto.subtle.sign('HMAC', key, signed));
+  let binary = '';
+  for (const byte of digest) binary += String.fromCharCode(byte);
+  const expected = btoa(binary);
+  return signatures.split(' ').some(part => {
+    const [version, value] = part.split(',');
+    return version === 'v1' && value && equalBytes(new TextEncoder().encode(value), new TextEncoder().encode(expected));
+  });
+}
+
+route('POST', /^\/api\/mail\/webhook$/, async (request, env) => {
+  if (!env.RESEND_API_KEY || !env.RESEND_WEBHOOK_SECRET) return fail(503, 'mail provider is not configured');
+  const raw = await request.text();
+  if (raw.length > 256 * 1024) return fail(413, 'webhook too large');
+  if (!(await verifyResendWebhook(request, env, raw))) return fail(401, 'invalid webhook signature');
+  let event;
+  try { event = JSON.parse(raw); } catch { return fail(400, 'invalid webhook json'); }
+  if (event.type !== 'email.received' || !event.data?.email_id) return json({ ok: true, ignored: true });
+
+  const providerId = str(event.data.email_id, 120);
+  const exists = await env.STORE.db.prepare('SELECT id FROM mail_message WHERE provider_message_id = ?').bind(providerId).first();
+  if (exists) return json({ ok: true, duplicate: true });
+
+  const upstream = await fetch('https://api.resend.com/emails/receiving/' + encodeURIComponent(providerId), {
+    headers: { Authorization: 'Bearer ' + env.RESEND_API_KEY, Accept: 'application/json' },
+  });
+  if (!upstream.ok) return fail(502, 'could not retrieve received email');
+  const payload = await upstream.json();
+  const recipients = Array.isArray(payload.to) ? payload.to : (Array.isArray(event.data.to) ? event.data.to : []);
+  const recipient = String(recipients[0] || '').trim().toLowerCase();
+  if (!recipient || !recipient.endsWith('@cheatlab.fun')) return json({ ok: true, ignored: true });
+  const box = await env.STORE.db.prepare(
+    'SELECT id FROM mail_mailbox WHERE lower(address) = ?'
+  ).bind(recipient).first();
+  if (!box) return json({ ok: true, ignored: true });
+  const textBody = str(payload.text || payload.html?.replace(/<[^>]*>/g, ' ') || '', 60000);
+  const messageId = newId(12);
+  try {
+    await env.STORE.db.prepare(
+      "INSERT INTO mail_message (id, mailbox_id, direction, from_address, to_address, subject, text_body, created_at, provider_message_id) VALUES (?, ?, 'inbox', ?, ?, ?, ?, ?, ?)"
+    ).bind(messageId, box.id, str(payload.from || event.data.from, 320), recipient,
+      str(payload.subject || event.data.subject, 500), textBody, Date.now(), providerId).run();
+  } catch (err) {
+    if (/unique|constraint/i.test(String(err))) return json({ ok: true, duplicate: true });
+    throw err;
+  }
+  await env.STORE.db.prepare("UPDATE mail_mailbox SET status = 'active' WHERE id = ?").bind(box.id).run();
+  return json({ ok: true });
+});
+
+route('GET', /^\/api\/mail\/boxes$/, async (request, env) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  const rows = await env.STORE.rows(
+    'SELECT id, local_part, address, status, created_at FROM mail_mailbox WHERE owner_user_id = ? ORDER BY created_at',
+    who.user.id,
+  );
+  return json({ mailboxes: rows.map(r => ({ id:r.id, localPart:r.local_part, address:r.address, status:r.status, createdAt:r.created_at })) });
+});
+
+route('POST', /^\/api\/mail\/boxes$/, async (request, env) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  const banned = requireUnbanned(who);
+  if (banned) return banned;
+  if (!(await env.STORE.throttle('mailbox:' + who.user.id, 'mail', { cap: 10, windowMs: 60 * 60 * 1000 }))) return fail(429, 'too many mailbox requests');
+  let payload;
+  try { payload = await readJson(request, 2048); } catch (err) { return fail(400, err.message); }
+  const local = str(payload.localPart, 32).toLowerCase();
+  if (!/^[a-z0-9](?:[a-z0-9._-]{0,30}[a-z0-9])?$/.test(local) || /\.\.|[._-]{2}/.test(local)) return fail(400, 'use 1–32 latin letters, numbers, dots, hyphens or underscores');
+  const count = await env.STORE.db.prepare('SELECT COUNT(*) AS n FROM mail_mailbox WHERE owner_user_id = ?').bind(who.user.id).first();
+  if (Number(count?.n || 0) >= 5) return fail(409, 'maximum five email addresses per account');
+  const id = newId(12), address = local + '@cheatlab.fun', createdAt = Date.now();
+  const status = 'pending';
+  try {
+    const result = await env.STORE.db.prepare(
+      "INSERT INTO mail_mailbox (id, owner_user_id, local_part, address, status, created_at) SELECT ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM mail_mailbox WHERE owner_user_id = ?) < 5"
+    ).bind(id, who.user.id, local, address, status, createdAt, who.user.id).run();
+    if (!(result.meta?.changes > 0)) return fail(409, 'maximum five email addresses per account');
+  } catch (err) {
+    if (/unique|constraint/i.test(String(err))) return fail(409, 'this email address is already taken');
+    throw err;
+  }
+  return json({ mailbox: { id, localPart: local, address, status, createdAt } }, 201);
+});
+
+route('DELETE', /^\/api\/mail\/boxes\/([A-Za-z0-9_-]{8,32})$/, async (request, env, m) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  const result = await env.STORE.db.prepare('DELETE FROM mail_mailbox WHERE id = ? AND owner_user_id = ?').bind(m[1], who.user.id).run();
+  if (!(result.meta?.changes > 0)) return fail(404, 'mailbox not found');
+  return json({ ok: true });
+});
+
+route('GET', /^\/api\/mail\/messages$/, async (request, env, _m, url) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  const box = str(url.searchParams.get('mailbox'), 32);
+  const folder = url.searchParams.get('folder') === 'sent' ? 'sent' : 'inbox';
+  const owned = await env.STORE.db.prepare('SELECT id,address FROM mail_mailbox WHERE id = ? AND owner_user_id = ?').bind(box, who.user.id).first();
+  if (!owned) return fail(404, 'mailbox not found');
+  const rows = await env.STORE.rows(
+    'SELECT id, direction, from_address, to_address, subject, text_body, created_at FROM mail_message WHERE mailbox_id = ? AND direction = ? ORDER BY created_at DESC LIMIT 100',
+    box, folder,
+  );
+  return json({ messages: rows.map(r => ({ id:r.id, direction:r.direction, fromAddress:r.from_address, toAddress:r.to_address, subject:r.subject, textBody:r.text_body, createdAt:r.created_at })) });
+});
+
+route('POST', /^\/api\/mail\/send$/, async (request, env) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  const banned = requireUnbanned(who);
+  if (banned) return banned;
+  if (!env.RESEND_API_KEY) return fail(503, 'mail sending is not configured; no message was sent');
+  if (!(await env.STORE.throttle('mail-send:' + who.user.id, 'mail-send', { cap: 20, windowMs: 60 * 60 * 1000 }))) return fail(429, 'sending limit reached; try later');
+  let payload;
+  try { payload = await readJson(request, 70000); } catch (err) { return fail(400, err.message); }
+  const box = await env.STORE.db.prepare('SELECT id,address FROM mail_mailbox WHERE id = ? AND owner_user_id = ?').bind(str(payload.mailboxId, 32), who.user.id).first();
+  if (!box) return fail(404, 'mailbox not found');
+  const to = str(payload.to, 320).trim().toLowerCase();
+  const subject = str(payload.subject, 200).trim();
+  const textBody = str(payload.textBody, 50000);
+  if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]{2,}$/.test(to)) return fail(400, 'enter a valid recipient email');
+  if (!subject && !textBody.trim()) return fail(400, 'write a subject or message');
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + env.RESEND_API_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from: box.address, to: [to], subject: subject || '(без темы)', text: textBody }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.id) return fail(502, 'mail provider rejected the message; it was not sent', { providerStatus: response.status });
+  const id = newId(12);
+  await env.STORE.db.prepare(
+    "INSERT INTO mail_message (id, mailbox_id, direction, from_address, to_address, subject, text_body, created_at, provider_message_id) VALUES (?, ?, 'sent', ?, ?, ?, ?, ?, ?)"
+  ).bind(id, box.id, box.address, to, subject, textBody, Date.now(), result.id).run();
+  await env.STORE.db.prepare("UPDATE mail_mailbox SET status = 'active' WHERE id = ?").bind(box.id).run();
+  return json({ ok: true, id, providerId: result.id });
+});
+
 route('GET', /^\/api\/config$/, async (request, env) => {
   const c = config(env);
   return json({

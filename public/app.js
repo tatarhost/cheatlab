@@ -3626,6 +3626,150 @@ async function viewChat(url) {
   chatListView({ chats: mine.chats || [], channels: publicRooms.channels || [] }, null);
 }
 
+
+/* -------------------------------------------------------------- CheatLab Mail */
+async function viewMail(url) {
+  if (!account) {
+    $view.replaceChildren(
+      h('div', { class: 'page-head' }, h('h1', {}, icon('mail'), ' Email')),
+      h('p', { class: 'page-sub', text: 'Войдите в CheatLab, чтобы создать почтовый адрес.' }),
+      h('a', { class: 'btn btn-primary', href: '/auth' }, 'Войти'),
+    );
+    return;
+  }
+  const shell = h('div', { class: 'mail-shell' });
+  const side = h('aside', { class: 'mail-side' });
+  const main = h('section', { class: 'mail-main' });
+  shell.append(side, main);
+  $view.replaceChildren(
+    h('div', { class: 'page-head mail-heading' },
+      h('div', {}, h('h1', {}, icon('mail'), ' CheatLab Mail'),
+        h('p', { class: 'page-sub', text: 'Почта и коды подтверждения в одном месте.' })),
+      h('span', { class: 'mail-limit', text: '0 / 5 адресов' })),
+    shell,
+  );
+  let boxes = [];
+  let activeBox = null;
+  let folder = 'inbox';
+  const refresh = async () => {
+    const data = await api('/api/mail/boxes');
+    boxes = data.mailboxes || [];
+    document.querySelector('.mail-limit').textContent = boxes.length + ' / 5 адресов';
+    side.replaceChildren(
+      h('div', { class: 'mail-side-title' }, 'ПОЧТОВЫЕ АДРЕСА'),
+      ...boxes.map(box => h('button', {
+        class: 'mail-address' + (activeBox?.id === box.id ? ' is-active' : ''),
+        type: 'button', onclick: () => { activeBox = box; paintMessages(); refreshSide(); },
+      }, icon('mail','i i-sm'), h('span', {}, box.address,
+        h('small', { text: box.status === 'active' ? 'Активен' : 'Ожидает подключения' })))),
+      h('button', { class: 'btn btn-ghost mail-add', type: 'button', disabled: boxes.length >= 5,
+        onclick: createBox }, icon('plus','i i-sm'), 'Создать адрес'),
+      h('div', { class: 'mail-side-rule' }),
+      h('button', { class: 'mail-folder' + (folder === 'inbox' ? ' is-active' : ''), type: 'button',
+        onclick: () => { folder = 'inbox'; paintMessages(); refreshSide(); } }, icon('inbox','i i-sm'), 'Входящие'),
+      h('button', { class: 'mail-folder' + (folder === 'sent' ? ' is-active' : ''), type: 'button',
+        onclick: () => { folder = 'sent'; paintMessages(); refreshSide(); } }, icon('send','i i-sm'), 'Отправленные'),
+    );
+  };
+  const refreshSide = () => {
+    for (const el of side.querySelectorAll('.mail-address')) el.classList.toggle('is-active', el.textContent.includes(activeBox?.address || '\u0000'));
+    for (const el of side.querySelectorAll('.mail-folder')) el.classList.toggle('is-active', el.textContent.includes(folder === 'inbox' ? 'Входящие' : 'Отправленные'));
+  };
+  async function createBox() {
+    const local = h('input', { class: 'input', placeholder: 'например, daniil или codes', maxlength: 32, autocomplete: 'off' });
+    const error = h('p', { class: 'form-error' });
+    const modal = h('div', { class: 'panel mail-create' },
+      h('h2', { text: 'Новый почтовый адрес' }),
+      h('p', { class: 'hint', text: 'Можно создать до пяти адресов на аккаунт.' }),
+      h('div', { class: 'mail-address-input' }, local, h('span', { text: '@cheatlab.fun' })),
+      error,
+      h('div', { class: 'field-row' },
+        h('button', { class: 'btn btn-primary', type: 'button', onclick: async () => {
+          try {
+            const res = await api('/api/mail/boxes', { method: 'POST', body: { localPart: local.value } });
+            activeBox = res.mailbox; toast('Адрес создан · ожидает подключения почтового сервера');
+            await refresh(); paintMessages();
+          } catch (e) { error.textContent = e.message; }
+        } }, 'Создать'),
+        h('button', { class: 'btn btn-ghost', type: 'button', onclick: paintMessages }, 'Отмена')),
+    );
+    main.replaceChildren(modal);
+    local.focus();
+  }
+  async function paintMessages() {
+    if (!activeBox) {
+      main.replaceChildren(h('div', { class: 'mail-empty' }, icon('mail','i i-lg'),
+        h('h2', { text: 'Твоя почта' }),
+        h('p', { text: boxes.length ? 'Выбери адрес слева.' : 'Создай первый адрес @cheatlab.fun. На аккаунт доступно до пяти адресов.' }),
+        boxes.length ? null : h('button', { class: 'btn btn-primary', type: 'button', onclick: createBox }, icon('plus','i i-sm'), 'Создать адрес')));
+      return;
+    }
+    let data;
+    try { data = await api('/api/mail/messages?mailbox=' + encodeURIComponent(activeBox.id) + '&folder=' + folder); }
+    catch (e) { main.replaceChildren(h('div', { class: 'notice' }, e.message)); return; }
+    const messages = data.messages || [];
+    const toolbar = h('div', { class: 'mail-toolbar' },
+      h('div', {}, h('h2', { text: folder === 'inbox' ? 'Входящие' : 'Отправленные' }),
+        h('p', { class: 'hint', text: activeBox.address })),
+      h('button', { class: 'btn btn-primary', type: 'button', onclick: compose }, icon('edit','i i-sm'), 'Написать'));
+    const status = activeBox.status === 'active'
+      ? h('div', { class: 'mail-server-ok' }, icon('check','i i-sm'), 'Почтовый сервер подключён')
+      : h('div', { class: 'mail-server-pending' }, icon('alert','i i-sm'),
+          'Адрес создан, но приём и отправка писем ещё не включены: требуется подключить MX/DNS, входящий шлюз и сервис отправки.');
+    main.replaceChildren(toolbar, status,
+      messages.length ? h('div', { class: 'mail-list' }, ...messages.map(msg => h('button', {
+        class: 'mail-row', type: 'button', onclick: () => openMessage(msg),
+      }, h('span', { class: 'mail-row-from', text: folder === 'inbox' ? (msg.fromAddress || 'Отправитель') : ('Кому: ' + msg.toAddress) }),
+      h('span', { class: 'mail-row-subject', text: msg.subject || '(без темы)' }),
+      h('span', { class: 'mail-row-date', text: new Date(msg.createdAt).toLocaleString('ru') }))))
+      : h('div', { class: 'mail-empty mail-empty-small' }, icon('inbox','i i-lg'),
+        h('h2', { text: 'Пока нет писем' }),
+        h('p', { text: 'Новые письма и коды подтверждения появятся здесь после подключения входящей почты.' })));
+  }
+  async function openMessage(msg) {
+    const body = h('div', { class: 'mail-message-body' });
+    body.textContent = msg.textBody || 'Текст письма отсутствует.';
+    const codeMatch = (msg.subject + '\\n' + msg.textBody).match(/(?:код|code|verification|verify|login|otp)[^\\d]{0,36}(\\d{4,8})|\\b(\\d{6})\\b/i);
+    const verificationCode = codeMatch ? (codeMatch[1] || codeMatch[2]) : '';
+    main.replaceChildren(
+      h('div', { class: 'mail-toolbar' }, h('button', { class: 'btn btn-ghost', type: 'button', onclick: paintMessages }, '← Назад'),
+        h('span', { class: 'spacer' }), h('span', { class: 'hint', text: new Date(msg.createdAt).toLocaleString('ru') })),
+      h('article', { class: 'panel mail-message' },
+        h('h2', { text: msg.subject || '(без темы)' }),
+        h('p', { class: 'hint', text: 'От: ' + (msg.fromAddress || '—') }),
+        h('p', { class: 'hint', text: 'Кому: ' + (msg.toAddress || activeBox.address) }),
+        verificationCode ? h('div', { class: 'mail-code-card' },
+          h('span', { class: 'label', text: 'КОД ПОДТВЕРЖДЕНИЯ' }),
+          h('strong', { class: 'mail-code-value', text: verificationCode }),
+          h('button', { class: 'btn btn-primary', type: 'button', onclick: () => copy(verificationCode, 'Код скопирован') }, icon('copy','i i-sm'), 'Скопировать код'),
+        ) : null,
+        h('div', { class: 'mail-message-body' }, body.textContent),
+      ),
+    );
+  }
+  async function compose() {
+    const to = h('input', { class: 'input', type: 'email', placeholder: 'Получатель' });
+    const subject = h('input', { class: 'input', placeholder: 'Тема' });
+    const text = h('textarea', { class: 'textarea', rows: 9, placeholder: 'Напишите письмо…' });
+    const error = h('p', { class: 'form-error' });
+    main.replaceChildren(h('div', { class: 'mail-toolbar' }, h('h2', { text: 'Новое письмо' }),
+      h('button', { class: 'btn btn-ghost', type: 'button', onclick: paintMessages }, 'Отмена')),
+      h('form', { class: 'panel mail-compose', onsubmit: async e => {
+        e.preventDefault();
+        try {
+          await api('/api/mail/send', { method: 'POST', body: { mailboxId: activeBox.id, to: to.value, subject: subject.value, textBody: text.value } });
+          toast('Письмо отправлено'); folder = 'sent'; await paintMessages();
+        } catch (err) { error.textContent = err.message; }
+      } },
+      field('Кому', to), field('Тема', subject), field('Сообщение', text), error,
+      h('button', { class: 'btn btn-primary', type: 'submit' }, icon('send','i i-sm'), 'Отправить')));
+  }
+  await refresh();
+  activeBox = boxes[0] || null;
+  await refreshSide();
+  await paintMessages();
+}
+
 /* ----------------------------------------------------------------- admin --
  * The console is one page with four queues rather than a nested set of admin
  * screens: a moderator's whole job is "look at the open reports, look at the
@@ -3947,14 +4091,6 @@ async function makeAppKey(nick) {
  */
 
 /* --------------------------------------------------------------- mail -- */
-async function viewMail() {
-  const head = h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Email' }), h('p', { class: 'page-sub', text: 'Почта CHEATLAB · адреса @cheatlab.fun' })));
-  if (!account) {
-    $view.replaceChildren(head, h('div', { class: 'notice' }, icon('lock'), h('div', {}, h('strong', { text: 'Войдите в аккаунт' }), h('p', { style: 'margin-top:6px', text: 'Почтовые адреса будут привязаны к вашему аккаунту CHEATLAB.' }), h('a', { class: 'btn btn-primary', href: '/auth', style: 'margin-top:12px' }, 'Войти / регистрация'))));
-    return;
-  }
-  $view.replaceChildren(head, h('section', { class: 'panel' }, h('div', { class: 'panel-title', text: 'CHEATLAB MAIL' }), h('h2', { text: 'Почта подключается' }), h('p', { style: 'margin-top:10px;max-width:620px', text: 'Приём и отправка писем пока не включены на сервере, поэтому создание адресов временно отключено.' }), h('p', { class: 'hint', style: 'margin-top:14px', text: 'Не вводите здесь пароли от сторонней почты и не публикуйте API-ключи.' }), h('div', { class: 'notice', style: 'margin-top:16px' }, icon('shield'), h('span', { text: 'После подключения здесь можно будет создать адрес вида имя@cheatlab.fun.' }))));
-}
 
 async function viewKey(url) {
   // A quick-login link arrives as ?k=clab2-…. The key is a credential, so it
@@ -4196,6 +4332,8 @@ async function route() {
       await viewNew(url);
     } else if (path === '/me') {
       await viewMe();
+    } else if (path === '/mail') {
+      await viewMail(url);
     } else if (path === '/chat' || path.startsWith('/chat/')) {
       await viewChat(url);
     } else if (path === '/stats') {

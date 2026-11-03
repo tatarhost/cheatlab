@@ -1,0 +1,27 @@
+name: Mail feature checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [feature/cheatlab-mail-reguru]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check JavaScript syntax
+        run: |
+          node --check public/app.js
+          node --check worker/src/index.js
+      - name: Run Worker tests
+        working-directory: worker
+        run: npm test
