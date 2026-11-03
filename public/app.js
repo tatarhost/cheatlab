@@ -3631,6 +3631,9 @@ async function viewChat(url) {
 function safeMailHtml(raw) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(String(raw || ''), 'text/html');
+  // Email clients commonly keep layout CSS in the document head; the isolated
+  // reader returns body markup only, so move those styles into the sanitized body.
+  for (const style of [...doc.head.querySelectorAll('style')]) doc.body.prepend(style);
   const allowed = new Set(['A','B','BLOCKQUOTE','BR','CAPTION','CODE','DIV','EM','H1','H2','H3','H4','HR','I','IMG','LI','OL','P','PRE','S','SMALL' ,'SPAN','STRONG','STYLE','SUB','SUP','TABLE','TBODY','TD','TH','THEAD','TR','U','UL']);
   const clean = (node) => {
     for (const child of [...node.childNodes]) {
@@ -3648,7 +3651,7 @@ function safeMailHtml(raw) {
           child.removeAttribute(attr.name); continue;
         }
         if (name === 'href' && !/^(https:\/\/|mailto:)/i.test(value)) child.removeAttribute(attr.name);
-        if (name === 'src') { const imageUrl = value.startsWith('//') ? 'https:' + value : value; if (child.tagName === 'IMG' && /^https:\/\//i.test(imageUrl)) { child.setAttribute('src', imageUrl); child.setAttribute('referrerpolicy', 'no-referrer'); child.setAttribute('loading', 'eager'); } else child.removeAttribute(attr.name); }
+        if (name === 'src') { const imageUrl = value.startsWith('//') ? 'https:' + value : value; if (child.tagName === 'IMG' && (/^https:\/\//i.test(imageUrl) || /^data:image\/(?:png|jpeg|gif|webp);base64,/i.test(imageUrl))) { child.setAttribute('src', imageUrl); child.setAttribute('referrerpolicy', 'no-referrer'); child.setAttribute('loading', 'eager'); } else child.removeAttribute(attr.name); }
         if (name === 'target') child.setAttribute('rel','noopener noreferrer');
       }
       clean(child);
