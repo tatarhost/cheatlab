@@ -537,12 +537,13 @@ route('POST', /^\/api\/mail\/webhook$/, async (request, env) => {
   ).bind(recipient).first();
   if (!box) return json({ ok: true, ignored: true });
   const textBody = str(payload.text || payload.html?.replace(/<[^>]*>/g, ' ') || '', 60000);
+  const htmlBody = str(payload.html || '', 180000);
   const messageId = newId(12);
   try {
     await env.STORE.db.prepare(
-      "INSERT INTO mail_message (id, mailbox_id, direction, from_address, to_address, subject, text_body, created_at, provider_message_id) VALUES (?, ?, 'inbox', ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO mail_message (id, mailbox_id, direction, from_address, to_address, subject, text_body, created_at, provider_message_id, html_body) VALUES (?, ?, 'inbox', ?, ?, ?, ?, ?, ?, ?)"
     ).bind(messageId, box.id, str(payload.from || event.data.from, 320), recipient,
-      str(payload.subject || event.data.subject, 500), textBody, Date.now(), providerId).run();
+      str(payload.subject || event.data.subject, 500), textBody, Date.now(), providerId, htmlBody).run();
   } catch (err) {
     if (/unique|constraint/i.test(String(err))) return json({ ok: true, duplicate: true });
     throw err;
@@ -603,10 +604,29 @@ route('GET', /^\/api\/mail\/messages$/, async (request, env, _m, url) => {
   const owned = await env.STORE.db.prepare('SELECT id,address FROM mail_mailbox WHERE id = ? AND owner_user_id = ?').bind(box, who.user.id).first();
   if (!owned) return fail(404, 'mailbox not found');
   const rows = await env.STORE.rows(
-    'SELECT id, direction, from_address, to_address, subject, text_body, created_at FROM mail_message WHERE mailbox_id = ? AND direction = ? ORDER BY created_at DESC LIMIT 100',
-    box, folder,
+    "SELECT id, direction, from_address, to_address, subject, text_body, html_body, created_at, is_read, is_starred FROM mail_message WHERE mailbox_id = ? AND ((? = 'starred' AND is_starred = 1) OR (? <> 'starred' AND direction = ?)) ORDER BY created_at DESC LIMIT 100",
+    box, folder, folder, folder === 'sent' ? 'sent' : 'inbox',
   );
-  return json({ messages: rows.map(r => ({ id:r.id, direction:r.direction, fromAddress:r.from_address, toAddress:r.to_address, subject:r.subject, textBody:r.text_body, createdAt:r.created_at })) });
+  return json({ messages: rows.map(r => ({ id:r.id, direction:r.direction, fromAddress:r.from_address, toAddress:r.to_address, subject:r.subject, textBody:r.text_body, htmlBody:r.html_body, attachments:(()=>{try{return JSON.parse(r.attachments_json||'[]')}catch{return []}})(), createdAt:r.created_at, isRead:!!r.is_read, isStarred:!!r.is_starred })) });
+});
+
+route('PATCH', /^\/api\/mail\/messages\/([A-Za-z0-9_-]{8,32})$/, async (request, env, m) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  let payload;
+  try { payload = await readJson(request, 2048); } catch (err) { return fail(400, err.message); }
+  const message = await env.STORE.db.prepare(
+    'SELECT mail_message.id FROM mail_message JOIN mail_mailbox ON mail_mailbox.id = mail_message.mailbox_id WHERE mail_message.id = ? AND mail_mailbox.owner_user_id = ?'
+  ).bind(m[1], who.user.id).first();
+  if (!message) return fail(404, 'message not found');
+  const updates = [];
+  const values = [];
+  if (payload.isRead !== undefined) { updates.push('is_read = ?'); values.push(payload.isRead ? 1 : 0); }
+  if (payload.isStarred !== undefined) { updates.push('is_starred = ?'); values.push(payload.isStarred ? 1 : 0); }
+  if (!updates.length) return fail(400, 'nothing to update');
+  values.push(m[1]);
+  await env.STORE.db.prepare('UPDATE mail_message SET ' + updates.join(', ') + ' WHERE id = ?').bind(...values).run();
+  return json({ ok: true });
 });
 
 route('POST', /^\/api\/mail\/send$/, async (request, env) => {
@@ -617,25 +637,42 @@ route('POST', /^\/api\/mail\/send$/, async (request, env) => {
   if (!env.RESEND_API_KEY) return fail(503, 'mail sending is not configured; no message was sent');
   if (!(await env.STORE.throttle('mail-send:' + who.user.id, 'mail-send', { cap: 20, windowMs: 60 * 60 * 1000 }))) return fail(429, 'sending limit reached; try later');
   let payload;
-  try { payload = await readJson(request, 70000); } catch (err) { return fail(400, err.message); }
+  try { payload = await readJson(request, 8 * 1024 * 1024); } catch (err) { return fail(err.code === 'TOO_LARGE' ? 413 : 400, err.message); }
   const box = await env.STORE.db.prepare('SELECT id,address FROM mail_mailbox WHERE id = ? AND owner_user_id = ?').bind(str(payload.mailboxId, 32), who.user.id).first();
   if (!box) return fail(404, 'mailbox not found');
   const to = str(payload.to, 320).trim().toLowerCase();
   const subject = str(payload.subject, 200).trim();
   const textBody = str(payload.textBody, 50000);
+  const incoming = Array.isArray(payload.attachments) ? payload.attachments : [];
+  if (incoming.length > 5) return fail(400, 'up to 5 attachments are allowed');
+  let attachmentBytes = 0;
+  const attachments = [];
+  for (const file of incoming) {
+    const filename = str(file?.filename, 180).replace(/[\\/\r\n\0]/g, '_');
+    const content = str(file?.content, 7 * 1024 * 1024);
+    const contentType = str(file?.contentType, 120) || 'application/octet-stream';
+    if (!filename || !/^[A-Za-z0-9+/_=-]+$/.test(content)) return fail(400, 'invalid attachment');
+    const bytes = Math.floor(content.length * 3 / 4);
+    attachmentBytes += bytes;
+    if (bytes > 3 * 1024 * 1024 || attachmentBytes > 5 * 1024 * 1024) return fail(413, 'attachments exceed the 5 MB total limit');
+    attachments.push({ filename, content });
+  }
   if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]{2,}$/.test(to)) return fail(400, 'enter a valid recipient email');
-  if (!subject && !textBody.trim()) return fail(400, 'write a subject or message');
+  if (!subject && !textBody.trim() && !attachments.length) return fail(400, 'write a subject or message');
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + env.RESEND_API_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: box.address, to: [to], subject: subject || '(без темы)', text: textBody }),
+    body: JSON.stringify({
+      from: box.address, to: [to], subject: subject || '(без темы)', text: textBody,
+      ...(attachments.length ? { attachments } : {}),
+    }),
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok || !result.id) return fail(502, 'mail provider rejected the message; it was not sent', { providerStatus: response.status });
   const id = newId(12);
   await env.STORE.db.prepare(
-    "INSERT INTO mail_message (id, mailbox_id, direction, from_address, to_address, subject, text_body, created_at, provider_message_id) VALUES (?, ?, 'sent', ?, ?, ?, ?, ?, ?)"
-  ).bind(id, box.id, box.address, to, subject, textBody, Date.now(), result.id).run();
+    "INSERT INTO mail_message (id, mailbox_id, direction, from_address, to_address, subject, text_body, created_at, provider_message_id, attachments_json) VALUES (?, ?, 'sent', ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(id, box.id, box.address, to, subject, textBody, Date.now(), result.id, JSON.stringify(incoming.map(f => ({ filename: str(f.filename, 180), contentType: str(f.contentType, 120), size: Math.floor(String(f.content || '').length * 3 / 4) })))).run();
   await env.STORE.db.prepare("UPDATE mail_mailbox SET status = 'active' WHERE id = ?").bind(box.id).run();
   return json({ ok: true, id, providerId: result.id });
 });

@@ -3628,11 +3628,41 @@ async function viewChat(url) {
 
 
 /* -------------------------------------------------------------- CheatLab Mail */
+function safeMailHtml(raw) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(String(raw || ''), 'text/html');
+  const allowed = new Set(['A','B','BLOCKQUOTE','BR','CAPTION','CODE','DIV','EM','H1','H2','H3','H4','HR','I','IMG','LI','OL','P','PRE','S','SMALL','SPAN','STRONG','SUB','SUP','TABLE','TBODY','TD','TH','THEAD','TR','U','UL']);
+  const clean = (node) => {
+    for (const child of [...node.childNodes]) {
+      if (child.nodeType === Node.COMMENT_NODE) { child.remove(); continue; }
+      if (child.nodeType !== Node.ELEMENT_NODE) continue;
+      if (!allowed.has(child.tagName)) {
+        if (['SCRIPT','STYLE','IFRAME','OBJECT','EMBED','FORM','INPUT','BUTTON','VIDEO','AUDIO','SVG','MATH'].includes(child.tagName)) child.remove();
+        else { child.replaceWith(...child.childNodes); }
+        continue;
+      }
+      for (const attr of [...child.attributes]) {
+        const name = attr.name.toLowerCase();
+        const value = attr.value.trim();
+        if (name.startsWith('on') || name === 'srcset' || !['href','src','alt','title','width','height','colspan','rowspan','target','style'].includes(name)) {
+          child.removeAttribute(attr.name); continue;
+        }
+        if (name === 'href' && !/^(https:\/\/|mailto:)/i.test(value)) child.removeAttribute(attr.name);
+        if (name === 'src' && !(child.tagName === 'IMG' && /^https:\/\//i.test(value))) child.removeAttribute(attr.name);
+        if (name === 'target') child.setAttribute('rel','noopener noreferrer');
+      }
+      clean(child);
+    }
+  };
+  clean(doc.body);
+  return doc.body.innerHTML;
+}
+
 async function viewMail(url) {
   if (!account) {
     $view.replaceChildren(
       h('div', { class: 'page-head' }, h('h1', {}, icon('mail'), ' Email')),
-      h('p', { class: 'page-sub', text: 'Войдите в CheatLab, чтобы создать почтовый адрес.' }),
+      h('p', { class: 'page-sub', text: 'Войдите в CheatLab, чтобы открыть почту.' }),
       h('a', { class: 'btn btn-primary', href: '/auth' }, 'Войти'),
     );
     return;
@@ -3644,63 +3674,67 @@ async function viewMail(url) {
   $view.replaceChildren(
     h('div', { class: 'page-head mail-heading' },
       h('div', {}, h('h1', {}, icon('mail'), ' CheatLab Mail'),
-        h('p', { class: 'page-sub', text: 'Почта и коды подтверждения в одном месте.' })),
+        h('p', { class: 'page-sub', text: 'Почта, уведомления и коды подтверждения.' })),
       h('span', { class: 'mail-limit', text: '0 / 5 адресов' })),
     shell,
   );
   let boxes = [];
   let activeBox = null;
   let folder = 'inbox';
+  let query = '';
+  let currentMessage = null;
   const refresh = async () => {
     const data = await api('/api/mail/boxes');
     boxes = data.mailboxes || [];
-    document.querySelector('.mail-limit').textContent = boxes.length + ' / 5 адресов';
+    const limit = document.querySelector('.mail-limit');
+    if (limit) limit.textContent = boxes.length + ' / 5 адресов';
+    renderSide();
+  };
+  function renderSide() {
     side.replaceChildren(
       h('div', { class: 'mail-side-title' }, 'ПОЧТОВЫЕ АДРЕСА'),
       ...boxes.map(box => h('button', {
         class: 'mail-address' + (activeBox?.id === box.id ? ' is-active' : ''),
-        type: 'button', onclick: () => { activeBox = box; paintMessages(); refreshSide(); },
+        type: 'button', onclick: () => { activeBox = box; currentMessage = null; paintMessages(); renderSide(); },
       }, icon('mail','i i-sm'), h('span', {}, box.address,
-        h('small', { text: box.status === 'active' ? 'Активен' : 'Ожидает подключения' })))),
+        h('small', { text: box.status === 'active' ? 'Подключён' : 'Ожидает первого письма' })))),
       h('button', { class: 'btn btn-ghost mail-add', type: 'button', disabled: boxes.length >= 5,
         onclick: createBox }, icon('plus','i i-sm'), 'Создать адрес'),
       h('div', { class: 'mail-side-rule' }),
-      h('button', { class: 'mail-folder' + (folder === 'inbox' ? ' is-active' : ''), type: 'button',
-        onclick: () => { folder = 'inbox'; paintMessages(); refreshSide(); } }, icon('inbox','i i-sm'), 'Входящие'),
-      h('button', { class: 'mail-folder' + (folder === 'sent' ? ' is-active' : ''), type: 'button',
-        onclick: () => { folder = 'sent'; paintMessages(); refreshSide(); } }, icon('send','i i-sm'), 'Отправленные'),
+      ...[['inbox','inbox','Входящие'],['sent','send','Отправленные'],['starred','star','Избранное']].map(([key,ic,label]) =>
+        h('button', { class: 'mail-folder' + (folder === key ? ' is-active' : ''), type: 'button',
+          onclick: () => { folder = key; currentMessage = null; paintMessages(); renderSide(); } }, icon(ic,'i i-sm'), label)),
     );
-  };
-  const refreshSide = () => {
-    for (const el of side.querySelectorAll('.mail-address')) el.classList.toggle('is-active', el.textContent.includes(activeBox?.address || '\u0000'));
-    for (const el of side.querySelectorAll('.mail-folder')) el.classList.toggle('is-active', el.textContent.includes(folder === 'inbox' ? 'Входящие' : 'Отправленные'));
-  };
+  }
   async function createBox() {
-    const local = h('input', { class: 'input', placeholder: 'например, daniil или codes', maxlength: 32, autocomplete: 'off' });
+    const local = h('input', { class: 'input', placeholder: 'например, inbox или codes', maxlength: 32, autocomplete: 'off' });
     const error = h('p', { class: 'form-error' });
-    const modal = h('div', { class: 'panel mail-create' },
+    main.replaceChildren(h('div', { class: 'panel mail-create' },
       h('h2', { text: 'Новый почтовый адрес' }),
-      h('p', { class: 'hint', text: 'Можно создать до пяти адресов на аккаунт.' }),
-      h('div', { class: 'mail-address-input' }, local, h('span', { text: '@cheatlab.fun' })),
-      error,
+      h('p', { class: 'hint', text: 'До пяти адресов на аккаунт.' }),
+      h('div', { class: 'mail-address-input' }, local, h('span', { text: '@cheatlab.fun' }),
+      ), error,
       h('div', { class: 'field-row' },
         h('button', { class: 'btn btn-primary', type: 'button', onclick: async () => {
           try {
             const res = await api('/api/mail/boxes', { method: 'POST', body: { localPart: local.value } });
-            activeBox = res.mailbox; toast('Адрес создан · ожидает подключения почтового сервера');
-            await refresh(); paintMessages();
+            activeBox = res.mailbox; toast('Адрес создан');
+            await refresh(); await paintMessages();
           } catch (e) { error.textContent = e.message; }
         } }, 'Создать'),
-        h('button', { class: 'btn btn-ghost', type: 'button', onclick: paintMessages }, 'Отмена')),
-    );
-    main.replaceChildren(modal);
+        h('button', { class: 'btn btn-ghost', type: 'button', onclick: paintMessages }, 'Отмена'))));
     local.focus();
   }
+  async function updateMessage(msg, patch) {
+    await api('/api/mail/messages/' + encodeURIComponent(msg.id), { method: 'PATCH', body: patch });
+    Object.assign(msg, patch);
+  }
   async function paintMessages() {
+    currentMessage = null;
     if (!activeBox) {
       main.replaceChildren(h('div', { class: 'mail-empty' }, icon('mail','i i-lg'),
         h('h2', { text: 'Твоя почта' }),
-        h('p', { text: boxes.length ? 'Выбери адрес слева.' : 'Создай первый адрес @cheatlab.fun. На аккаунт доступно до пяти адресов.' }),
+        h('p', { text: boxes.length ? 'Выбери адрес слева.' : 'Создай первый адрес @cheatlab.fun.' }),
         boxes.length ? null : h('button', { class: 'btn btn-primary', type: 'button', onclick: createBox }, icon('plus','i i-sm'), 'Создать адрес')));
       return;
     }
@@ -3708,69 +3742,170 @@ async function viewMail(url) {
     try { data = await api('/api/mail/messages?mailbox=' + encodeURIComponent(activeBox.id) + '&folder=' + folder); }
     catch (e) { main.replaceChildren(h('div', { class: 'notice' }, e.message)); return; }
     const messages = data.messages || [];
+    const visible = messages.filter(msg => [msg.fromAddress,msg.toAddress,msg.subject,msg.textBody].join(' ').toLowerCase().includes(query.toLowerCase()));
+    const search = h('input', { class: 'input mail-search', type: 'search', placeholder: 'Поиск по письмам…', value: query,
+      oninput: e => { query = e.target.value; paintList(messages.filter(msg => [msg.fromAddress,msg.toAddress,msg.subject,msg.textBody].join(' ').toLowerCase().includes(query.toLowerCase())), messages); } });
     const toolbar = h('div', { class: 'mail-toolbar' },
-      h('div', {}, h('h2', { text: folder === 'inbox' ? 'Входящие' : 'Отправленные' }),
+      h('div', {}, h('h2', { text: folder === 'inbox' ? 'Входящие' : folder === 'sent' ? 'Отправленные' : 'Избранное' }),
         h('p', { class: 'hint', text: activeBox.address })),
-      h('button', { class: 'btn btn-primary', type: 'button', onclick: compose }, icon('edit','i i-sm'), 'Написать'));
+      h('div', { class: 'mail-actions' },
+        h('button', { class: 'btn btn-ghost', type: 'button', title: 'Обновить', onclick: paintMessages }, icon('refresh-cw','i i-sm')),
+        h('button', { class: 'btn btn-primary', type: 'button', onclick: compose }, icon('edit','i i-sm'), 'Написать')));
     const status = activeBox.status === 'active'
-      ? h('div', { class: 'mail-server-ok' }, icon('check','i i-sm'), 'Почтовый сервер подключён')
-      : h('div', { class: 'mail-server-pending' }, icon('alert','i i-sm'),
-          'Адрес создан, но приём и отправка писем ещё не включены: требуется подключить MX/DNS, входящий шлюз и сервис отправки.');
-    main.replaceChildren(toolbar, status,
-      messages.length ? h('div', { class: 'mail-list' }, ...messages.map(msg => h('button', {
-        class: 'mail-row', type: 'button', onclick: () => openMessage(msg),
-      }, h('span', { class: 'mail-row-from', text: folder === 'inbox' ? (msg.fromAddress || 'Отправитель') : ('Кому: ' + msg.toAddress) }),
-      h('span', { class: 'mail-row-subject', text: msg.subject || '(без темы)' }),
-      h('span', { class: 'mail-row-date', text: new Date(msg.createdAt).toLocaleString('ru') }))))
-      : h('div', { class: 'mail-empty mail-empty-small' }, icon('inbox','i i-lg'),
-        h('h2', { text: 'Пока нет писем' }),
-        h('p', { text: 'Новые письма и коды подтверждения появятся здесь после подключения входящей почты.' })));
+      ? h('div', { class: 'mail-server-ok' }, icon('check','i i-sm'), 'Почтовый сервер отвечает')
+      : h('div', { class: 'mail-server-pending' }, icon('info','i i-sm'),
+          'Адрес создан. Первое входящее письмо активирует ящик; доставка зависит от DNS и Resend.');
+    main.replaceChildren(toolbar, status, search, h('div', { class: 'mail-list', dataset: { mailList: '1' } }));
+    paintList(visible, messages);
+    function paintList(filtered, all) {
+      const list = main.querySelector('[data-mail-list]');
+      if (!list) return;
+      if (!filtered.length) {
+        list.replaceChildren(h('div', { class: 'mail-empty mail-empty-small' }, icon('inbox','i i-lg'),
+          h('h2', { text: query ? 'Ничего не найдено' : 'Пока нет писем' }),
+          h('p', { text: query ? 'Попробуй изменить запрос.' : 'Когда письмо придёт, оно появится здесь.' })));
+        return;
+      }
+      list.replaceChildren(...filtered.map(msg => h('div', { class: 'mail-row' + (!msg.isRead && msg.direction === 'inbox' ? ' is-unread' : '') },
+        h('button', { class: 'mail-row-open', type: 'button', onclick: () => openMessage(msg) },
+          h('span', { class: 'mail-row-from', text: folder === 'sent' ? ('Кому: ' + msg.toAddress) : (msg.fromAddress || 'Отправитель') }),
+          h('span', { class: 'mail-row-subject', text: (msg.subject || '(без темы)') + ' — ' + (msg.textBody || '').replace(/\s+/g,' ').slice(0,100) }),
+          h('span', { class: 'mail-row-date', text: new Date(msg.createdAt).toLocaleString('ru') })),
+        h('button', { class: 'mail-star' + (msg.isStarred ? ' is-starred' : ''), type: 'button', title: msg.isStarred ? 'Убрать из избранного' : 'В избранное',
+          onclick: async () => { try { await updateMessage(msg, { isStarred: !msg.isStarred }); paintList(all.filter(m => [m.fromAddress,m.toAddress,m.subject,m.textBody].join(' ').toLowerCase().includes(query.toLowerCase())).filter(m => folder !== 'starred' || m.isStarred), all); } catch(e) { toast(e.message,true); } } }, icon('star','i i-sm')))));
+    }
   }
   async function openMessage(msg) {
-    const body = h('div', { class: 'mail-message-body' });
-    body.textContent = msg.textBody || 'Текст письма отсутствует.';
-    const codeMatch = (msg.subject + '\\n' + msg.textBody).match(/(?:код|code|verification|verify|login|otp)[^\\d]{0,36}(\\d{4,8})|\\b(\\d{6})\\b/i);
+    currentMessage = msg;
+    if (msg.direction === 'inbox' && !msg.isRead) {
+      try { await updateMessage(msg, { isRead: true }); } catch (e) { toast('Не удалось отметить письмо прочитанным', true); }
+    }
+    const codeMatch = (msg.subject + '\n' + (msg.textBody || '')).match(/(?:код|code|verification|verify|login|otp)[^\d]{0,36}(\d{4,8})|\b(\d{6})\b/i);
     const verificationCode = codeMatch ? (codeMatch[1] || codeMatch[2]) : '';
+    const content = msg.htmlBody
+      ? h('iframe', { class: 'mail-html-frame', title: 'Содержимое письма', sandbox: '', srcdoc: '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src https: data:; style-src \'unsafe-inline\';"><style>body{font:14px Arial,sans-serif;color:#202124;line-height:1.55;margin:18px;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%;border-collapse:collapse}a{color:#1769aa}pre{white-space:pre-wrap}</style></head><body>' + safeMailHtml(msg.htmlBody) + '</body></html>' })
+      : h('div', { class: 'mail-message-body', text: msg.textBody || 'Текст письма отсутствует.' });
     main.replaceChildren(
-      h('div', { class: 'mail-toolbar' }, h('button', { class: 'btn btn-ghost', type: 'button', onclick: paintMessages }, '← Назад'),
-        h('span', { class: 'spacer' }), h('span', { class: 'hint', text: new Date(msg.createdAt).toLocaleString('ru') })),
+      h('div', { class: 'mail-toolbar' },
+        h('button', { class: 'btn btn-ghost', type: 'button', onclick: paintMessages }, icon('arrow-left','i i-sm'), ' Назад'),
+        h('div', { class: 'mail-actions' },
+          h('button', { class: 'btn btn-ghost', type: 'button', title: msg.isStarred ? 'Убрать из избранного' : 'В избранное',
+            onclick: async () => { try { await updateMessage(msg,{isStarred:!msg.isStarred}); openMessage(msg); } catch(e){toast(e.message,true);} } }, icon('star','i i-sm')),
+          msg.direction === 'inbox' ? h('button', { class: 'btn btn-primary', type: 'button', onclick: () => compose(msg) }, icon('reply','i i-sm'), 'Ответить') : null)),
       h('article', { class: 'panel mail-message' },
         h('h2', { text: msg.subject || '(без темы)' }),
-        h('p', { class: 'hint', text: 'От: ' + (msg.fromAddress || '—') }),
-        h('p', { class: 'hint', text: 'Кому: ' + (msg.toAddress || activeBox.address) }),
+        h('div', { class: 'mail-meta' },
+          h('p', { text: 'От: ' + (msg.fromAddress || '—') }),
+          h('p', { text: 'Кому: ' + (msg.toAddress || activeBox.address) }),
+          h('p', { text: new Date(msg.createdAt).toLocaleString('ru', { dateStyle:'full', timeStyle:'short' }) })),
         verificationCode ? h('div', { class: 'mail-code-card' },
           h('span', { class: 'label', text: 'КОД ПОДТВЕРЖДЕНИЯ' }),
           h('strong', { class: 'mail-code-value', text: verificationCode }),
-          h('button', { class: 'btn btn-primary', type: 'button', onclick: () => copy(verificationCode, 'Код скопирован') }, icon('copy','i i-sm'), 'Скопировать код'),
-        ) : null,
-        h('div', { class: 'mail-message-body' }, body.textContent),
-      ),
+          h('button', { class: 'btn btn-primary', type: 'button', onclick: () => copy(verificationCode, 'Код скопирован') }, icon('copy','i i-sm'), 'Скопировать код')) : null,
+        msg.attachments?.length ? h('div', { class: 'mail-saved-attachments' },
+          h('strong', { text: 'Вложения (' + msg.attachments.length + ')' }),
+          ...msg.attachments.map(file => h('div', { class: 'mail-saved-attachment' },
+            icon(file.contentType?.startsWith('image/') ? 'image' : 'file','i i-sm'),
+            h('span', { text: file.filename + ' · ' + bytes(file.size) })))) : null,
+        content),
     );
   }
-  async function compose() {
-    const to = h('input', { class: 'input', type: 'email', placeholder: 'Получатель' });
-    const subject = h('input', { class: 'input', placeholder: 'Тема' });
-    const text = h('textarea', { class: 'textarea', rows: 9, placeholder: 'Напишите письмо…' });
+  async function compose(replyTo = null) {
+    const recipient = replyTo ? (replyTo.fromAddress || '') : '';
+    const to = h('input', { class: 'input', type: 'email', placeholder: 'Получатель', value: recipient, required: true });
+    const subject = h('input', { class: 'input', placeholder: 'Тема', value: replyTo ? (/^Re:/i.test(replyTo.subject || '') ? replyTo.subject : 'Re: ' + (replyTo.subject || '')) : '' });
+    const text = h('textarea', { class: 'textarea', rows: 10, placeholder: 'Напишите письмо…', required: true });
+    const picker = h('input', { type: 'file', multiple: true, accept: 'image/*,.pdf,.txt,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.json,.js,.html,.css' });
+    const attachmentList = h('div', { class: 'mail-attachment-list' });
+    const projectSelect = h('select', { class: 'input' }, h('option', { value: '', text: 'Выберите опубликованный проект…' }));
+    const projectStatus = h('span', { class: 'hint', text: '' });
     const error = h('p', { class: 'form-error' });
-    main.replaceChildren(h('div', { class: 'mail-toolbar' }, h('h2', { text: 'Новое письмо' }),
-      h('button', { class: 'btn btn-ghost', type: 'button', onclick: paintMessages }, 'Отмена')),
+    let selectedFiles = [];
+    const renderFiles = () => {
+      attachmentList.replaceChildren(...selectedFiles.map((file, i) => h('div', { class: 'mail-attachment-chip' },
+        file.type.startsWith('image/') ? h('img', { src: URL.createObjectURL(file), alt: '', class: 'mail-attachment-thumb' }) : icon('file','i i-sm'),
+        h('span', { text: file.name + ' · ' + bytes(file.size) }),
+        h('button', { type: 'button', class: 'mail-attachment-remove', title: 'Убрать файл', onclick: () => {
+          selectedFiles.splice(i,1); renderFiles();
+        } }, '×'))));
+    };
+    picker.addEventListener('change', () => {
+      const incoming = [...(picker.files || [])];
+      const combined = [...selectedFiles, ...incoming];
+      if (combined.length > 5) { error.textContent = 'Можно прикрепить не более 5 файлов.'; return; }
+      if (combined.some(f => f.size > 3 * 1024 * 1024) || combined.reduce((n,f) => n + f.size,0) > 5 * 1024 * 1024) {
+        error.textContent = 'Лимит вложений: до 3 МБ на файл и 5 МБ суммарно.'; return;
+      }
+      selectedFiles = combined; error.textContent = ''; renderFiles(); picker.value = '';
+    });
+    const loadProjects = async () => {
+      projectStatus.textContent = 'Загружаю твои проекты…';
+      try {
+        const data = await api('/api/me');
+        const items = data.items || [];
+        projectSelect.replaceChildren(h('option', { value: '', text: 'Выберите опубликованный проект…' }),
+          ...items.map(item => h('option', { value: item.id, text: item.title + ' · ' + item.type })));
+        projectStatus.textContent = items.length ? 'Выбери проект и нажми «Вставить ссылку».' : 'Опубликованных проектов пока нет.';
+      } catch (e) { projectStatus.textContent = 'Не удалось загрузить проекты: ' + e.message; }
+    };
+    const insertProject = () => {
+      const item = projectSelect.options[projectSelect.selectedIndex];
+      if (!projectSelect.value) { projectStatus.textContent = 'Сначала выбери проект.'; return; }
+      const link = location.origin + '/i/' + encodeURIComponent(projectSelect.value);
+      text.value += '\n\nМой проект CheatLab: ' + item.textContent + '\n' + link + '\n';
+      projectStatus.textContent = 'Ссылка на проект добавлена в письмо.';
+      text.focus();
+    };
+    const toBase64 = async file => {
+      const buffer = new Uint8Array(await file.arrayBuffer());
+      let binary = '';
+      const chunk = 0x8000;
+      for (let i = 0; i < buffer.length; i += chunk) binary += String.fromCharCode(...buffer.subarray(i, i + chunk));
+      return btoa(binary);
+    };
+    main.replaceChildren(
+      h('div', { class: 'mail-toolbar' }, h('h2', { text: replyTo ? 'Ответить' : 'Новое письмо' }),
+        h('button', { class: 'btn btn-ghost', type: 'button', onclick: paintMessages }, 'Отмена')),
       h('form', { class: 'panel mail-compose', onsubmit: async e => {
         e.preventDefault();
+        const submit = e.submitter;
+        if (submit) submit.disabled = true;
+        error.textContent = '';
         try {
-          await api('/api/mail/send', { method: 'POST', body: { mailboxId: activeBox.id, to: to.value, subject: subject.value, textBody: text.value } });
-          toast('Письмо отправлено'); folder = 'sent'; await paintMessages();
-        } catch (err) { error.textContent = err.message; }
+          const attachments = await Promise.all(selectedFiles.map(async file => ({
+            filename: file.name.replace(/[\\/\r\n\0]/g, '_').slice(0,180),
+            contentType: file.type || 'application/octet-stream',
+            content: await toBase64(file),
+          })));
+          await api('/api/mail/send', { method: 'POST', body: {
+            mailboxId: activeBox.id, to: to.value, subject: subject.value,
+            textBody: text.value, attachments,
+          } });
+          toast('Письмо принято почтовым провайдером'); folder = 'sent'; query = ''; await paintMessages();
+        } catch (err) { error.textContent = err.message; if (submit) submit.disabled = false; }
       } },
-      field('Кому', to), field('Тема', subject), field('Сообщение', text), error,
-      h('button', { class: 'btn btn-primary', type: 'submit' }, icon('send','i i-sm'), 'Отправить')));
+      field('Кому', to), field('Тема', subject), field('Сообщение', text),
+      h('div', { class: 'mail-compose-tools' },
+        h('label', { class: 'btn btn-ghost mail-file-button' }, icon('paperclip','i i-sm'), 'Прикрепить фото или файл', picker),
+        h('div', { class: 'mail-project-share' }, h('strong', { text: 'Поделиться проектом' }),
+          projectSelect, h('button', { class: 'btn btn-ghost', type: 'button', onclick: insertProject }, icon('share-2','i i-sm'), 'Вставить ссылку'),
+          h('button', { class: 'btn btn-ghost', type: 'button', onclick: loadProjects }, icon('refresh-cw','i i-sm'), 'Загрузить проекты'),
+          projectStatus)),
+      attachmentList, error,
+      h('div', { class: 'mail-compose-footer' },
+        h('span', { class: 'hint', text: 'До 5 вложений · 5 МБ суммарно' }),
+        h('button', { class: 'btn btn-primary', type: 'submit' }, icon('send','i i-sm'), 'Отправить'))));
+    await loadProjects();
+    to.focus();
   }
   await refresh();
   activeBox = boxes[0] || null;
-  await refreshSide();
+  renderSide();
   await paintMessages();
 }
 
 /* ----------------------------------------------------------------- admin --
+
  * The console is one page with four queues rather than a nested set of admin
  * screens: a moderator's whole job is "look at the open reports, look at the
  * newest posts, act", and every extra level of navigation is a level between
