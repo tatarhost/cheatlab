@@ -768,7 +768,7 @@ function stripBase(pathname) {
 // ---------------------------------------------------------------- chrome
 
 function markNav() {
-  const path = stripBase(location.pathname);
+  const path = stripBase(location.pathname).replace(/\/+$/, '') || '/';
   for (const link of document.querySelectorAll('.nav-link')) {
     const href = stripBase(new URL(link.href).pathname);
     const on = href === '/' ? path === '/' : path.startsWith(href);
