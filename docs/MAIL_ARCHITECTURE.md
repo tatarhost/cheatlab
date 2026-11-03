@@ -45,6 +45,18 @@ Therefore, a genuinely usable public mail service (receive and send to arbitrary
 
 GitHub Pages is static hosting and cannot run SMTP/IMAP daemons. A free inbound-forwarding service alone is not a full mailbox. Do not deploy a fake inbox or accept mail that cannot be durably stored.
 
+## Current implementation in this branch
+
+- Added an Email navigation entry and a responsive mail workspace in the existing site design.
+- Added account-authenticated mailbox listing/creation/deletion APIs, with a server-side maximum of five addresses per account and unique `@cheatlab.fun` local parts.
+- Added private message-list API and a message reader that detects common one-time verification-code patterns and offers one-click copy.
+- Added D1 schema and migration `0007_mail.sql`.
+- Mailboxes are deliberately created with `pending` status. No inbound provider is connected yet; the outbound endpoint returns HTTP 503 rather than pretending a message was sent. The UI explains this.
+
+## Deploy prerequisites
+
+The site deploy workflow only publishes `public/` to GitHub Pages. The Worker and D1 schema are deployed separately. After merging and reviewing this branch, apply the migration with `cd worker && npx wrangler d1 migrations apply cheatlab --remote --config wrangler.toml`, then deploy with `npx wrangler deploy --config wrangler.toml`. These commands require an authenticated Cloudflare account with access to the existing D1 database. This does not activate external email delivery; provider onboarding and DNS verification remain separate requirements.
+
 ## Delivery phases
 
 - Phase 0: verify domain DNS ownership, current Cloudflare account/zone, available Worker plan, and private storage bindings.
