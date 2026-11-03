@@ -346,7 +346,11 @@ CREATE TABLE IF NOT EXISTS mail_message (
   subject TEXT NOT NULL DEFAULT '',
   text_body TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
-  provider_message_id TEXT
+  provider_message_id TEXT,
+  html_body TEXT NOT NULL DEFAULT '',
+  is_read INTEGER NOT NULL DEFAULT 0,
+  is_starred INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mail_message_provider ON mail_message(provider_message_id) WHERE provider_message_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_mail_message_box ON mail_message(mailbox_id, direction, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mail_message_starred ON mail_message(mailbox_id, is_starred, created_at DESC);
