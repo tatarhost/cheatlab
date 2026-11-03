@@ -3715,7 +3715,7 @@ async function viewMail(url) {
     const status = activeBox.status === 'active'
       ? h('div', { class: 'mail-server-ok' }, icon('check','i i-sm'), 'Почтовый сервер подключён')
       : h('div', { class: 'mail-server-pending' }, icon('alert','i i-sm'),
-          'Адрес создан, но приём писем ещё не включён: требуется подключить MX/DNS и почтовый шлюз.');
+          'Адрес создан, но приём и отправка писем ещё не включены: требуется подключить MX/DNS, входящий шлюз и сервис отправки.');
     main.replaceChildren(toolbar, status,
       messages.length ? h('div', { class: 'mail-list' }, ...messages.map(msg => h('button', {
         class: 'mail-row', type: 'button', onclick: () => openMessage(msg),
