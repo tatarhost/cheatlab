@@ -14,6 +14,14 @@ document.write('<base href="' +
 '">');
 </script>
 
+<!-- Never render credential fields on plain HTTP. Redirect before the page body
+     (and therefore before any password input) is parsed. -->
+<script>
+  if (location.protocol === 'http:' && location.hostname === 'cheatlab.fun') {
+    location.replace('https://' + location.host + location.pathname + location.search + location.hash);
+  }
+</script>
+
 <title>CHEATLAB — скрипты, пасты, медиа и файлы</title>
 <meta name="description" content="CHEATLAB — публикация скриптов, кода, изображений, видео и любых файлов. Анонимно или с аккаунтом, без ограничений по региону.">
 
@@ -186,6 +194,6 @@ document.write('<base href="' +
 
 <div id="toast" class="toast" hidden></div>
 
-  <script src="app.js?v=8" type="module"></script>
+  <script src="app.js?v=9" type="module"></script>
 </body>
 </html>
