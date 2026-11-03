@@ -3644,7 +3644,7 @@ function safeMailHtml(raw) {
       for (const attr of [...child.attributes]) {
         const name = attr.name.toLowerCase();
         const value = attr.value.trim();
-        if (name.startsWith('on') || name === 'style' || name === 'srcset' || !['href','src','alt','title','width','height','colspan','rowspan','target'].includes(name)) {
+        if (name.startsWith('on') || name === 'srcset' || !['href','src','alt','title','width','height','colspan','rowspan','target','style'].includes(name)) {
           child.removeAttribute(attr.name); continue;
         }
         if (name === 'href' && !/^(https:\/\/|mailto:)/i.test(value)) child.removeAttribute(attr.name);
@@ -3744,7 +3744,7 @@ async function viewMail(url) {
     const messages = data.messages || [];
     const visible = messages.filter(msg => [msg.fromAddress,msg.toAddress,msg.subject,msg.textBody].join(' ').toLowerCase().includes(query.toLowerCase()));
     const search = h('input', { class: 'input mail-search', type: 'search', placeholder: 'Поиск по письмам…', value: query,
-      oninput: e => { query = e.target.value; paintList(visible, messages); } });
+      oninput: e => { query = e.target.value; paintList(messages.filter(msg => [msg.fromAddress,msg.toAddress,msg.subject,msg.textBody].join(' ').toLowerCase().includes(query.toLowerCase())), messages); } });
     const toolbar = h('div', { class: 'mail-toolbar' },
       h('div', {}, h('h2', { text: folder === 'inbox' ? 'Входящие' : folder === 'sent' ? 'Отправленные' : 'Избранное' }),
         h('p', { class: 'hint', text: activeBox.address })),
@@ -3772,7 +3772,7 @@ async function viewMail(url) {
           h('span', { class: 'mail-row-subject', text: (msg.subject || '(без темы)') + ' — ' + (msg.textBody || '').replace(/\s+/g,' ').slice(0,100) }),
           h('span', { class: 'mail-row-date', text: new Date(msg.createdAt).toLocaleString('ru') })),
         h('button', { class: 'mail-star' + (msg.isStarred ? ' is-starred' : ''), type: 'button', title: msg.isStarred ? 'Убрать из избранного' : 'В избранное',
-          onclick: async () => { try { await updateMessage(msg, { isStarred: !msg.isStarred }); paintList(all.filter(m => m.id !== msg.id || true).filter(m => folder !== 'starred' || m.isStarred), all); } catch(e) { toast(e.message,true); } } }, icon('star','i i-sm')))));
+          onclick: async () => { try { await updateMessage(msg, { isStarred: !msg.isStarred }); paintList(all.filter(m => [m.fromAddress,m.toAddress,m.subject,m.textBody].join(' ').toLowerCase().includes(query.toLowerCase())).filter(m => folder !== 'starred' || m.isStarred), all); } catch(e) { toast(e.message,true); } } }, icon('star','i i-sm')))));
     }
   }
   async function openMessage(msg) {
