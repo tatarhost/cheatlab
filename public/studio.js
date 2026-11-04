@@ -270,11 +270,13 @@
       nav.append(hint);
     }
     const updateHint = () => {
-      const canScroll = nav.scrollWidth > nav.clientWidth + 4;
-      hint.classList.toggle('is-hidden', !canScroll || nav.scrollLeft > 8);
+      const maxScroll = nav.scrollWidth - nav.clientWidth;
+      const canContinue = maxScroll > 4 && nav.scrollLeft < maxScroll - 8;
+      hint.classList.toggle('is-hidden', !canContinue);
     };
     nav.addEventListener('scroll', updateHint, { passive: true });
     window.addEventListener('resize', updateHint, { passive: true });
+    if (window.ResizeObserver) new ResizeObserver(updateHint).observe(nav);
     updateHint();
   }
 
