@@ -21,7 +21,7 @@ import { secretMatches } from './util.js';
  */
 
 /** The prefix on every frame this room sends, so a client can tell them apart. */
-const FRAME = { hello: 'hello', msg: 'msg', stale: 'stale' };
+const FRAME = { hello: 'hello', msg: 'msg', stale: 'stale', call: 'call' };
 
 /**
  * The name a room is addressed by. Deterministic, so the Worker and the
@@ -158,14 +158,33 @@ export class ConversationRoom {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  /**
-   * Attached to every socket, including ones restored after an eviction.
-   *
-   * The protocol is one-way on purpose: the client sends nothing over the socket.
-   * A message written here would bypass the Worker, which is the whole reason
-   * messages travel by POST. Runtime ping frames do not reach this handler.
-   */
-  async webSocketMessage() {}
+  /** Relay bounded WebRTC signalling. Actual chat messages still go through the Worker. */
+  async webSocketMessage(ws, message) {
+    const raw = typeof message === 'string' ? message : '';
+    if (!raw || raw.length > 48_000) return;
+    let frame;
+    try { frame = JSON.parse(raw); } catch { return; }
+    if (frame?.t !== 'call') return;
+    const allowed = new Set(['invite', 'accept', 'reject', 'offer', 'answer', 'ice', 'end']);
+    if (!allowed.has(frame.k)) return;
+    const sender = ws.deserializeAttachment?.();
+    if (!sender?.convId || !sender?.userId) return;
+    const target = typeof frame.to === 'string' && /^[A-Za-z0-9_-]{3,40}$/.test(frame.to) ? frame.to : '';
+    if (frame.k !== 'invite' && !target) return;
+    const data = frame.data && typeof frame.data === 'object' ? frame.data : {};
+    if ((frame.k === 'offer' || frame.k === 'answer') && (typeof data.sdp !== 'string' || data.sdp.length > 32_000)) return;
+    if (frame.k === 'ice' && (typeof data.candidate !== 'string' || data.candidate.length > 4_000)) return;
+    if (frame.k === 'invite' && !['audio', 'video'].includes(data.mode)) return;
+    const payload = { from: sender.userId, k: frame.k, data };
+    const sockets = this.forRoom(new URL(`https://room.internal/?id=${sender.convId}`));
+    for (const peer of sockets) {
+      if (peer === ws) continue;
+      const peerInfo = peer.deserializeAttachment?.();
+      if (!peerInfo?.userId || peerInfo.userId === sender.userId) continue;
+      if (target && peerInfo.userId !== target) continue;
+      send(peer, FRAME.call, payload);
+    }
+  }
 
   async webSocketClose(ws, code, reason, wasClean) {
     // Harmless with `web_socket_auto_reply_to_close` on, and required without it:
