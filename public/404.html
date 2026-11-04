@@ -30,7 +30,8 @@ document.write('<base href="' +
   try {
     sessionStorage.setItem('cheatlab.redirect', location.pathname + location.search + location.hash);
   } catch (e) { /* private mode: the app falls back to the root route */ }
-  location.replace('./');
+  const root = document.querySelector('base')?.href || new URL('./', location.href).href;
+  location.replace(root);
 </script>
 </head>
 <body>
