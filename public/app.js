@@ -4139,9 +4139,15 @@ async function viewChat(url) {
 
 
 /* -------------------------------------------------------------- CheatLab Mail */
-function safeMailHtml(raw) {
+function safeMailHtml(raw, plainText = false) {
   const parser = new DOMParser();
-  const doc = parser.parseFromString(String(raw || ''), 'text/html');
+  const doc = parser.parseFromString('', 'text/html');
+  if (plainText) doc.body.textContent = String(raw || '');
+  else {
+    const parsed = parser.parseFromString(String(raw || ''), 'text/html');
+    doc.body.replaceWith(parsed.body);
+    doc.head.replaceWith(parsed.head);
+  }
   // Email clients commonly keep layout CSS in the document head; the isolated
   // reader returns body markup only, so move those styles into the sanitized body.
   for (const style of [...doc.head.querySelectorAll('style')]) doc.body.prepend(style);
@@ -4173,7 +4179,7 @@ function safeMailHtml(raw) {
   };
   clean(doc.body);
   // Render bare image URLs too: some mail senders include a URL instead of an <img>.
-  const imageUrlPattern = /https?:\/\/[^\s<>"']+?\.(?:png|jpe?g|gif|webp)(?:\?[^\s<>"']*)?/gi;
+  const imageUrlPattern = /\[?(https?:\/\/[^\s<>"'\]]+)\]?/gi;
   const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
   const textNodes = [];
   while (walker.nextNode()) textNodes.push(walker.currentNode);
@@ -4183,16 +4189,24 @@ function safeMailHtml(raw) {
     let match, last = 0, changed = false;
     const fragment = doc.createDocumentFragment();
     while ((match = imageUrlPattern.exec(value))) {
+      const imageUrl = match[1].replace(/[),.;]+$/, '');
+      if (!/^https:\/\//i.test(imageUrl)) continue;
       changed = true;
-      if (match.index > last) fragment.append(doc.createTextNode(value.slice(last, match.index)));
-      const imageUrl = match[0].replace(/[),.;]+$/, '');
+      if (match.index > last) {
+        const prefix = value.slice(last, match.index).replace(/\s*\[$/, '');
+        if (prefix) fragment.append(doc.createTextNode(prefix));
+      }
       const link = doc.createElement('a');
       link.href = imageUrl; link.target = '_blank'; link.rel = 'noopener noreferrer';
-      const image = doc.createElement('img');
-      image.src = imageUrl; image.alt = 'Изображение из письма';
-      image.loading = 'lazy'; image.referrerPolicy = 'no-referrer';
-      link.append(image); fragment.append(link);
-      last = match.index + imageUrl.length; imageUrlPattern.lastIndex = last;
+      if (/\.(?:png|jpe?g|gif|webp)(?:\?|$)/i.test(imageUrl)) {
+        const image = doc.createElement('img');
+        image.src = imageUrl; image.alt = 'Изображение из письма';
+        image.loading = 'eager'; image.referrerPolicy = 'no-referrer';
+        image.style.cssText = 'display:block;max-width:100%;height:auto;margin:12px 0;border-radius:8px';
+        link.append(image);
+      } else link.textContent = imageUrl;
+      fragment.append(link);
+      last = match.index + match[0].length;
     }
     if (changed) {
       if (last < value.length) fragment.append(doc.createTextNode(value.slice(last)));
@@ -4328,9 +4342,23 @@ async function viewMail(url) {
     const searchableCodeText = [msg.subject, msg.textBody, htmlText].filter(Boolean).join('\n');
     const codeMatch = searchableCodeText.match(/(?:код|code|verification|verify|login|otp|one[- ]time)[^\d]{0,60}(\d{4,8})|\b(\d{6})\b/i);
     const verificationCode = codeMatch ? (codeMatch[1] || codeMatch[2]) : '';
-    const content = msg.htmlBody
-      ? h('iframe', { class: 'mail-html-frame', title: 'Содержимое письма', sandbox: 'allow-popups allow-popups-to-escape-sandbox', srcdoc: '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src https: data:; style-src \'unsafe-inline\';"><style>body{font:14px Arial,sans-serif;color:#202124;line-height:1.55;margin:18px;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%;border-collapse:collapse}a{color:#1769aa}pre{white-space:pre-wrap}</style></head><body>' + safeMailHtml(msg.htmlBody) + '</body></html>' })
-      : h('div', { class: 'mail-message-body', text: msg.textBody || 'Текст письма отсутствует.' });
+    const content = h('iframe', {
+      class: 'mail-html-frame', title: 'Содержимое письма',
+      sandbox: 'allow-same-origin allow-popups allow-popups-to-escape-sandbox',
+      srcdoc: '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \\'none\\'; img-src https: data:; style-src \\'unsafe-inline\\' https:;"><style>body{font:14px Arial,sans-serif;color:#202124;line-height:1.55;margin:18px;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%;border-collapse:collapse}a{color:#1769aa}pre{white-space:pre-wrap}</style></head><body>' +
+        safeMailHtml(msg.htmlBody || msg.textBody || 'Текст письма отсутствует.', !msg.htmlBody) +
+        '</body></html>'
+    });
+    content.addEventListener('load', () => {
+      try {
+        content.contentDocument.addEventListener('click', event => {
+          const link = event.target.closest('a[href]');
+          if (!link) return;
+          event.preventDefault();
+          window.open(link.href, '_blank', 'noopener,noreferrer');
+        });
+      } catch (error) { /* The browser may deny access to a sandboxed document. */ }
+    });
     main.replaceChildren(
       h('div', { class: 'mail-toolbar' },
         h('button', { class: 'btn btn-ghost', type: 'button', onclick: paintMessages }, icon('arrow-left','i i-sm'), ' Назад'),
