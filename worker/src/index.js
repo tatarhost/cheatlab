@@ -2837,7 +2837,7 @@ route('GET', /^\/api\/chats\/([A-Za-z0-9]{6,24})\/ice$/, async (request, env, m)
       .map((server) => ({
         ...server,
         urls: (Array.isArray(server.urls) ? server.urls : [server.urls])
-          .filter((url) => typeof url === 'string' && !/:53(?:\\?|$)/.test(url)),
+          .filter((url) => typeof url === 'string' && !/:53(?:[?]|$)/.test(url)),
       }))
       .filter((server) => server.urls.length);
     if (!iceServers.length) {
