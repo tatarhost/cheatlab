@@ -3729,7 +3729,7 @@ function chatListView(data, banner) {
       dmHits.replaceChildren(...(people.length ? people.map(u => h('button', { class: 'chat-chip', type: 'button', onclick: async () => {
         try { const opened = await api(`/api/chats/dm/${encodeURIComponent(u.id)}`, { method: 'POST' }); navigate(`/chat/${opened.chat.id}`); }
         catch (err) { toast(err.message || 'Чтобы начать переписку, подпишитесь друг на друга', true); }
-      } }, `@${u.nick || u.id}`)) : [h('span', { class: 'chat-help', text: 'Пользователи не найдены.' })]));
+      } }, String(u.nick || u.id))) : [h('span', { class: 'chat-help', text: 'Пользователи не найдены.' })]));
     } catch (err) { toast(err.message || 'Не удалось найти пользователя', true); }
   } },
     h('h2', {}, icon('message-circle','i i-sm'), 'Открыть личный чат'),
