@@ -1,7 +1,7 @@
 /**
  * Entry point. Wraps the existing Worker (index.js) without changing it:
  *
- *   - bot check on login and registration (signed challenge + proof of work + question),
+ *   - visual ring CAPTCHA and privacy-preserving interaction scoring on login and registration,
  *   - AI moderation of posts, comments, chat messages, profile text, images and text files,
  *   - the design gallery API (/api/themes).
  *
@@ -18,10 +18,7 @@ import { handleThemes } from './themes.js';
 
 export { ConversationRoom };
 
-const HC_TTL_MS = 10 * 60 * 1000;
 const SMALL = 4_000_000;
-const enc = new TextEncoder();
-const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 
 function replyFor(env) {
   const origin = env.ALLOW_ORIGIN || '*';
