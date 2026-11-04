@@ -259,6 +259,24 @@
     b.addEventListener('click', open);
     const after = nav.querySelector('a[href="./chat"]');
     after ? after.after(b) : nav.append(b);
+
+    // Small mobile-only affordance: it disappears after the user scrolls the
+    // horizontal navigation, and never blocks taps on the tabs.
+    let hint = document.querySelector('.nav-scroll-hint');
+    if (!hint) {
+      hint = document.createElement('span');
+      hint.className = 'nav-scroll-hint';
+      hint.textContent = 'Ещё разделы · листайте';
+      hint.setAttribute('aria-hidden', 'true');
+      document.body.append(hint);
+    }
+    const updateHint = () => {
+      const canScroll = nav.scrollWidth > nav.clientWidth + 4;
+      hint.classList.toggle('is-hidden', !canScroll || nav.scrollLeft > 8);
+    };
+    nav.addEventListener('scroll', updateHint, { passive: true });
+    window.addEventListener('resize', updateHint, { passive: true });
+    updateHint();
   }
 
   applySaved();
