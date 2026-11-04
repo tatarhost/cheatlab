@@ -2796,6 +2796,63 @@ route('POST', /^\/api\/chats\/([A-Za-z0-9]{6,24})\/members\/([A-Za-z0-9_-]{3,40}
 });
 
 /**
+ * Returns short-lived ICE credentials for peer-to-peer calls.
+ *
+ * A STUN-only connection cannot traverse every NAT/firewall. When Cloudflare
+ * Realtime TURN credentials are configured, the browser receives temporary
+ * credentials; the long-lived API token never leaves this Worker.
+ */
+route('GET', /^\/api\/chats\/([A-Za-z0-9]{6,24})\/ice$/, async (request, env, m) => {
+  const room = await openRoom(request, env, m[1]);
+  if (room.error) return room.error;
+  if (!room.rights.post) return fail(403, 'you cannot join this conversation');
+
+  const fallback = [
+    { urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] },
+  ];
+  const keyId = String(env.CF_TURN_KEY_ID || '').trim();
+  const apiToken = String(env.CF_TURN_API_TOKEN || '').trim();
+  if (!keyId || !apiToken) {
+    return json({ iceServers: fallback, turnAvailable: false, setupRequired: true });
+  }
+
+  try {
+    const response = await fetch(
+      `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(keyId)}/credentials/generate-ice-servers`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ttl: 86400 }),
+      },
+    );
+    if (!response.ok) {
+      console.error('Cloudflare TURN credential request failed', response.status);
+      return json({ iceServers: fallback, turnAvailable: false, setupRequired: true });
+    }
+    const payload = await response.json();
+    const iceServers = (Array.isArray(payload.iceServers) ? payload.iceServers : [])
+      .map((server) => ({
+        ...server,
+        urls: (Array.isArray(server.urls) ? server.urls : [server.urls])
+          .filter((url) => typeof url === 'string' && !/:53(?:\\?|$)/.test(url)),
+      }))
+      .filter((server) => server.urls.length);
+    if (!iceServers.length) {
+      return json({ iceServers: fallback, turnAvailable: false, setupRequired: true });
+    }
+    const turnAvailable = iceServers.some((server) =>
+      server.urls.some((url) => /^(turn|turns):/i.test(url)));
+    return json({ iceServers, turnAvailable, setupRequired: false });
+  } catch (err) {
+    console.error('Cloudflare TURN credential request failed', err?.message || err);
+    return json({ iceServers: fallback, turnAvailable: false, setupRequired: true });
+  }
+});
+
+/**
  * Mints a ticket for one WebSocket handshake.
  *
  * The browser cannot set a request header when it opens a WebSocket, and the
