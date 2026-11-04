@@ -3711,6 +3711,33 @@ function chatListView(data, banner) {
     h('div', { class: 'chat-start-actions' }, h('button', { class: 'btn btn-primary', type: 'submit' }, 'Найти пользователя')),
     friendHits,
   );
+
+  const dmField = h('input', { class: 'chat-input', placeholder: 'Имя или @id для личного чата', maxlength: '40', autocomplete: 'off' });
+  const dmHits = h('div', { class: 'chat-hits' });
+  const dmForm = h('form', { class: 'chat-start-card', onsubmit: async (e) => {
+    e.preventDefault();
+    const q = dmField.value.trim().replace(/^@/, '');
+    if (!q) return;
+    try {
+      const result = await api(`/api/users?q=${encodeURIComponent(q)}`);
+      const people = (result.users || []).filter(u => u.id !== account?.id);
+      if (people.length === 1) {
+        try { const opened = await api(`/api/chats/dm/${encodeURIComponent(people[0].id)}`, { method: 'POST' }); navigate(`/chat/${opened.chat.id}`); }
+        catch (err) { toast(err.message || 'Чтобы начать переписку, подпишитесь друг на друга', true); }
+        return;
+      }
+      dmHits.replaceChildren(...(people.length ? people.map(u => h('button', { class: 'chat-chip', type: 'button', onclick: async () => {
+        try { const opened = await api(`/api/chats/dm/${encodeURIComponent(u.id)}`, { method: 'POST' }); navigate(`/chat/${opened.chat.id}`); }
+        catch (err) { toast(err.message || 'Чтобы начать переписку, подпишитесь друг на друга', true); }
+      } }, `@${u.nick || u.id}`)) : [h('span', { class: 'chat-help', text: 'Пользователи не найдены.' })]));
+    } catch (err) { toast(err.message || 'Не удалось найти пользователя', true); }
+  } },
+    h('h2', {}, icon('message-circle','i i-sm'), 'Открыть личный чат'),
+    h('p', { text: 'Найди человека по нику или ID. Если чат не открывается, сначала добавьте друг друга в друзья.' }),
+    dmField,
+    h('div', { class: 'chat-start-actions' }, h('button', { class: 'btn btn-ghost', type: 'submit' }, 'Найти и написать')),
+    dmHits,
+  );
   const groupTitle = h('input', { class: 'chat-input', placeholder: 'Например, Команда', maxlength: '80', required: true });
   const groupSearch = h('input', { class: 'chat-input', placeholder: 'Найти участников по нику или ID', maxlength: '40' });
   const groupHits = h('div', { class: 'chat-hits' });
@@ -3753,7 +3780,7 @@ function chatListView(data, banner) {
   $view.replaceChildren(
     h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Чаты' }), h('p', { class: 'page-sub', text: 'Личные переписки, группы и каналы.' }))),
     banner || null,
-    h('div', { class: 'chat-start' }, friendForm, groupForm),
+    h('div', { class: 'chat-start' }, friendForm, dmForm, groupForm),
     channels,
     h('h2', { class: 'chat-section-title', text: 'Ваши переписки' }),
     rows.length ? h('div', { class: 'chat-list' }, ...rows) : h('p', { class: 'hint', text: 'Пока нет чатов. Добавь друга или создай группу выше.' }),
