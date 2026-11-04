@@ -771,7 +771,13 @@ function stripBase(pathname) {
 function markNav() {
   const path = stripBase(location.pathname).replace(/\/+$/, '') || '/';
   for (const link of document.querySelectorAll('.nav-link')) {
-    const href = stripBase(new URL(link.href).pathname);
+    // Resolve the literal href against the document base. Do not depend on
+    // link.href being populated by a browser/polyfill before the first render.
+    const rawHref = link.getAttribute('href');
+    if (!rawHref) continue;
+    let href;
+    try { href = stripBase(new URL(rawHref, document.baseURI).pathname); }
+    catch { continue; }
     const on = href === '/' ? path === '/' : path.startsWith(href);
     if (on) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
