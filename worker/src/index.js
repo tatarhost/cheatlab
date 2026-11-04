@@ -602,25 +602,44 @@ route('GET', /^\/api\/mail\/messages$/, async (request, env, _m, url) => {
   const box = str(url.searchParams.get('mailbox'), 32);
   const requestedFolder = url.searchParams.get('folder');
   const folder = requestedFolder === 'sent' || requestedFolder === 'starred' ? requestedFolder : 'inbox';
-  const owned = await env.STORE.db.prepare('SELECT id,address FROM mail_mailbox WHERE id = ? AND owner_user_id = ?').bind(box, who.user.id).first();
+  let owned;
+  try {
+    owned = await env.STORE.db.prepare(
+      'SELECT id,address FROM mail_mailbox WHERE id = ? AND owner_user_id = ?'
+    ).bind(box, who.user.id).first();
+  } catch (err) {
+    console.error('[mail] mailbox ownership query failed', err?.stack || err);
+    return fail(503, 'mail database is temporarily unavailable', { code: 'MAIL_DB_OWNERSHIP' });
+  }
   if (!owned) return fail(404, 'mailbox not found');
-  const params = [box, folder, folder, folder === 'sent' ? 'sent' : 'inbox'];
+
   let rows;
   try {
-    // Current schema includes rich-body, read/starred and attachment columns.
-    rows = await env.STORE.rows(
-      "SELECT id, direction, from_address, to_address, subject, text_body, html_body, attachments_json, created_at, is_read, is_starred FROM mail_message WHERE mailbox_id = ? AND ((? = 'starred' AND is_starred = 1) OR (? <> 'starred' AND direction = ?)) ORDER BY created_at DESC LIMIT 100",
-      ...params,
-    );
+    // Keep folder queries simple: separate predicates avoid SQLite planner and
+    // binding edge cases in the previous combined starred/inbox expression.
+    if (folder === 'starred') {
+      rows = await env.STORE.rows(
+        'SELECT id, direction, from_address, to_address, subject, text_body, html_body, attachments_json, created_at, is_read, is_starred FROM mail_message WHERE mailbox_id = ? AND is_starred = 1 ORDER BY created_at DESC LIMIT 100',
+        box,
+      );
+    } else {
+      rows = await env.STORE.rows(
+        'SELECT id, direction, from_address, to_address, subject, text_body, html_body, attachments_json, created_at, is_read, is_starred FROM mail_message WHERE mailbox_id = ? AND direction = ? ORDER BY created_at DESC LIMIT 100',
+        box, folder === 'sent' ? 'sent' : 'inbox',
+      );
+    }
   } catch (err) {
-    // Keep inbox readable if an older D1 database has not received the optional
-    // mail feature migrations yet. Core message columns were created in 0007.
-    console.warn('mail rich-schema query failed; using base message fields', err?.message || err);
+    console.warn('[mail] rich message columns unavailable; trying base schema', err?.message || err);
     if (folder === 'starred') return json({ messages: [] });
-    rows = await env.STORE.rows(
-      "SELECT id, direction, from_address, to_address, subject, text_body, created_at FROM mail_message WHERE mailbox_id = ? AND direction = ? ORDER BY created_at DESC LIMIT 100",
-      box, folder === 'sent' ? 'sent' : 'inbox',
-    );
+    try {
+      rows = await env.STORE.rows(
+        'SELECT id, direction, from_address, to_address, subject, text_body, created_at FROM mail_message WHERE mailbox_id = ? AND direction = ? ORDER BY created_at DESC LIMIT 100',
+        box, folder === 'sent' ? 'sent' : 'inbox',
+      );
+    } catch (fallbackErr) {
+      console.error('[mail] base message query failed', fallbackErr?.stack || fallbackErr);
+      return fail(503, 'mail messages are temporarily unavailable', { code: 'MAIL_DB_MESSAGES' });
+    }
   }
   return json({ messages: rows.map(r => {
     let attachments = [];
