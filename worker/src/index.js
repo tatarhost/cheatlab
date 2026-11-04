@@ -2426,6 +2426,25 @@ route('GET', /^\/api\/chats\/([A-Za-z0-9]{6,24})$/, async (request, env, m, url)
   if (room.error) return room.error;
   const { chats, conv, rights } = room;
 
+  // A one-second client poll asks only for rows newer than its last message.
+  // The ordinary history route below remains unchanged for initial loads/paging.
+  if (url.searchParams.has('after')) {
+    const afterAt = Math.max(0, Number(url.searchParams.get('after')) || 0);
+    const afterId = str(url.searchParams.get('afterId'), 24) || '';
+    const limit = clamp(Number(url.searchParams.get('limit')) || 60, 1, 100);
+    const rows = await chats.listMessagesAfter(conv.id, { afterAt, afterId, limit });
+    const messages = await Promise.all(rows.map(async (row) => (
+      messageView(row, await chats.listMessageFiles(row.id))
+    )));
+    const newest = rows[rows.length - 1];
+    if (newest && room.member) await chats.markRead(conv.id, room.who.user.id, newest.created_at);
+    const view = convView({
+      ...(await chats.getConversationFor(conv.id, room.who.user.id)),
+      members: await chats.memberCount(conv.id),
+    }, rights, room.member);
+    return json({ chat: view, messages, hasMore: false });
+  }
+
   const before = str(url.searchParams.get('before'), 24) || null;
   const limit = clamp(Number(url.searchParams.get('limit')) || 50, 1, 100);
   const rows = await chats.listMessages(conv.id, { limit, before });
