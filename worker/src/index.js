@@ -905,10 +905,12 @@ function makeEmailCode() {
 }
 async function sendEmailCode(env, email, code, purpose) {
   if (!env.RESEND_API_KEY) return false;
-  const subject = purpose === 'register' ? 'Подтверждение регистрации CHEATLAB' : 'Код входа в CHEATLAB';
+  const subject = purpose === 'register' ? 'Подтверждение регистрации CHEATLAB' : purpose === 'email_change' ? 'Подтверждение новой почты CHEATLAB' : 'Код входа в CHEATLAB';
   const text = purpose === 'register'
-    ? `Код подтверждения регистрации CHEATLAB: ${code}\n\nКод действует 10 минут. Если вы не регистрировались, проигнорируйте письмо.`
-    : `Код входа в CHEATLAB: ${code}\n\nКод действует 10 минут. Если вы не пытались войти, проигнорируйте письмо.`;
+    ? `Код подтверждения регистрации CHEATLAB: ${code}\\n\\nКод действует 10 минут. Если вы не регистрировались, проигнорируйте письмо.`
+    : purpose === 'email_change'
+      ? `Код подтверждения новой почты CHEATLAB: ${code}\\n\\nКод действует 10 минут. Если вы не меняли почту, проигнорируйте письмо.`
+      : `Код входа в CHEATLAB: ${code}\\n\\nКод действует 10 минут. Если вы не пытались войти, проигнорируйте письмо.`;
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + env.RESEND_API_KEY, 'Content-Type': 'application/json' },
@@ -931,7 +933,7 @@ async function createEmailOtp(env, { purpose, email, userId = '', nick = '', nic
   await STORE.db.prepare(
     'INSERT INTO email_otp (id,purpose,email,user_id,nick,nick_key,pass_hash,pass_salt,iterations,code_hash,expires_at,attempts,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)'
   ).bind(id, purpose, email, userId, nick, nickKeyValue, passHash, passSalt, iterations, await secretHash(code), expires, 0, now()).run();
-  const sent = await sendEmailCode(env, email, code, purpose === 'register' ? 'register' : 'login');
+  const sent = await sendEmailCode(env, email, code, purpose === 'register' ? 'register' : purpose === 'email_change' ? 'email_change' : 'login');
   if (!sent) {
     await STORE.db.prepare('DELETE FROM email_otp WHERE id = ?').bind(id).run();
     return { error: fail(503, 'Не удалось отправить код. Проверьте отправку почты CHEATLAB.') };
@@ -1073,6 +1075,49 @@ route('POST', /^\/api\/auth\/login\/verify$/, async (request, env) => {
   }
   await env.STORE.db.prepare('DELETE FROM email_otp WHERE id = ?').bind(row.id).run();
   return issueAccountSession(request, env, user);
+});
+
+route('GET', /^\/api\/auth\/settings$/, async (request, env) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  return json({ email: maskEmail(who.user.email), emailVerified: Number(who.user.email_verified) === 1, twoFactorEnabled: Number(who.user.email_verified) === 1 });
+});
+
+route('POST', /^\/api\/auth\/email\/request$/, async (request, env) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  const banned = requireUnbanned(who);
+  if (banned) return banned;
+  const payload = await readJson(request, 4096).catch(() => ({}));
+  const email = str(payload.email, 254).toLowerCase();
+  if (!EMAIL_RE.test(email)) return fail(400, 'Укажите корректный адрес электронной почты.');
+  if (email === String(who.user.email || '').toLowerCase() && Number(who.user.email_verified) === 1) {
+    return fail(400, 'Эта почта уже подтверждена.');
+  }
+  const occupied = await env.STORE.db.prepare('SELECT id FROM user WHERE lower(email) = ? AND id <> ?').bind(email, who.user.id).first();
+  if (occupied) return fail(409, 'Эта почта уже привязана к другому аккаунту.');
+  const pending = await createEmailOtp(env, { purpose: 'email_change', email, userId: who.user.id });
+  if (pending.error) return pending.error;
+  return json({ verificationRequired: true, challengeId: pending.id, email: pending.email, expiresAt: pending.expiresAt }, 202);
+});
+
+route('POST', /^\/api\/auth\/email\/verify$/, async (request, env) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  const payload = await readJson(request, 4096).catch(() => ({}));
+  const id = str(payload.challengeId, 32);
+  const pending = await env.STORE.db.prepare(
+    "SELECT purpose FROM email_otp WHERE id = ? AND user_id = ? AND purpose = 'email_change'"
+  ).bind(id, who.user.id).first();
+  if (!pending) return fail(400, 'Запрос смены почты истёк. Запросите новый код.');
+  const checked = await verifyEmailOtp(env, id, payload.code, 'email_change');
+  if (checked.error) return checked.error;
+  const row = checked.row;
+  const occupied = await env.STORE.db.prepare('SELECT id FROM user WHERE lower(email) = ? AND id <> ?').bind(row.email, who.user.id).first();
+  if (occupied) return fail(409, 'Эта почта уже привязана к другому аккаунту.');
+  const user = await env.STORE.updateUser(who.user.id, { email: row.email, email_verified: 1 });
+  await env.STORE.db.prepare('DELETE FROM email_otp WHERE id = ?').bind(row.id).run();
+  return json({ ok: true, user: publicUser(user, env), emailVerified: true, twoFactorEnabled: true });
 });
 
 route('POST', /^\/api\/auth\/logout$/, async (request, env) => {
