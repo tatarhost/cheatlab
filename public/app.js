@@ -2899,6 +2899,8 @@ async function viewStats() {
  */
 const chatSockets = new Map();
 const chatReconnectAttempts = new Map();
+const chatConnectPending = new Set();
+const chatTicketRetryAt = new Map();
 let chatRoom = null;
 let chatMessages = [];
 let chatOlder = null;
@@ -3037,16 +3039,33 @@ function chatToggleDrawer() {
 async function chatConnect(convId) {
   const existing = chatSockets.get(convId);
   if (existing?.ws && [WebSocket.CONNECTING, WebSocket.OPEN].includes(existing.ws.readyState)) return;
+  if (chatConnectPending.has(convId) || Date.now() < (chatTicketRetryAt.get(convId) || 0)) return;
+  chatConnectPending.add(convId);
   chatClose(convId);
   let grant;
   try {
     grant = await api(`/api/chats/${convId}/ticket`, { method: 'POST' });
-  } catch {
-    // A reader who may only read cannot hold a socket: the ticket is minted for
-    // people who may post. History still works, it just does not update itself.
+  } catch (err) {
+    // Do not fail silently: a ticket/API error used to leave the UI saying
+    // "reconnecting" forever while polling retried the request every second.
+    console.warn('[chat] WebSocket ticket request failed', err);
+    const attempts = Math.min((chatReconnectAttempts.get(convId) || 0) + 1, 6);
+    const delay = Math.min(1500 * (2 ** (attempts - 1)), 30000);
+    chatReconnectAttempts.set(convId, attempts);
+    chatTicketRetryAt.set(convId, Date.now() + delay);
+    if (chatRoom?.id === convId) { chatRoom.live = false; chatRender('keep'); }
+    setTimeout(() => {
+      if (chatRoom?.id === convId) chatConnect(convId);
+    }, delay);
+    chatConnectPending.delete(convId);
     return;
   }
-  if (!grant?.ticket || !grant?.url || chatRoom?.id !== convId) return;
+  chatConnectPending.delete(convId);
+  chatTicketRetryAt.delete(convId);
+  if (!grant?.ticket || !grant?.url || chatRoom?.id !== convId) {
+    console.warn('[chat] WebSocket ticket response is incomplete', { hasTicket: !!grant?.ticket, hasUrl: !!grant?.url });
+    return;
+  }
 
   // The API lives on another origin from the page, so the socket has to be built
   // from the API's origin rather than the page's - and http has to become ws,
@@ -3064,8 +3083,16 @@ async function chatConnect(convId) {
     if (chatRoom?.id === convId) { chatRoom.live = false; chatRender('keep'); }
     return;
   }
-  const entry = { ws, timer: null, attempts: chatReconnectAttempts.get(convId) || 0 };
+  const entry = { ws, timer: null, handshakeTimer: null, attempts: chatReconnectAttempts.get(convId) || 0 };
   chatSockets.set(convId, entry);
+  // A WebSocket can remain CONNECTING forever on some failed handshakes.
+  // Force a close so the normal bounded reconnect path can run.
+  entry.handshakeTimer = setTimeout(() => {
+    if (ws.readyState === WebSocket.CONNECTING) {
+      console.warn('[chat] WebSocket handshake timed out');
+      try { ws.close(); } catch { /* already closed */ }
+    }
+  }, 12000);
 
   ws.onmessage = (ev) => {
     let frame;
@@ -3085,6 +3112,8 @@ async function chatConnect(convId) {
   };
 
   ws.onopen = () => {
+    if (entry.handshakeTimer) clearTimeout(entry.handshakeTimer);
+    entry.handshakeTimer = null;
     entry.open = true;
     entry.attempts = 0;
     chatReconnectAttempts.delete(convId);
@@ -3097,6 +3126,8 @@ async function chatConnect(convId) {
   };
 
   ws.onclose = (event) => {
+    if (entry.handshakeTimer) clearTimeout(entry.handshakeTimer);
+    entry.handshakeTimer = null;
     if (chatSockets.get(convId) !== entry) return;
     console.warn('[chat] WebSocket closed', { code: event.code, reason: event.reason, clean: event.wasClean });
     chatSockets.delete(convId);
