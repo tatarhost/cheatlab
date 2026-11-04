@@ -97,6 +97,8 @@ CREATE TABLE IF NOT EXISTS user (
   pass_hash     TEXT NOT NULL,
   pass_salt     TEXT NOT NULL,
   iterations    INTEGER NOT NULL,
+  email         TEXT NOT NULL DEFAULT '',
+  email_verified INTEGER NOT NULL DEFAULT 0,
   bio           TEXT NOT NULL DEFAULT '',
   -- Profile design: logo is an https image URL, accent a #hex colour, bg a
   -- safe CSS background value (gradients allowed, no url()).
@@ -119,6 +121,16 @@ CREATE TABLE IF NOT EXISTS user (
   last_seen_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_user_created ON user(created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_email_unique ON user(email) WHERE email <> '';
+
+CREATE TABLE IF NOT EXISTS email_otp (
+  id TEXT PRIMARY KEY, purpose TEXT NOT NULL, email TEXT NOT NULL,
+  user_id TEXT NOT NULL DEFAULT '', nick TEXT NOT NULL DEFAULT '', nick_key TEXT NOT NULL DEFAULT '',
+  pass_hash TEXT NOT NULL DEFAULT '', pass_salt TEXT NOT NULL DEFAULT '', iterations INTEGER NOT NULL DEFAULT 0,
+  code_hash TEXT NOT NULL, expires_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL, used_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_email_otp_expiry ON email_otp(expires_at);
 
 -- Sessions are bearer tokens, but only sha256(token) is stored, so a database
 -- leak cannot hand out live sessions.
