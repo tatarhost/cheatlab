@@ -653,3 +653,26 @@ a:hover { text-decoration: none; }
 @media (min-width: 901px) {
   .nav-scroll-hint { display: none !important; }
 }
+
+
+/* Mobile fix: backdrop-filter on .rail creates a containing block for fixed descendants.
+   Since .nav lives inside .rail, it was pinned to the header and appeared at the top.
+   Keep the glass effect on the navigation itself, not on its ancestor. */
+@media (max-width: 900px) {
+  .rail {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    filter: none !important;
+    transform: none !important;
+    perspective: none !important;
+    contain: none !important;
+  }
+  .rail > .nav {
+    position: fixed !important;
+    top: auto !important;
+    bottom: calc(9px + env(safe-area-inset-bottom)) !important;
+    left: 50% !important;
+    right: auto !important;
+    transform: translateX(-50%) !important;
+  }
+}
