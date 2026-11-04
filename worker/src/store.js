@@ -93,15 +93,15 @@ export class Store {
    * but only one INSERT can succeed. The caller turns the constraint error
    * into a friendly "nick taken" rather than a 500.
    */
-  async createUser({ id, nick, nickKey, passHash, passSalt, iterations }) {
+  async createUser({ id, nick, nickKey, passHash, passSalt, iterations, email = '', emailVerified = false }) {
     const t = Date.now();
     await this.db
       .prepare(
-        `INSERT INTO user (id, nick, nick_key, pass_hash, pass_salt, iterations, bio,
+        `INSERT INTO user (id, nick, nick_key, pass_hash, pass_salt, iterations, email, email_verified, bio,
                            followers, following, posts, created_at, last_seen_at)
-         VALUES (?, ?, ?, ?, ?, ?, '', 0, 0, 0, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 0, 0, 0, ?, ?)`,
       )
-      .bind(id, nick, nickKey, passHash, passSalt, iterations, t, t)
+      .bind(id, nick, nickKey, passHash, passSalt, iterations, email, emailVerified ? 1 : 0, t, t)
       .run();
     return this.getUser(id);
   }
@@ -132,7 +132,7 @@ export class Store {
   async updateUser(id, patch) {
     const allowed = [
       'nick', 'nick_key', 'bio', 'pass_hash', 'pass_salt', 'iterations', 'last_seen_at',
-      'logo', 'accent', 'bg',
+      'logo', 'accent', 'bg', 'email', 'email_verified',
     ];
     const keys = Object.keys(patch).filter((k) => allowed.includes(k));
     if (!keys.length) return this.getUser(id);
