@@ -895,7 +895,7 @@ route('GET', /^\/api\/auth\/captcha$/, async (request, env, _m, url) => {
 
 
 /* -------------------------------------------------------- email OTP auth -- */
-const EMAIL_RE = /^[^\\s@<>]+@[^\\s@<>]+\\.[^\\s@<>]{2,}$/;
+const EMAIL_RE = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]{2,}$/;
 const maskEmail = (email) => {
   const [name, domain] = String(email || '').split('@');
   return name && domain ? name.slice(0, 1) + '•••@' + domain : '';
@@ -907,8 +907,8 @@ async function sendEmailCode(env, email, code, purpose) {
   if (!env.RESEND_API_KEY) return false;
   const subject = purpose === 'register' ? 'Подтверждение регистрации CHEATLAB' : 'Код входа в CHEATLAB';
   const text = purpose === 'register'
-    ? `Код подтверждения регистрации CHEATLAB: ${code}\\n\\nКод действует 10 минут. Если вы не регистрировались, проигнорируйте письмо.`
-    : `Код входа в CHEATLAB: ${code}\\n\\nКод действует 10 минут. Если вы не пытались войти, проигнорируйте письмо.`;
+    ? `Код подтверждения регистрации CHEATLAB: ${code}\n\nКод действует 10 минут. Если вы не регистрировались, проигнорируйте письмо.`
+    : `Код входа в CHEATLAB: ${code}\n\nКод действует 10 минут. Если вы не пытались войти, проигнорируйте письмо.`;
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + env.RESEND_API_KEY, 'Content-Type': 'application/json' },
@@ -943,7 +943,7 @@ async function verifyEmailOtp(env, id, code, purpose) {
     'SELECT * FROM email_otp WHERE id = ? AND purpose = ? AND used_at IS NULL AND expires_at > ? AND attempts < 5'
   ).bind(id, purpose, now()).first();
   if (!row) return { error: fail(400, 'Код истёк или попытки закончились. Запросите новый код.') };
-  if (!/^\\d{6}$/.test(String(code || '')) || !(await secretMatches(String(code), row.code_hash))) {
+  if (!/^\d{6}$/.test(String(code || '')) || !(await secretMatches(String(code), row.code_hash))) {
     await env.STORE.db.prepare(
       'UPDATE email_otp SET attempts = attempts + 1 WHERE id = ? AND used_at IS NULL AND attempts < 5'
     ).bind(id).run();
