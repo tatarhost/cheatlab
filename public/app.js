@@ -2996,7 +2996,7 @@ function chatNotify(title, body, tag, onClick) {
 }
 function chatNotifyMessage(message) {
   const sender = message.nick || message.user?.nick || 'Новое сообщение';
-  const invite = /^\\[\\[CHEATLAB_CALL:(audio|video)\\]\\]$/.exec(String(message.body || '').trim());
+  const invite = /^\[\[CHEATLAB_CALL:(audio|video)\]\]$/.exec(String(message.body || '').trim());
   const body = invite ? (invite[1] === 'video' ? 'Приглашение в видеозвонок' : 'Приглашение в аудиозвонок') : String(message.body || 'Вложение').slice(0, 120);
   chatNotify(invite ? 'Входящий звонок' : sender, invite ? `${sender}: ${body}. Откройте чат, чтобы присоединиться.` : body, `chat-message-${message.id}`, () => {});
 }
@@ -3306,7 +3306,7 @@ async function chatRetract(messageId, convId = chatRoom?.id) {
 /** One message line. The body is a text node, never markup. */
 function chatBubble(m, grouped = false) {
   const mine = account && m.userId === account.id;
-  const callInvite = !m.deleted && /^\\[\\[CHEATLAB_CALL:(audio|video)\\]\\]$/.exec(String(m.body || '').trim());
+  const callInvite = !m.deleted && /^\[\[CHEATLAB_CALL:(audio|video)\]\]$/.exec(String(m.body || '').trim());
   const callMode = callInvite?.[1] || 'audio';
   const callExpired = callInvite && m.createdAt && Date.now() - Number(m.createdAt) > 2 * 60 * 60 * 1000;
   const when_ = m.createdAt ? ago(m.createdAt) : '';
