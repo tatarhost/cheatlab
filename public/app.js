@@ -4173,7 +4173,7 @@ function safeMailHtml(raw) {
   };
   clean(doc.body);
   // Render bare image URLs too: some mail senders include a URL instead of an <img>.
-  const imageUrlPattern = /https?:\\/\\/[^\\s<>"']+?\\.(?:png|jpe?g|gif|webp)(?:\\?[^\\s<>"']*)?/gi;
+  const imageUrlPattern = /https?:\/\/[^\s<>"']+?\.(?:png|jpe?g|gif|webp)(?:\?[^\s<>"']*)?/gi;
   const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
   const textNodes = [];
   while (walker.nextNode()) textNodes.push(walker.currentNode);
