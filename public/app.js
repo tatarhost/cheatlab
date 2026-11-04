@@ -3079,8 +3079,13 @@ async function chatConnect(convId) {
   }
   chatConnectPending.delete(convId);
   chatTicketRetryAt.delete(convId);
-  if (!grant?.ticket || !grant?.url || chatRoom?.id !== convId) {
-    console.warn('[chat] WebSocket ticket response is incomplete', { hasTicket: !!grant?.ticket, hasUrl: !!grant?.url });
+  if (!grant || typeof grant.ticket !== 'string' || !grant.ticket ||
+      typeof grant.url !== 'string' || !grant.url.trim() ||
+      chatRoom?.id !== convId) {
+    console.warn('[chat] WebSocket ticket response is incomplete', {
+      hasGrant: !!grant, hasTicket: !!grant?.ticket,
+      hasUrl: typeof grant?.url === 'string' && !!grant.url.trim(),
+    });
     return;
   }
 
