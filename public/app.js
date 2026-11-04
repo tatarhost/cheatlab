@@ -2897,6 +2897,7 @@ async function viewStats() {
  * than reusing anything.
  */
 const chatSockets = new Map();
+const chatReconnectAttempts = new Map();
 let chatRoom = null;
 let chatMessages = [];
 let chatOlder = null;
@@ -2976,7 +2977,7 @@ function chatClose(convId) {
 }
 
 
-let chatNotificationsEnabled = false;
+let chatNotificationsEnabled = 'Notification' in window && Notification.permission === 'granted';
 function chatEnableNotifications() {
   if (!('Notification' in window)) { toast('Уведомления не поддерживаются этим браузером', true); return; }
   if (Notification.permission === 'granted') { chatNotificationsEnabled = true; toast('Уведомления включены'); return; }
@@ -3054,7 +3055,7 @@ async function chatConnect(convId) {
     if (chatRoom?.id === convId) { chatRoom.live = false; chatRender('keep'); }
     return;
   }
-  const entry = { ws, timer: null, attempts: 0 };
+  const entry = { ws, timer: null, attempts: chatReconnectAttempts.get(convId) || 0 };
   chatSockets.set(convId, entry);
 
   ws.onmessage = (ev) => {
@@ -3077,6 +3078,7 @@ async function chatConnect(convId) {
   ws.onopen = () => {
     entry.open = true;
     entry.attempts = 0;
+    chatReconnectAttempts.delete(convId);
     if (chatRoom?.id !== convId) return;
     chatRoom.live = true;
     // A socket that had to be re-opened missed everything said while it was
@@ -3100,6 +3102,7 @@ async function chatConnect(convId) {
       if (chatRoom?.id === convId) chatConnect(convId);
     }, delay);
     entry.attempts = attempts;
+    chatReconnectAttempts.set(convId, attempts);
     if (chatRoom?.id === convId) { chatRoom.live = false; chatRender('keep'); }
   };
   ws.onerror = (event) => { console.warn('[chat] WebSocket transport error', event); };
