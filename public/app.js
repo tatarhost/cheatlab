@@ -3559,21 +3559,56 @@ async function chatCallMedia(mode) {
   if (!navigator.mediaDevices?.getUserMedia) throw new Error('Браузер не поддерживает доступ к камере и микрофону');
   return navigator.mediaDevices.getUserMedia({ audio: true, video: mode === 'video' ? { facingMode: 'user' } : false });
 }
+
+async function chatCallIceServers(convId) {
+  const fallback = [
+    { urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] },
+  ];
+  try {
+    const result = await api(`/api/chats/${encodeURIComponent(convId)}/ice`);
+    if (Array.isArray(result.iceServers) && result.iceServers.length) {
+      return result.iceServers;
+    }
+  } catch (err) {
+    console.warn('[call] TURN config unavailable; trying STUN only', err);
+  }
+  return fallback;
+}
+
+async function chatCallCreateOffer(peerId) {
+  const c = chatCall;
+  if (!c || !peerId || peerId === account?.id || c.peers.has(peerId)) return;
+  const pc = await chatCallPeer(peerId);
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  chatCallSend(peerId, 'offer', { sdp: pc.localDescription.sdp });
+}
 async function chatCallStart(mode) {
   if (!chatRoom?.id || chatRoom.chat?.kind === 'channel') return;
   if (chatCall) { toast('Сначала завершите текущий звонок', true); return; }
+  const convId = chatRoom.id;
   let stream;
   try {
+    const iceServers = await chatCallIceServers(convId);
     stream = await chatCallMedia(mode);
-    // Store a durable invitation in chat history first. A recipient can open the
-    // conversation later and join while the caller is still in this live call.
+    if (chatRoom?.id !== convId) {
+      for (const track of stream.getTracks()) track.stop();
+      return;
+    }
+    // Save the invitation before live signalling so a participant who opens
+    // this room a little later can still join the active call.
     const invitationSaved = await chatSend(`[[CHEATLAB_CALL:${mode}]]`);
     if (!invitationSaved) throw new Error('Не удалось отправить приглашение в чат');
-    await chatCallSendReady('', 'invite', { mode });
-    chatCall = { convId: chatRoom.id, mode, initiator: true, incoming: false, active: false, localStream: stream, peers: new Map(), remoteStreams: new Map(), pendingIce: new Map(), status: 'Вызов участникам…' };
+    chatCall = {
+      convId, mode, initiator: true, incoming: false, active: false, localStream,
+      iceServers, peers: new Map(), remoteStreams: new Map(), pendingIce: new Map(),
+      status: 'Приглашение отправлено · ожидаем участников…',
+    };
     chatCallRender();
+    await chatCallSendReady('', 'invite', { mode });
   } catch (err) {
     for (const track of stream?.getTracks() || []) track.stop();
+    if (chatCall?.convId === convId) await chatCallEnd(false);
     toast(err.message || 'Не удалось начать звонок', true);
   }
 }
@@ -3593,11 +3628,12 @@ async function chatCallSendReady(to, kind, data = {}, timeout = 8000) {
 async function chatCallAccept() {
   const c = chatCall;
   if (!c?.incoming || c.accepting) return;
-  c.accepting = true; c.status = 'Подключаем микрофон и камеру…'; chatCallRender();
+  c.accepting = true; c.status = 'Подготавливаем защищённое соединение…'; chatCallRender();
   try {
+    c.iceServers = await chatCallIceServers(c.convId);
     c.localStream = await chatCallMedia(c.mode);
     await chatCallSendReady(c.initiatorId, 'accept');
-    c.incoming = false; c.active = true; c.status = 'Подключение…';
+    c.incoming = false; c.active = true; c.status = 'Согласуем соединение…';
     chatCallRender();
   } catch (err) {
     for (const track of c.localStream?.getTracks() || []) track.stop();
@@ -3608,7 +3644,11 @@ async function chatCallAccept() {
 async function chatCallPeer(peerId) {
   const c = chatCall;
   if (!c || c.peers.has(peerId)) return c?.peers.get(peerId);
-  const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+  const pc = new RTCPeerConnection({
+    iceServers: c.iceServers?.length ? c.iceServers : [
+      { urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] },
+    ],
+  });
   const stream = new MediaStream();
   c.remoteStreams.set(peerId, stream);
   const localTracks = c.localStream?.getTracks() || [];
@@ -3620,13 +3660,35 @@ async function chatCallPeer(peerId) {
     chatCallRender();
   };
   pc.onicecandidate = (event) => {
-    if (event.candidate) chatCallSend(peerId, 'ice', { candidate: event.candidate.candidate, sdpMid: event.candidate.sdpMid, sdpMLineIndex: event.candidate.sdpMLineIndex });
+    if (event.candidate) {
+      const candidate = event.candidate.toJSON ? event.candidate.toJSON() : {
+        candidate: event.candidate.candidate,
+        sdpMid: event.candidate.sdpMid,
+        sdpMLineIndex: event.candidate.sdpMLineIndex,
+        usernameFragment: event.candidate.usernameFragment,
+      };
+      chatCallSend(peerId, 'ice', candidate);
+    }
   };
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === 'connected') c.status = 'Звонок подключён';
     if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') c.status = 'Проблема соединения';
     chatCallRender();
   };
+  pc.oniceconnectionstatechange = () => {
+    if (pc.iceConnectionState === 'checking') c.status = 'Проверяем сетевой маршрут…';
+    if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') c.status = 'Звонок подключён';
+    if (pc.iceConnectionState === 'disconnected') c.status = 'Связь прервалась · пытаемся восстановить…';
+    if (pc.iceConnectionState === 'failed') {
+      const hasTurn = (c.iceServers || []).some((server) =>
+        (Array.isArray(server.urls) ? server.urls : [server.urls]).some((url) => /^(turn|turns):/i.test(String(url))));
+      c.status = hasTurn ? 'Не удалось установить сетевое соединение' : 'Сети не соединились · требуется TURN';
+    }
+    chatCallRender();
+  };
+  pc.onicecandidateerror = (event) => console.warn('[call] ICE candidate error', {
+    code: event.errorCode, text: event.errorText, url: event.url,
+  });
   c.peers.set(peerId, pc);
   return pc;
 }
@@ -3644,18 +3706,43 @@ async function chatCallSignal(frame) {
   if (frame.k === 'accept' && c.initiator) {
     c.active = true; c.status = 'Участник подключается…';
     try {
+      // The caller offers to the newcomer. The newcomer also receives the list
+      // of already-connected peers and creates the remaining mesh links, so a
+      // group call is genuinely shared rather than a host-only star.
+      const existingPeers = [...c.peers.keys()].filter((id) => id !== from);
       const pc = await chatCallPeer(from);
+      chatCallSend(from, 'peers', { peerIds: existingPeers });
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       chatCallSend(from, 'offer', { sdp: pc.localDescription.sdp });
+      c.status = 'Подключаем участников…';
       chatCallRender();
     } catch (err) { toast(err.message || 'Не удалось создать соединение', true); }
     return;
   }
+  if (frame.k === 'peers' && !c.initiator) {
+    const peerIds = Array.isArray(frame.data?.peerIds) ? frame.data.peerIds.slice(0, 20) : [];
+    try {
+      for (const peerId of peerIds) {
+        if (peerId === account?.id || peerId === c.initiatorId || c.peers.has(peerId)) continue;
+        await chatCallCreateOffer(peerId);
+      }
+    } catch (err) {
+      console.warn('[call] group mesh negotiation failed', err);
+      toast(err.message || 'Не удалось подключить участника группы', true);
+    }
+    return;
+  }
   if (frame.k === 'reject') { c.status = 'Кто-то отклонил вызов'; chatCallRender(); return; }
+  if (frame.k === 'end-call') {
+    chatCallEnd(false);
+    return;
+  }
   if (frame.k === 'end') {
     const pc = c.peers.get(from); pc?.close(); c.peers.delete(from); c.remoteStreams.delete(from);
-    if (!c.peers.size && !c.initiator) chatCallEnd(false); else { c.status = 'Участник вышел'; chatCallRender(); }
+    c.pendingIce.delete(from);
+    if (!c.peers.size && !c.initiator) chatCallEnd(false);
+    else { c.status = 'Участник вышел'; chatCallRender(); }
     return;
   }
   try {
@@ -3672,7 +3759,12 @@ async function chatCallSignal(frame) {
       for (const candidate of c.pendingIce.get(from) || []) await pc.addIceCandidate(candidate);
       c.pendingIce.delete(from); c.status = 'Звонок подключён'; chatCallRender();
     } else if (frame.k === 'ice') {
-      const candidate = { candidate: frame.data.candidate, sdpMid: frame.data.sdpMid, sdpMLineIndex: frame.data.sdpMLineIndex };
+      const candidate = {
+        candidate: frame.data.candidate,
+        sdpMid: frame.data.sdpMid,
+        sdpMLineIndex: frame.data.sdpMLineIndex,
+        usernameFragment: frame.data.usernameFragment,
+      };
       const pc = c.peers.get(from);
       if (pc?.remoteDescription) await pc.addIceCandidate(candidate);
       else { const queue = c.pendingIce.get(from) || []; queue.push(candidate); c.pendingIce.set(from, queue); }
@@ -3705,8 +3797,9 @@ async function chatCallShare() {
 async function chatCallEnd(notify = true) {
   const c = chatCall; if (!c) return;
   if (notify) {
-    if (c.initiator) chatCallSend('', 'end');
-    else if (c.initiatorId) chatCallSend(c.initiatorId, 'end');
+    // Ending the host's call closes the meeting for everyone. A regular
+    // participant leaving only removes that participant's mesh links.
+    chatCallSend('', c.initiator ? 'end-call' : 'end');
   }
   for (const pc of c.peers.values()) pc.close();
   for (const track of c.localStream?.getTracks() || []) track.stop();
