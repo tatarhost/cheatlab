@@ -5219,6 +5219,28 @@ function initTheme() {
   });
 }
 
+// On phones, detach the navigation from .rail and .app. This avoids fixed-position
+// containing blocks created by glass filters/transforms on ancestor elements.
+(function mountMobileNavigation() {
+  const nav = document.querySelector('.rail > .nav');
+  const rail = document.querySelector('.rail');
+  if (!nav || !rail) return;
+  const account = rail.querySelector('.rail-account');
+  const mobile = window.matchMedia('(max-width: 900px)');
+  const place = () => {
+    if (mobile.matches) {
+      if (nav.parentElement !== document.body) document.body.appendChild(nav);
+      nav.classList.add('mobile-floating-nav');
+    } else {
+      if (nav.parentElement !== rail) rail.insertBefore(nav, account || null);
+      nav.classList.remove('mobile-floating-nav');
+    }
+  };
+  place();
+  if (mobile.addEventListener) mobile.addEventListener('change', place);
+  else mobile.addListener(place);
+})();
+
 async function boot() {
   initTheme();
   // the footer link must point at the API origin, not at the static site
