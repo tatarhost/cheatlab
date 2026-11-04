@@ -3600,7 +3600,7 @@ async function chatCallStart(mode) {
     const invitationSaved = await chatSend(`[[CHEATLAB_CALL:${mode}]]`);
     if (!invitationSaved) throw new Error('Не удалось отправить приглашение в чат');
     chatCall = {
-      convId, mode, initiator: true, incoming: false, active: false, localStream,
+      convId, mode, initiator: true, incoming: false, active: false,
       iceServers, localStream: stream, peers: new Map(), remoteStreams: new Map(), pendingIce: new Map(),
       status: 'Приглашение отправлено · ожидаем участников…',
     };
