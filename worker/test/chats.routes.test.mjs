@@ -201,6 +201,17 @@ const afterJoin = await asBob(`/api/chats/${convId}/messages`, {
 });
 check('and can post once they have', afterJoin.status === 201, `${afterJoin.status} ${afterJoin.text.slice(0, 140)}`);
 
+await room.fetch('https://room.internal/publish', {
+  method: 'POST',
+  body: JSON.stringify({ ...afterJoin.json.message, files: [] }),
+});
+check('both messages were delivered, in order',
+  framesOf(room, 'msg').map((f) => f.m.body).join(',') === 'первое,второе',
+  framesOf(room, 'msg').map((f) => f.m.body).join(','));
+
+const backfill = await room.fetch('https://room.internal/wake', { method: 'POST' });
+check('a stale notice reaches the reader too', framesOf(room, 'stale').length === 1, await backfill.text);
+
 // Relay group-call peer lists to the newly accepted participant, and
 // broadcast an end-call frame so every participant can close the meeting.
 const fakeBobSocket = {
@@ -223,17 +234,6 @@ await room.instance.webSocketMessage(room.sockets[0], JSON.stringify({
 check('end-call is broadcast to the other room members',
   fakeBobSocket.sent.some((raw) => JSON.parse(raw).k === 'end-call'),
   fakeBobSocket.sent.join('\n'));
-
-await room.fetch('https://room.internal/publish', {
-  method: 'POST',
-  body: JSON.stringify({ ...afterJoin.json.message, files: [] }),
-});
-check('both messages were delivered, in order',
-  framesOf(room, 'msg').map((f) => f.m.body).join(',') === 'первое,второе',
-  framesOf(room, 'msg').map((f) => f.m.body).join(','));
-
-const backfill = await room.fetch('https://room.internal/wake', { method: 'POST' });
-check('a stale notice reaches the reader too', framesOf(room, 'stale').length === 1, await backfill.text);
 
 /* --------------------------------------------------------------- close path */
 
