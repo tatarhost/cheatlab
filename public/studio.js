@@ -260,15 +260,14 @@
     const after = nav.querySelector('a[href="./chat"]');
     after ? after.after(b) : nav.append(b);
 
-    // Small mobile-only affordance: it disappears after the user scrolls the
-    // horizontal navigation, and never blocks taps on the tabs.
-    let hint = document.querySelector('.nav-scroll-hint');
+    // A tiny arrow sits inside the bottom navigation strip (not over page content).
+    let hint = nav.querySelector('.nav-scroll-hint');
     if (!hint) {
       hint = document.createElement('span');
       hint.className = 'nav-scroll-hint';
-      hint.textContent = 'Ещё разделы · листайте';
+      hint.textContent = '›';
       hint.setAttribute('aria-hidden', 'true');
-      document.body.append(hint);
+      nav.append(hint);
     }
     const updateHint = () => {
       const canScroll = nav.scrollWidth > nav.clientWidth + 4;
