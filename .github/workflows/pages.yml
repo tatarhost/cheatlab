@@ -41,11 +41,15 @@ jobs:
       - name: Check application JavaScript syntax
         run: node --check public/app.js
 
+      # A unique artifact name per attempt prevents stale artifacts from a
+      # previous rerun being selected alongside the current Pages artifact.
       - name: Upload static site
         uses: actions/upload-pages-artifact@v3
         with:
+          name: github-pages-${{ github.run_attempt }}
           path: public
 
       - id: deployment
         uses: actions/deploy-pages@v4
- 
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}
