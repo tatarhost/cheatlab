@@ -978,8 +978,6 @@ route('POST', /^\/api\/auth\/register$/, async (request, env) => {
   let payload;
   try { payload = await readJson(request, c.maxTextBytes); }
   catch (err) { return fail(err.code === 'TOO_LARGE' ? 413 : 400, err.message); }
-  const pow = await powGate(request, env);
-  if (!pow.ok) return json({ error: pow.error, pow: { challenge: pow.challenge } }, 403);
   const nick = str(payload.nick, 24);
   const nickProblemsList = nickProblems(nick);
   if (nickProblemsList.length) return fail(400, nickProblemsList[0], { problems: nickProblemsList });
