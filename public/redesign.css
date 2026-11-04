@@ -273,3 +273,52 @@ a:hover { text-decoration: none; }
   .st-body { padding: 16px; }
 }
 @media (prefers-reduced-motion: reduce) { .st, .st-back, .st-card { animation: none; transition: none; } }
+
+
+/* Mobile navigation discoverability hint */
+@media (max-width: 900px) {
+  .nav {
+    isolation: isolate;
+  }
+  .nav::after {
+    content: "Ещё разделы · листайте  ›";
+    position: absolute;
+    right: 12px;
+    bottom: calc(100% + 9px);
+    z-index: 2;
+    padding: 7px 11px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--ink);
+    background: color-mix(in srgb, var(--paper) 90%, transparent);
+    box-shadow: 0 5px 18px rgba(0, 0, 0, .10);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .01em;
+    white-space: nowrap;
+    pointer-events: none;
+    animation: nav-hint-in .45s ease-out both, nav-hint-nudge 1.8s ease-in-out 1s 3;
+  }
+  .nav::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: env(safe-area-inset-bottom);
+    z-index: 1;
+    width: 24px;
+    background: linear-gradient(90deg, transparent, var(--paper));
+    pointer-events: none;
+  }
+}
+@keyframes nav-hint-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes nav-hint-nudge {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 4px 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav::after { animation: none; }
+}
