@@ -2274,15 +2274,22 @@ function editorForm(initial) {
 }
 
 async function viewNew(url) {
-  const type = url.searchParams.get('type') || 'script';
+  let creatorDraft = null;
+  try {
+    if (url.searchParams.get('creator') === '1') {
+      creatorDraft = JSON.parse(localStorage.getItem('cheatlab.creatorDraft') || 'null');
+      localStorage.removeItem('cheatlab.creatorDraft');
+    }
+  } catch { creatorDraft = null; }
+  const type = creatorDraft?.type || url.searchParams.get('type') || 'script';
   $view.replaceChildren(
-      h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Новая публикация' }), h('p', {
+      h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: creatorDraft ? 'Публикация проекта' : 'Новая публикация' }), h('p', {
         class: 'page-sub',
         text: signedIn()
           ? 'Публикуете от имени аккаунта. Ключ редактирования выдаст сервер.'
           : 'Анонимно доступна одна публикация в сутки и потребуется проверка. Ключ выдаст сервер.',
       }))),
-    editorForm({ type }),
+    editorForm(creatorDraft ? { ...creatorDraft, type } : { type }),
   );
 }
 
