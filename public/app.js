@@ -801,6 +801,7 @@ document.addEventListener('click', (e) => {
 });
 
 function navigate(href) {
+  if (chatCall && !String(href || '').startsWith('/chat')) chatCallEnd(true);
   history.pushState({}, '', appPath(href));
   route();
 }
@@ -3456,7 +3457,7 @@ async function chatCallSignal(frame) {
     } catch (err) { toast(err.message || 'Не удалось создать соединение', true); }
     return;
   }
-  if (frame.k === 'reject') { c.status = 'Вызов отклонён'; c.pending = Math.max(0, (c.pending || 1) - 1); if (!c.peers.size && c.pending === 0) { chatCallEnd(false); toast('Вызов отклонён'); } else chatCallRender(); return; }
+  if (frame.k === 'reject') { c.status = 'Кто-то отклонил вызов'; chatCallRender(); return; }
   if (frame.k === 'end') {
     const pc = c.peers.get(from); pc?.close(); c.peers.delete(from); c.remoteStreams.delete(from);
     if (!c.peers.size && !c.initiator) chatCallEnd(false); else { c.status = 'Участник вышел'; chatCallRender(); }
