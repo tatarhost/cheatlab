@@ -65,6 +65,14 @@ const channel = await asAlice('/api/chats', {
 check('seed: a channel exists', channel.status === 201, `${channel.status} ${channel.text.slice(0, 140)}`);
 const convId = channel.json.chat.id;
 
+const iceConfig = await asAlice(`/api/chats/${convId}/ice`);
+check('call ICE config is available to a room member', iceConfig.status === 200,
+  `${iceConfig.status} ${iceConfig.text.slice(0, 120)}`);
+check('without TURN secrets, the call gets explicit STUN fallback',
+  iceConfig.json?.turnAvailable === false
+    && iceConfig.json?.iceServers?.some((server) => String(server.urls).includes('stun:stun.cloudflare.com:3478')),
+  JSON.stringify(iceConfig.json));
+
 /* ------------------------------------------------------- the upgrade route */
 
 // The gate that decides whether a Durable Object is woken at all. A plain GET on
@@ -203,6 +211,29 @@ check('both messages were delivered, in order',
 
 const backfill = await room.fetch('https://room.internal/wake', { method: 'POST' });
 check('a stale notice reaches the reader too', framesOf(room, 'stale').length === 1, await backfill.text);
+
+// Relay group-call peer lists to the newly accepted participant, and
+// broadcast an end-call frame so every participant can close the meeting.
+const fakeBobSocket = {
+  closed: false,
+  attachment: { convId, userId: bobId },
+  sent: [],
+  deserializeAttachment() { return this.attachment; },
+  send(frame) { this.sent.push(frame); },
+};
+room.sockets.push(fakeBobSocket);
+await room.instance.webSocketMessage(room.sockets[0], JSON.stringify({
+  t: 'call', to: bobId, k: 'peers', data: { peerIds: [who.carol.user.id] },
+}));
+check('group peer list is relayed to the selected member',
+  fakeBobSocket.sent.some((raw) => JSON.parse(raw).k === 'peers'),
+  fakeBobSocket.sent.join('\n'));
+await room.instance.webSocketMessage(room.sockets[0], JSON.stringify({
+  t: 'call', k: 'end-call', data: {},
+}));
+check('end-call is broadcast to the other room members',
+  fakeBobSocket.sent.some((raw) => JSON.parse(raw).k === 'end-call'),
+  fakeBobSocket.sent.join('\n'));
 
 /* --------------------------------------------------------------- close path */
 

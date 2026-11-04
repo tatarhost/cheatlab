@@ -59,6 +59,14 @@ class_name = "ConversationRoom"
 tag = "v1"
 new_sqlite_classes = ["ConversationRoom"]
 
+# Optional TURN relay for calls across restrictive NATs/firewalls.
+# Create a Cloudflare Realtime TURN key, then add its values as Worker secrets:
+#   npx wrangler secret put CF_TURN_KEY_ID --config .\wrangler.toml
+#   npx wrangler secret put CF_TURN_API_TOKEN --config .\wrangler.toml
+# The API token needs Calls Write permission. The long-lived token stays in
+# Worker secrets; browsers receive only short-lived credentials.
+# Without these secrets, calls fall back to STUN and may fail across some networks.
+
 [triggers]
 crons = ["17 * * * *"]
 

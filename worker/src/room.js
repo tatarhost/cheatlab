@@ -165,15 +165,17 @@ export class ConversationRoom {
     let frame;
     try { frame = JSON.parse(raw); } catch { return; }
     if (frame?.t !== 'call') return;
-    const allowed = new Set(['invite', 'accept', 'reject', 'offer', 'answer', 'ice', 'end']);
+    const allowed = new Set(['invite', 'accept', 'reject', 'offer', 'answer', 'ice', 'peers', 'end', 'end-call']);
     if (!allowed.has(frame.k)) return;
     const sender = ws.deserializeAttachment?.();
     if (!sender?.convId || !sender?.userId) return;
     const target = typeof frame.to === 'string' && /^[A-Za-z0-9_-]{3,40}$/.test(frame.to) ? frame.to : '';
-    if (!['invite', 'end'].includes(frame.k) && !target) return;
+    if (!['invite', 'end', 'end-call'].includes(frame.k) && !target) return;
     const data = frame.data && typeof frame.data === 'object' ? frame.data : {};
     if ((frame.k === 'offer' || frame.k === 'answer') && (typeof data.sdp !== 'string' || data.sdp.length > 32_000)) return;
     if (frame.k === 'ice' && (typeof data.candidate !== 'string' || data.candidate.length > 4_000)) return;
+    if (frame.k === 'peers' && (!Array.isArray(data.peerIds) || data.peerIds.length > 20
+      || data.peerIds.some((id) => typeof id !== 'string' || !/^[A-Za-z0-9_-]{3,40}$/.test(id)))) return;
     if (frame.k === 'invite' && !['audio', 'video'].includes(data.mode)) return;
     const payload = { from: sender.userId, k: frame.k, data };
     const sockets = this.forRoom(new URL(`https://room.internal/?id=${sender.convId}`));
