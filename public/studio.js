@@ -138,7 +138,12 @@
   function editor(body) {
     const d = st.d;
     const val = (k) => d.vars[k] || hexOf(k);
-    body.innerHTML = `<div class="st-edit">
+    body.innerHTML = `<div class="st-presets" aria-label="Готовые стили сайта">
+      <button class="st-preset" data-preset="violet"><i style="background:linear-gradient(135deg,#100d20,#9b75ff)"></i>Violet glass</button>
+      <button class="st-preset" data-preset="ocean"><i style="background:linear-gradient(135deg,#071a2b,#35b8d5)"></i>Ocean</button>
+      <button class="st-preset" data-preset="paper"><i style="background:linear-gradient(135deg,#f5eee3,#b96c43)"></i>Warm paper</button>
+    </div>
+    <div class="st-edit">
       <div class="st-col">
         <div class="field"><label class="label">Название</label><input class="input" data-f="name" maxlength="60" value="${esc(d.name)}" placeholder="Например, Графит"></div>
         <div class="field"><label class="label">Описание</label><input class="input" data-f="desc" maxlength="200" value="${esc(d.desc)}"></div>
@@ -179,6 +184,16 @@
     const t = e.target.closest('button');
     if (!t) return;
     if (t.dataset.close !== undefined) return close();
+    if (t.dataset.preset) {
+      const presets = {
+        violet: { paper:'#100d20', fog:'#1c1730', ink:'#f4efff', mute:'#b7a9d8', line:'#40345f', accent:'#9b75ff', 'accent-ink':'#100d20', radius:16 },
+        ocean: { paper:'#071a2b', fog:'#0d2940', ink:'#e8f8ff', mute:'#91b8ca', line:'#21445a', accent:'#35b8d5', 'accent-ink':'#05202a', radius:14 },
+        paper: { paper:'#f5eee3', fog:'#fffaf2', ink:'#30271f', mute:'#88796a', line:'#dfd0bd', accent:'#b96c43', 'accent-ink':'#fffaf2', radius:10 },
+      };
+      const p = presets[t.dataset.preset];
+      st.d.vars = Object.fromEntries(VARS.map(([k]) => [k, p[k]]));
+      st.d.radius = p.radius; preview(); return paint();
+    }
     if (t.dataset.tab) { st.tab = t.dataset.tab; if (st.tab === 'gallery') { applySaved(); st.themes = null; } else preview(); return paint(); }
     try {
       if (t.dataset.use) {
