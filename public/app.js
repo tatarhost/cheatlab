@@ -3601,7 +3601,7 @@ async function chatCallStart(mode) {
     if (!invitationSaved) throw new Error('Не удалось отправить приглашение в чат');
     chatCall = {
       convId, mode, initiator: true, incoming: false, active: false, localStream,
-      iceServers, peers: new Map(), remoteStreams: new Map(), pendingIce: new Map(),
+      iceServers, localStream: stream, peers: new Map(), remoteStreams: new Map(), pendingIce: new Map(),
       status: 'Приглашение отправлено · ожидаем участников…',
     };
     chatCallRender();
