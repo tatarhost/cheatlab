@@ -438,26 +438,84 @@ async function api(path, { method = 'GET', body, secret, key, signal, noAuth, he
 
 /* -------------------------------------------------------------- account API */
 
-/** Server-advertised proof-of-work difficulty, from /api/config. */
-const powBits = () => Math.min(30, Math.max(8, Number(config?.powBits) || 18));
-
 /**
- * Registers, paying the proof of work first.
- *
- * Registration is the only place the challenge is strictly required, and it is
- * also the one place a bot most wants, so the work is done before the request
- * rather than after a rejection.
+ * One-use visual CAPTCHA: the server keeps the answer and sends only ring geometry.
+ * The browser records only challenge duration and button interactions for a light
+ * anti-automation signal; it does not collect pointer paths or device fingerprints.
  */
-async function registerAccount({ nick, password, email }, onProgress) {
-  const { challenge } = await api('/api/auth/pow', { noAuth: true });
-  const nonce = await solvePow(challenge, powBits(), onProgress);
-  return api('/api/auth/register', {
-    method: 'POST', noAuth: true, body: { nick, password, email },
-    headers: { 'x-cheatlab-pow': challenge, 'x-cheatlab-pow-nonce': nonce },
+function askRingCaptcha(challenge) {
+  return new Promise((resolve) => {
+    const backdrop = h('div', { class: 'modal-backdrop ring-captcha-backdrop' });
+    const selected = new Set();
+    let interactions = 0;
+    const started = performance.now();
+    const grid = h('div', { class: 'ring-captcha-grid', role: 'group', 'aria-label': 'Кольца для проверки' });
+    const cards = (challenge.rings || []).map((ring, index) => {
+      const button = h('button', {
+        class: 'ring-captcha-tile', type: 'button', 'aria-pressed': 'false',
+        'aria-label': `Кольцо ${index + 1}`,
+        onclick: () => {
+          interactions++;
+          if (selected.has(index)) selected.delete(index); else selected.add(index);
+          button.classList.toggle('is-selected', selected.has(index));
+          button.setAttribute('aria-pressed', selected.has(index) ? 'true' : 'false');
+        },
+      });
+      const svg = document.createElementNS(SVG_NS, 'svg');
+      svg.setAttribute('viewBox', '0 0 64 64');
+      svg.setAttribute('aria-hidden', 'true');
+      const circle = document.createElementNS(SVG_NS, 'circle');
+      circle.setAttribute('cx', '32'); circle.setAttribute('cy', '32'); circle.setAttribute('r', '23');
+      circle.setAttribute('fill', 'none'); circle.setAttribute('stroke', 'currentColor');
+      circle.setAttribute('stroke-width', '5'); circle.setAttribute('stroke-linecap', 'round');
+      const circumference = 2 * Math.PI * 23;
+      const gap = Math.max(0, Math.min(0.45, Number(ring.gap) || 0));
+      circle.setAttribute('stroke-dasharray', `${circumference * (1 - gap)} ${circumference * gap}`);
+      circle.setAttribute('stroke-dashoffset', String(-circumference * (Number(ring.offset) || 0)));
+      svg.append(circle);
+      button.append(svg);
+      grid.append(button);
+      return button;
+    });
+    const error = h('p', { class: 'form-error', role: 'alert' });
+    const done = (value) => { backdrop.remove(); resolve(value); };
+    const submit = h('button', {
+      class: 'btn btn-primary', type: 'button',
+      onclick: () => {
+        if (!selected.size) { error.textContent = 'Выберите замкнутые кольца.'; return; }
+        done({
+          ct: challenge.token,
+          ca: JSON.stringify([...selected].sort((x, y) => x - y)),
+          ms: Math.round(performance.now() - started),
+          k: interactions,
+        });
+      },
+    }, 'Подтвердить');
+    const cancel = h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => done(null) }, 'Отмена');
+    backdrop.addEventListener('click', (event) => { if (event.target === backdrop) done(null); });
+    backdrop.append(h('section', { class: 'panel auth-card ring-captcha-card' },
+      h('h2', { text: 'Проверка безопасности' }),
+      h('p', { class: 'page-sub', text: 'Выберите все полностью замкнутые кольца. Кольца с разрывом не выбирайте.' }),
+      grid, error, h('div', { class: 'field-row' }, submit, cancel)
+    ));
+    document.body.append(backdrop);
   });
 }
+
+async function humanProof() {
+  const data = await api('/api/hc/challenge', { noAuth: true });
+  const answer = await askRingCaptcha(data.captcha);
+  if (!answer) throw new Error('Проверка отменена.');
+  return { hc: answer };
+}
+
+async function registerAccount({ nick, password, email }) {
+  const proof = await humanProof();
+  return api('/api/auth/register', { method: 'POST', noAuth: true, body: { nick, password, email, ...proof } });
+}
 async function loginAccount({ nick, password, email }) {
-  return api('/api/auth/login', { method: 'POST', noAuth: true, body: { nick, password, email } });
+  const proof = await humanProof();
+  return api('/api/auth/login', { method: 'POST', noAuth: true, body: { nick, password, email, ...proof } });
 }
 async function verifyAccountEmail(mode, challengeId, code) {
   return api(`/api/auth/${mode}/verify`, { method: 'POST', noAuth: true, body: { challengeId, code } });
@@ -674,13 +732,10 @@ async function viewAuth(url) {
       const body = { nick: nick.value.trim(), password: password.value, email: email.value.trim() };
       if (!body.nick || !body.password || (mode === 'register' && !body.email)) throw new Error('Заполните обязательные поля.');
       let res;
-      if (mode === 'register') {
-        status.textContent = 'Проверка регистрации…';
-        submit.textContent = 'Проверка…';
-        res = await registerAccount(body, (n) => { status.textContent = `Проверка… ${n.toLocaleString('ru')}`; });
-      } else {
-        res = await loginAccount(body);
-      }
+      status.textContent = 'Откройте визуальную проверку и выберите замкнутые кольца.';
+      submit.textContent = 'Проверка…';
+      if (mode === 'register') res = await registerAccount(body);
+      else res = await loginAccount(body);
       if (!res.verificationRequired || !res.challengeId) throw new Error('Сервер не создал проверку почты.');
       pending = res;
       submit.textContent = 'Подтвердить код';
