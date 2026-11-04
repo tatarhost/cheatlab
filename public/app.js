@@ -3051,6 +3051,7 @@ document.addEventListener('visibilitychange', () => {
  */
 async function chatOpen(convId, { keepSocket = false } = {}) {
   if (!convId) return;
+  if (chatRoom?.id && chatRoom.id !== convId && chatCall) chatCallEnd(true);
   if (!keepSocket) {
     chatClose(chatRoom?.id);
     chatRoom = { id: convId, connects: 0, live: false };
@@ -3372,7 +3373,7 @@ function chatCallRender() {
   const controls = [];
   if (c.incoming) {
     controls.push(h('button', { class: 'btn btn-primary', type: 'button', onclick: chatCallAccept }, 'Принять'));
-    controls.push(h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => chatCallEnd(true) }, 'Отклонить'));
+    controls.push(h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => { const id = c.initiatorId; if (id) chatCallSend(id, 'reject'); chatCallEnd(false); } }, 'Отклонить'));
   } else {
     if (c.active) controls.push(h('button', { class: 'btn btn-ghost', type: 'button', onclick: chatCallShare }, icon('monitor-up','i i-sm'), ' Экран'));
     controls.push(h('button', { class: 'btn btn-danger', type: 'button', onclick: () => chatCallEnd(true) }, icon('phone-off','i i-sm'), ' Завершить'));
@@ -3455,7 +3456,7 @@ async function chatCallSignal(frame) {
     } catch (err) { toast(err.message || 'Не удалось создать соединение', true); }
     return;
   }
-  if (frame.k === 'reject') { c.status = 'Вызов отклонён'; chatCallRender(); return; }
+  if (frame.k === 'reject') { c.status = 'Вызов отклонён'; c.pending = Math.max(0, (c.pending || 1) - 1); if (!c.peers.size && c.pending === 0) { chatCallEnd(false); toast('Вызов отклонён'); } else chatCallRender(); return; }
   if (frame.k === 'end') {
     const pc = c.peers.get(from); pc?.close(); c.peers.delete(from); c.remoteStreams.delete(from);
     if (!c.peers.size && !c.initiator) chatCallEnd(false); else { c.status = 'Участник вышел'; chatCallRender(); }
