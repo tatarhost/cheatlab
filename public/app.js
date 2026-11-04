@@ -3447,7 +3447,7 @@ function chatCallRender() {
   }
   const controls = [];
   if (c.incoming) {
-    controls.push(h('button', { class: 'btn btn-primary', type: 'button', onclick: chatCallAccept }, 'Принять'));
+    controls.push(h('button', { class: 'btn btn-primary', type: 'button', disabled: !!c.accepting, onclick: chatCallAccept }, c.accepting ? 'Подключение…' : 'Принять'));
     controls.push(h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => { const id = c.initiatorId; if (id) chatCallSend(id, 'reject'); chatCallEnd(false); } }, 'Отклонить'));
   } else {
     if (c.active) controls.push(h('button', { class: 'btn btn-ghost', type: 'button', onclick: chatCallShare }, icon('monitor-up','i i-sm'), ' Экран'));
@@ -3472,21 +3472,39 @@ async function chatCallStart(mode) {
   if (!chatRoom?.id || chatRoom.chat?.kind === 'channel') return;
   if (chatCall) { toast('Сначала завершите текущий звонок', true); return; }
   try {
+    await chatCallSendReady('', 'invite', { mode });
     const stream = await chatCallMedia(mode);
     chatCall = { convId: chatRoom.id, mode, initiator: true, incoming: false, active: false, localStream: stream, peers: new Map(), remoteStreams: new Map(), pendingIce: new Map(), status: 'Вызов участникам…' };
-    if (!chatCallSend('', 'invite', { mode })) { await chatCallEnd(false); return; }
     chatCallRender();
   } catch (err) { toast(err.message || 'Не удалось начать звонок', true); }
 }
+async function chatCallSendReady(to, kind, data = {}, timeout = 8000) {
+  const id = chatRoom?.id;
+  const deadline = Date.now() + timeout;
+  while (id && chatRoom?.id === id && Date.now() < deadline) {
+    const ws = chatSockets.get(id)?.ws;
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ t: 'call', to: to || undefined, k: kind, data }));
+      return true;
+    }
+    await new Promise(resolve => setTimeout(resolve, 120));
+  }
+  throw new Error('Нет соединения с чатом. Обновите переписку и попробуйте ещё раз.');
+}
 async function chatCallAccept() {
   const c = chatCall;
-  if (!c?.incoming) return;
+  if (!c?.incoming || c.accepting) return;
+  c.accepting = true; c.status = 'Подключаем микрофон и камеру…'; chatCallRender();
   try {
     c.localStream = await chatCallMedia(c.mode);
+    await chatCallSendReady(c.initiatorId, 'accept');
     c.incoming = false; c.active = true; c.status = 'Подключение…';
-    chatCallSend(c.initiatorId, 'accept');
     chatCallRender();
-  } catch (err) { toast(err.message || 'Не удалось подключить камеру/микрофон', true); await chatCallEnd(true); }
+  } catch (err) {
+    for (const track of c.localStream?.getTracks() || []) track.stop();
+    c.localStream = null; c.accepting = false; c.status = 'Не удалось принять звонок'; chatCallRender();
+    toast(err.message || 'Не удалось подключить камеру/микрофон', true);
+  }
 }
 async function chatCallPeer(peerId) {
   const c = chatCall;
@@ -3857,10 +3875,9 @@ function chatListView(data, banner) {
     } }, h('input', { class: 'chat-input', placeholder: 'Название нового канала', maxlength: '80' }), h('button', { class: 'btn btn-sm', type: 'submit' }, 'Создать канал')),
   );
   $view.replaceChildren(
-    ...[
-      h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Чаты' }), h('p', { class: 'page-sub', text: 'Личные переписки, группы и каналы.' }))),
-      banner,
-      h('div', { class: 'chat-start' }, friendForm, dmForm, groupForm),
+    h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Чаты' }), h('p', { class: 'page-sub', text: 'Личные переписки, группы и каналы.' }))),
+    ...(banner ? [banner] : []),
+    h('div', { class: 'chat-start' }, friendForm, dmForm, groupForm),
     channels,
     h('h2', { class: 'chat-section-title', text: 'Ваши переписки' }),
       rows.length ? h('div', { class: 'chat-list' }, ...rows) : h('p', { class: 'hint', text: 'Пока нет чатов. Добавь друга или создай группу выше.' }),
