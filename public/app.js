@@ -638,7 +638,7 @@ async function viewAuth(url) {
   const form = h('form', { class: 'panel auth-card' });
   let pending = null;
   const render = () => {
-    form.replaceChildren(
+    form.replaceChildren(...[
       h('h1', { text: pending ? 'Подтверждение почты' : (mode === 'register' ? 'Регистрация' : 'Вход') }),
       h('p', { class: 'page-sub', text: pending
         ? `Мы отправили код на ${pending.email}. Он действует 10 минут.`
@@ -655,7 +655,7 @@ async function viewAuth(url) {
         : h('a', { class: 'btn btn-ghost', href: mode === 'register' ? '/auth' : '/auth?mode=register' }, mode === 'register' ? 'Уже есть аккаунт — войти' : 'Нет аккаунта — создать')),
       signedIn() ? h('button', { class: 'btn btn-ghost', type: 'button',
         onclick: async () => { await logoutAccount(); toast('Вышли'); navigate('/'); } }, 'Выйти из текущего аккаунта') : null
-    ).filter(Boolean);
+    ].filter(Boolean));
   };
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -4989,16 +4989,27 @@ async function viewKey(url) {
   if (incoming) {
     const status = () => document.getElementById('incomingStatus');
     try {
-      const res = await api('/api/auth/keylogin', {
-        method: 'POST', noAuth: true, body: { key: incoming },
-      });
+      let res;
+      try {
+        res = await api('/api/auth/keylogin', { method: 'POST', noAuth: true, body: { key: incoming } });
+      } catch (firstError) {
+        if (!/укажите почту/i.test(firstError.message)) throw firstError;
+        const legacyEmail = window.prompt('Для защиты старого аккаунта укажите почту:');
+        if (!legacyEmail) throw firstError;
+        res = await api('/api/auth/keylogin', { method: 'POST', noAuth: true, body: { key: incoming, email: legacyEmail.trim() } });
+      }
+      if (res.verificationRequired) {
+        const code = window.prompt('Код отправлен на ' + res.email + '. Введите 6 цифр:');
+        if (!code) throw new Error('Подтверждение входа отменено.');
+        res = await api('/api/auth/login/verify', { method: 'POST', noAuth: true, body: { challengeId: res.challengeId, code: code.trim() } });
+      }
       saveSession({ token: res.token });
       await refreshAccount();
       if (status()) {
-        status().textContent = `Вход выполнен: @${res.user.nick}. Ссылка больше не используется — можно закрыть её из адресной строки.`;
+        status().textContent = 'Вход подтверждён: @' + res.user.nick + '. Теперь можно закрыть ссылку.';
         status().style.color = 'var(--ok,#3fb950)';
       }
-      toast('Вход по ключу выполнен');
+      toast('Вход по ключу подтверждён');
     } catch (error) {
       if (status()) {
         status().textContent = `Ссылка-ключ не подошла: ${error.message}`;
