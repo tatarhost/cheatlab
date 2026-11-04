@@ -1067,3 +1067,48 @@ a.stat-box:hover .stat-label { color: var(--ink); }
 .chat-call-controls .btn{flex:1 1 auto}
 .chat-call-note{font-size:11px;color:var(--mute);line-height:1.4;margin-top:9px}
 @media(max-width:640px){.chat-start{grid-template-columns:1fr}.chat-head-actions{width:100%;justify-content:flex-start}.chat-call-layer{inset:auto 8px 8px;width:calc(100vw - 16px);max-height:70vh}}
+
+/* CHEATLAB messenger refresh: squared geometry, compact controls, real app layout. */
+.chat-start-card,.chat-row,.chat-wrap,.chat-call-layer,.chat-file,.chat-msg,.chat-selected-chip,.chat-chip,.chat-discover,.chat-pending,.chat-image-file img{border-radius:4px!important}
+.chat-start{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:10px 0 16px}
+.chat-start-card{padding:12px;background:transparent;border-color:var(--line);gap:8px}
+.chat-start-card h2{font-size:14px}
+.chat-start-card p{font-size:12px}
+.chat-start-card .chat-input,.chat-start-card input{border-radius:3px!important}
+.chat-head-actions{gap:5px}
+.icon-btn{display:inline-grid;place-items:center;width:36px;height:36px;border:1px solid var(--line);border-radius:3px;background:transparent;color:inherit;cursor:pointer}
+.icon-btn:hover{background:var(--fog)}
+.chat-live{font-size:11px}
+.chat-top{align-items:center;border-bottom:1px solid var(--line);padding-bottom:10px}
+.chat-wrap{border:1px solid var(--line);background:var(--paper);min-height:min(68vh,760px);display:flex;flex-direction:column}
+.chat-msgs{flex:1;min-height:320px}
+.chat-compose-row{position:sticky;bottom:0;background:var(--paper);border-top:1px solid var(--line);padding:8px;gap:8px}
+.chat-field{border-radius:3px!important;min-height:42px}
+.chat-attach,.chat-send,.chat-head-actions .btn{border-radius:3px!important}
+.messenger-drawer{position:fixed;z-index:120;inset:0 auto 0 0;width:min(360px,88vw);overflow:auto;background:var(--paper);border-right:1px solid var(--line);box-shadow:12px 0 40px #0005;padding:14px;animation:messenger-in .16s ease-out}
+.messenger-drawer:before{content:"";position:fixed;z-index:-1;inset:0;background:#0008;left:100vw;width:100vw}
+.messenger-drawer-head{display:flex;align-items:center;justify-content:space-between;padding:4px 0 12px;border-bottom:1px solid var(--line)}
+.messenger-drawer-new{display:flex;align-items:center;gap:8px;padding:12px 4px;border-bottom:1px solid var(--line);font-weight:650}
+.messenger-drawer-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:13px 5px;border-bottom:1px solid var(--line);text-decoration:none}
+.messenger-drawer-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.global-search-people{margin:12px 0 18px;padding:12px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.global-search-people h2{font-size:15px;margin:0 0 8px}
+.global-search-people-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px}
+.global-search-person{display:flex;align-items:center;gap:9px;min-width:0;padding:8px 5px;text-decoration:none;border-bottom:1px solid var(--line)}
+.global-search-person>span:nth-child(2){display:grid;min-width:0}
+.global-search-person small{color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px}
+.global-search-avatar{display:grid;place-items:center;width:34px;height:34px;border:1px solid var(--line);font-weight:700}
+@keyframes messenger-in{from{transform:translateX(-12px);opacity:.7}to{transform:translateX(0);opacity:1}}
+@media(max-width:760px){
+  .chat-start{grid-template-columns:1fr}
+  .chat-start-card{padding:10px}
+  .chat-top{position:sticky;top:0;z-index:12;background:var(--paper);padding:8px 0}
+  .chat-top .chat-title h1{font-size:17px}
+  .chat-wrap{min-height:calc(100dvh - 190px);height:calc(100dvh - 190px);max-height:none;border-left:0;border-right:0}
+  .chat-msgs{min-height:0}
+  .chat-compose-row{padding-bottom:max(8px,env(safe-area-inset-bottom))}
+  .messenger-menu-btn{display:inline-grid}
+  .chat-head-actions .btn{font-size:0;min-width:36px;padding:0}
+  .chat-head-actions .btn .i{margin:0}
+}
+@media(min-width:761px){.messenger-menu-btn{display:inline-grid}}
