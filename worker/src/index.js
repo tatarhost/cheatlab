@@ -600,7 +600,8 @@ route('GET', /^\/api\/mail\/messages$/, async (request, env, _m, url) => {
   const who = await identity(request, env);
   if (!who) return fail(401, 'login required');
   const box = str(url.searchParams.get('mailbox'), 32);
-  const folder = url.searchParams.get('folder') === 'sent' ? 'sent' : 'inbox';
+  const requestedFolder = url.searchParams.get('folder');
+  const folder = requestedFolder === 'sent' || requestedFolder === 'starred' ? requestedFolder : 'inbox';
   const owned = await env.STORE.db.prepare('SELECT id,address FROM mail_mailbox WHERE id = ? AND owner_user_id = ?').bind(box, who.user.id).first();
   if (!owned) return fail(404, 'mailbox not found');
   const params = [box, folder, folder, folder === 'sent' ? 'sent' : 'inbox'];
@@ -615,6 +616,7 @@ route('GET', /^\/api\/mail\/messages$/, async (request, env, _m, url) => {
     // Keep inbox readable if an older D1 database has not received the optional
     // mail feature migrations yet. Core message columns were created in 0007.
     console.warn('mail rich-schema query failed; using base message fields', err?.message || err);
+    if (folder === 'starred') return json({ messages: [] });
     rows = await env.STORE.rows(
       "SELECT id, direction, from_address, to_address, subject, text_body, created_at FROM mail_message WHERE mailbox_id = ? AND direction = ? ORDER BY created_at DESC LIMIT 100",
       box, folder === 'sent' ? 'sent' : 'inbox',
