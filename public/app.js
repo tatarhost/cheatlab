@@ -788,23 +788,34 @@ searchInput.addEventListener('input', () => {
   if (searchInput.value === '' && stripBase(location.pathname) === '/search') navigate('/');
 });
 
-document.addEventListener('click', (e) => {
-  const a = e.target.closest('a');
-  if (!a || e.metaKey || e.ctrlKey || e.shiftKey || a.target || a.hasAttribute('download')) return;
-  const href = a.getAttribute('href');
-  if (!href || href.startsWith('#') || /^[a-z][a-z0-9+.-]*:/i.test(href)) return;
-  if (a.origin !== location.origin) return;
-  // Route links only. API paths are left to the browser, which is what keeps
-  // downloads and raw media views working on a same-origin deployment.
-  if (!isAppLink(a.pathname)) return;
-  e.preventDefault();
-  navigate(a.pathname + a.search + a.hash);
+document.addEventListener('click', (event) => {
+  // Resolve the actual anchor from the composed click target. Using a.href
+  // also handles links relative to the GitHub Pages base path.
+  const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+  const anchor = target?.closest('a[href]');
+  if (!anchor || event.defaultPrevented || event.button !== 0) return;
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  if (anchor.hasAttribute('download')) return;
+  if (anchor.target && anchor.target.toLowerCase() !== '_self') return;
+
+  let destination;
+  try { destination = new URL(anchor.href, document.baseURI); } catch { return; }
+  if (destination.origin !== location.origin || !isAppLink(destination.pathname)) return;
+
+  event.preventDefault();
+  navigate(destination.pathname + destination.search + destination.hash);
 });
 
 function navigate(href) {
+  const target = appPath(String(href || '/'));
   if (chatCall && !String(href || '').startsWith('/chat')) chatCallEnd(true);
-  history.pushState({}, '', appPath(href));
-  route();
+  try {
+    history.pushState({}, '', target);
+  } catch {
+    location.assign(target);
+    return;
+  }
+  void route();
 }
 
 window.addEventListener('popstate', route);
@@ -5025,7 +5036,8 @@ async function viewKey(url) {
 let renderToken = 0;
 async function route() {
   const token = ++renderToken;
-  const path = stripBase(location.pathname);
+  const rawPath = stripBase(location.pathname);
+  const path = rawPath.length > 1 ? rawPath.replace(/\\/+$/, '') : rawPath;
   const url = new URL(location.href);
   markNav();
   if (path === '/search') searchInput.value = url.searchParams.get('q') || '';
@@ -5060,8 +5072,6 @@ async function route() {
       viewPrivacy();
     } else if (path === '/report') {
       await viewReport();
-    } else if (path === '/mail') {
-      await viewMail();
     } else if (path === '/key') {
       await viewKey(url);
     } else if (/^\/u\/[A-Za-z0-9_-]{3,32}$/.test(path)) {
