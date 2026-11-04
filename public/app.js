@@ -2989,7 +2989,6 @@ function chatEnableNotifications() {
 }
 function chatNotify(title, body, tag, onClick) {
   if (!chatNotificationsEnabled || Notification.permission !== 'granted') return;
-  if (document.visibilityState === 'visible' && document.hasFocus()) return;
   try {
     const n = new Notification(title, { body, tag, icon: '/assets/logo.png', renotify: false });
     n.onclick = () => { window.focus(); onClick?.(); n.close(); };
@@ -3471,12 +3470,16 @@ async function chatCallMedia(mode) {
 async function chatCallStart(mode) {
   if (!chatRoom?.id || chatRoom.chat?.kind === 'channel') return;
   if (chatCall) { toast('Сначала завершите текущий звонок', true); return; }
+  let stream;
   try {
+    stream = await chatCallMedia(mode);
     await chatCallSendReady('', 'invite', { mode });
-    const stream = await chatCallMedia(mode);
     chatCall = { convId: chatRoom.id, mode, initiator: true, incoming: false, active: false, localStream: stream, peers: new Map(), remoteStreams: new Map(), pendingIce: new Map(), status: 'Вызов участникам…' };
     chatCallRender();
-  } catch (err) { toast(err.message || 'Не удалось начать звонок', true); }
+  } catch (err) {
+    for (const track of stream?.getTracks() || []) track.stop();
+    toast(err.message || 'Не удалось начать звонок', true);
+  }
 }
 async function chatCallSendReady(to, kind, data = {}, timeout = 8000) {
   const id = chatRoom?.id;
