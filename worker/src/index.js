@@ -898,68 +898,55 @@ route('POST', /^\/api\/auth\/register$/, async (request, env) => {
   const c = config(env);
   const client = clientOf(request);
   if (!client) return fail(401, 'missing client id');
-
   if (!(await STORE.throttle(client, 'register', { cap: 3, windowMs: 60 * 60 * 1000 }))) {
     return fail(429, 'too many registration attempts, try later');
   }
-
   let payload;
-  try {
-    payload = await readJson(request, c.maxTextBytes);
-  } catch (err) {
-    return fail(err.code === 'TOO_LARGE' ? 413 : 400, err.message);
-  }
-
-  // Every account costs a 210k-iteration hash, so an unverified caller must
-  // first do the proof of work. Without this, registration is a free CPU-burn
-  // oracle: the server pays 210k hashes and the caller pays nothing.
+  try { payload = await readJson(request, c.maxTextBytes); }
+  catch (err) { return fail(err.code === 'TOO_LARGE' ? 413 : 400, err.message); }
   const pow = await powGate(request, env);
-  if (!pow.ok) {
-    return json({ error: pow.error, pow: { challenge: pow.challenge } }, 403);
-  }
-
+  if (!pow.ok) return json({ error: pow.error, pow: { challenge: pow.challenge } }, 403);
   const nick = str(payload.nick, 24);
   const nickProblemsList = nickProblems(nick);
   if (nickProblemsList.length) return fail(400, nickProblemsList[0], { problems: nickProblemsList });
-
   const passProblems = passwordProblems(payload.password);
   if (passProblems.length) return fail(400, passProblems[0], { problems: passProblems });
-
+  const email = str(payload.email, 254).toLowerCase();
+  if (!EMAIL_RE.test(email)) return fail(400, 'Укажите корректный адрес электронной почты.');
   const key = nickKey(nick);
-  // The operator's own block list, on top of the built-in weak-nick floor in
-  // accounts.js. Checked against the folded key, so blocking one casing blocks
-  // all of them. Existing accounts are deliberately not affected - see the note
-  // on the admin route: a blocked nick stops new registrations, and an account
-  // that already holds it is handled by a ban if that is what is wanted.
   if (await STORE.nickBlocked(key)) return fail(403, 'that nick is not available');
   if (await STORE.getUserByNickKey(key)) return fail(409, 'that nick is already taken');
-
+  const existingEmail = await STORE.db.prepare('SELECT id FROM user WHERE lower(email) = ?').bind(email).first();
+  if (existingEmail) return fail(409, 'Эта почта уже привязана к аккаунту.');
   const { passHash, passSalt, iterations } = await hashPassword(payload.password);
-  const id = newUserId();
+  const pending = await createEmailOtp(env, {
+    purpose: 'register', email, nick, nickKeyValue: key, passHash, passSalt, iterations,
+  });
+  if (pending.error) return pending.error;
+  return json({ verificationRequired: true, challengeId: pending.id, email: pending.email, expiresAt: pending.expiresAt }, 202);
+});
 
-  let row;
+route('POST', /^\/api\/auth\/register\/verify$/, async (request, env) => {
+  const payload = await readJson(request, 4096).catch(() => ({}));
+  const checked = await verifyEmailOtp(env, str(payload.challengeId, 32), payload.code, 'register');
+  if (checked.error) return checked.error;
+  const row = checked.row;
+  if (await env.STORE.getUserByNickKey(row.nick_key)) return fail(409, 'Этот ник уже занят. Начните регистрацию заново.');
+  const existing = await env.STORE.db.prepare('SELECT id FROM user WHERE lower(email) = ?').bind(row.email).first();
+  if (existing) return fail(409, 'Эта почта уже привязана к аккаунту.');
+  let user;
   try {
-    row = await STORE.createUser({ id, nick, nickKey: key, passHash, passSalt, iterations });
+    user = await env.STORE.createUser({
+      id: newUserId(), nick: row.nick, nickKey: row.nick_key,
+      passHash: row.pass_hash, passSalt: row.pass_salt, iterations: row.iterations,
+      email: row.email, emailVerified: true,
+    });
   } catch (err) {
-    // The UNIQUE index is the real guard against a concurrent double-register;
-    // a loser of that race gets the same friendly answer as an early check.
-    if (/UNIQUE|constraint/i.test(String(err.message))) {
-      return fail(409, 'that nick is already taken');
-    }
+    if (/UNIQUE|constraint/i.test(String(err.message))) return fail(409, 'Ник или почта уже используются.');
     throw err;
   }
-
-  const { token, tokenHash } = await newSession();
-  await STORE.createSession({
-    tokenHash,
-    userId: id,
-    createdAt: now(),
-    expiresAt: now() + SESSION_TTL_MS,
-    clientId: client,
-    userAgent: str(request.headers.get('user-agent'), 200),
-  });
-
-  return json({ user: publicUser(row, env), token, expiresAt: now() + SESSION_TTL_MS }, 201);
+  await env.STORE.db.prepare('DELETE FROM email_otp WHERE id = ?').bind(row.id).run();
+  return issueAccountSession(request, env, user);
 });
 
 route('POST', /^\/api\/auth\/login$/, async (request, env) => {
@@ -967,44 +954,53 @@ route('POST', /^\/api\/auth\/login$/, async (request, env) => {
   const c = config(env);
   const client = clientOf(request);
   if (!client) return fail(401, 'missing client id');
-
-  const key = clientOf(request) || 'anon';
-  if (!(await STORE.throttle(`login:${key}`, 'auth', { cap: 10, windowMs: 15 * 60 * 1000 }))) {
+  if (!(await STORE.throttle('login:' + client, 'auth', { cap: 10, windowMs: 15 * 60 * 1000 }))) {
     return fail(429, 'too many login attempts, try later');
   }
-
   let payload;
-  try {
-    payload = await readJson(request, c.maxTextBytes);
-  } catch (err) {
-    return fail(err.code === 'TOO_LARGE' ? 413 : 400, err.message);
-  }
-
+  try { payload = await readJson(request, c.maxTextBytes); }
+  catch (err) { return fail(err.code === 'TOO_LARGE' ? 413 : 400, err.message); }
   const row = await STORE.getUserByNickKey(nickKey(str(payload.nick, 24)));
-
-  // Always run a hash, even when the nick is unknown, so a wrong nick and a
-  // wrong password take the same time. Otherwise response time alone
-  // enumerates which nicks are registered.
   const stored = row || { pass_hash: 'x', pass_salt: 'x', iterations: 1 };
   const { ok, needsRehash } = await verifyPassword(payload.password, stored);
   if (!row || !ok) return fail(401, 'wrong nick or password');
-
   if (needsRehash) {
     const { passHash, passSalt, iterations } = await hashPassword(payload.password);
     await STORE.updateUser(row.id, { pass_hash: passHash, pass_salt: passSalt, iterations });
   }
+  let email = String(row.email || '').toLowerCase();
+  let purpose = 'login';
+  if (!row.email_verified || !EMAIL_RE.test(email)) {
+    email = str(payload.email, 254).toLowerCase();
+    if (!EMAIL_RE.test(email)) return fail(400, 'Для старого аккаунта укажите почту, чтобы включить защиту входа.');
+    const occupied = await STORE.db.prepare('SELECT id FROM user WHERE lower(email) = ? AND id <> ?').bind(email, row.id).first();
+    if (occupied) return fail(409, 'Эта почта уже привязана к другому аккаунту.');
+    purpose = 'login_bind';
+  }
+  const pending = await createEmailOtp(env, { purpose, email, userId: row.id });
+  if (pending.error) return pending.error;
+  return json({ verificationRequired: true, challengeId: pending.id, email: pending.email, expiresAt: pending.expiresAt }, 202);
+});
 
-  const { token, tokenHash } = await newSession();
-  await STORE.createSession({
-    tokenHash,
-    userId: row.id,
-    createdAt: now(),
-    expiresAt: now() + SESSION_TTL_MS,
-    clientId: client,
-    userAgent: str(request.headers.get('user-agent'), 200),
-  });
-
-  return json({ user: publicUser(row, env), token, expiresAt: now() + SESSION_TTL_MS });
+route('POST', /^\/api\/auth\/login\/verify$/, async (request, env) => {
+  const payload = await readJson(request, 4096).catch(() => ({}));
+  const id = str(payload.challengeId, 32);
+  const pending = await env.STORE.db.prepare(
+    'SELECT purpose FROM email_otp WHERE id = ? AND purpose IN (\'login\',\'login_bind\')'
+  ).bind(id).first();
+  if (!pending) return fail(400, 'Код истёк или не существует.');
+  const checked = await verifyEmailOtp(env, id, payload.code, pending.purpose);
+  if (checked.error) return checked.error;
+  const row = checked.row;
+  let user = await env.STORE.getUser(row.user_id);
+  if (!user) return fail(401, 'Аккаунт не найден.');
+  if (row.purpose === 'login_bind') {
+    const occupied = await env.STORE.db.prepare('SELECT id FROM user WHERE lower(email) = ? AND id <> ?').bind(row.email, user.id).first();
+    if (occupied) return fail(409, 'Эта почта уже привязана к другому аккаунту.');
+    user = await env.STORE.updateUser(user.id, { email: row.email, email_verified: 1 });
+  }
+  await env.STORE.db.prepare('DELETE FROM email_otp WHERE id = ?').bind(row.id).run();
+  return issueAccountSession(request, env, user);
 });
 
 route('POST', /^\/api\/auth\/logout$/, async (request, env) => {
