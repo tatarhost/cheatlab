@@ -4162,24 +4162,24 @@ function safeMailHtml(raw, plainText = false) {
   // Email clients commonly keep layout CSS in the document head; the isolated
   // reader returns body markup only, so move those styles into the sanitized body.
   for (const style of [...doc.head.querySelectorAll('style')]) doc.body.prepend(style);
-  const allowed = new Set(['A','B','BLOCKQUOTE','BR','CAPTION','CODE','DIV','EM','H1','H2','H3','H4','HR','I','IMG','LI','OL','P','PRE','S','SMALL' ,'SPAN','STRONG','STYLE','SUB','SUP','TABLE','TBODY','TD','TH','THEAD','TR','U','UL']);
+  const allowed = new Set(['A','B','BLOCKQUOTE','BR','CAPTION','CODE','DIV','EM','H1','H2','H3','H4','HR','I','LI','OL','P','PRE','S','SMALL','SPAN','STRONG','STYLE','SUB','SUP','TABLE','TBODY','TD','TH','THEAD','TR','U','UL']);
   const clean = (node) => {
     for (const child of [...node.childNodes]) {
       if (child.nodeType === Node.COMMENT_NODE) { child.remove(); continue; }
       if (child.nodeType !== Node.ELEMENT_NODE) continue;
       if (!allowed.has(child.tagName)) {
-        if (['SCRIPT','STYLE','IFRAME','OBJECT','EMBED','FORM','INPUT','BUTTON','VIDEO','AUDIO','SVG','MATH'].includes(child.tagName)) child.remove();
+        if (['SCRIPT','STYLE','IFRAME','OBJECT','EMBED','FORM','INPUT','BUTTON','VIDEO','AUDIO','SVG','MATH','IMG','PICTURE','SOURCE'].includes(child.tagName)) child.remove();
         else { child.replaceWith(...child.childNodes); }
         continue;
       }
       for (const attr of [...child.attributes]) {
         const name = attr.name.toLowerCase();
         const value = attr.value.trim();
-        if (name.startsWith('on') || name === 'srcset' || !['href','src','alt','title','width','height','colspan','rowspan','target','style'].includes(name)) {
+        if (name.startsWith('on') || name === 'srcset' || !['href','alt','title','width','height','colspan','rowspan','target','style'].includes(name)) {
           child.removeAttribute(attr.name); continue;
         }
         if (name === 'href' && !/^(https:\/\/|mailto:)/i.test(value)) child.removeAttribute(attr.name);
-        if (name === 'src') { const imageUrl = value.startsWith('//') ? 'https:' + value : value; if (child.tagName === 'IMG' && (/^https:\/\//i.test(imageUrl) || /^data:image\/(?:png|jpeg|gif|webp);base64,/i.test(imageUrl))) { child.setAttribute('src', imageUrl); child.setAttribute('referrerpolicy', 'no-referrer'); child.setAttribute('loading', 'eager'); } else child.removeAttribute(attr.name); }
+        if (name === 'style') { const safeStyle = value.replace(/url\s*\([^)]*\)/gi, 'none').replace(/@import[^;]+;?/gi, ''); if (safeStyle) child.setAttribute('style', safeStyle); else child.removeAttribute('style'); }
         if (child.tagName === 'A') {
           child.setAttribute('target', '_blank');
           child.setAttribute('rel', 'noopener noreferrer');
@@ -4189,41 +4189,8 @@ function safeMailHtml(raw, plainText = false) {
     }
   };
   clean(doc.body);
-  // Render bare image URLs too: some mail senders include a URL instead of an <img>.
-  const imageUrlPattern = /\[?(https?:\/\/[^\s<>"'\]]+)\]?/gi;
-  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
-  const textNodes = [];
-  while (walker.nextNode()) textNodes.push(walker.currentNode);
-  for (const textNode of textNodes) {
-    const value = textNode.nodeValue || '';
-    imageUrlPattern.lastIndex = 0;
-    let match, last = 0, changed = false;
-    const fragment = doc.createDocumentFragment();
-    while ((match = imageUrlPattern.exec(value))) {
-      const imageUrl = match[1].replace(/[),.;]+$/, '');
-      if (!/^https:\/\//i.test(imageUrl)) continue;
-      changed = true;
-      if (match.index > last) {
-        const prefix = value.slice(last, match.index).replace(/\s*\[$/, '');
-        if (prefix) fragment.append(doc.createTextNode(prefix));
-      }
-      const link = doc.createElement('a');
-      link.href = imageUrl; link.target = '_blank'; link.rel = 'noopener noreferrer';
-      if (/\.(?:png|jpe?g|gif|webp)(?:\?|$)/i.test(imageUrl)) {
-        const image = doc.createElement('img');
-        image.src = imageUrl; image.alt = 'Изображение из письма';
-        image.loading = 'eager'; image.referrerPolicy = 'no-referrer';
-        image.style.cssText = 'display:block;max-width:100%;height:auto;margin:12px 0;border-radius:8px';
-        link.append(image);
-      } else link.textContent = imageUrl;
-      fragment.append(link);
-      last = match.index + match[0].length;
-    }
-    if (changed) {
-      if (last < value.length) fragment.append(doc.createTextNode(value.slice(last)));
-      textNode.replaceWith(fragment);
-    }
-  }
+  // Remote images and tracking pixels are intentionally not loaded in email.
+  // Keep plain URLs as text; links inside the message remain clickable.
   return doc.body.innerHTML;
 }
 
