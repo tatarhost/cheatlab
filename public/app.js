@@ -3511,7 +3511,7 @@ async function chatCallShare() {
 async function chatCallEnd(notify = true) {
   const c = chatCall; if (!c) return;
   if (notify) {
-    if (c.initiator) for (const id of c.peers.keys()) chatCallSend(id, 'end');
+    if (c.initiator) chatCallSend('', 'end');
     else if (c.initiatorId) chatCallSend(c.initiatorId, 'end');
   }
   for (const pc of c.peers.values()) pc.close();
