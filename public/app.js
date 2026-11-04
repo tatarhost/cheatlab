@@ -440,8 +440,8 @@ async function api(path, { method = 'GET', body, secret, key, signal, noAuth, he
 
 /**
  * One-use visual CAPTCHA: the server keeps the answer and sends only ring geometry.
- * The browser records only challenge duration and button interactions for a light
- * anti-automation signal; it does not collect pointer paths or device fingerprints.
+ * The server measures challenge duration and receives only button-toggle counts;
+ * no pointer paths or device fingerprints are collected.
  */
 function askRingCaptcha(challenge) {
   return new Promise((resolve) => {
@@ -469,8 +469,10 @@ function askRingCaptcha(challenge) {
       circle.setAttribute('stroke-width', '5'); circle.setAttribute('stroke-linecap', 'round');
       const circumference = 2 * Math.PI * 23;
       const gap = Math.max(0, Math.min(0.45, Number(ring.gap) || 0));
-      circle.setAttribute('stroke-dasharray', `${circumference * (1 - gap)} ${circumference * gap}`);
-      circle.setAttribute('stroke-dashoffset', String(-circumference * (Number(ring.offset) || 0)));
+      if (gap > 0) {
+        circle.setAttribute('stroke-dasharray', `${circumference * (1 - gap)} ${circumference * gap}`);
+        circle.setAttribute('stroke-dashoffset', String(-circumference * (Number(ring.offset) || 0)));
+      }
       svg.append(circle);
       button.append(svg);
       grid.append(button);
