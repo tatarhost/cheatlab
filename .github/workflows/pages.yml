@@ -38,6 +38,9 @@ jobs:
       # but left the address bar on the 404 path and could not be reasoned about
       # from either file.
 
+      - name: Check application JavaScript syntax
+        run: node --check public/app.js
+
       - name: Upload static site
         uses: actions/upload-pages-artifact@v3
         with:
