@@ -65,6 +65,14 @@ const channel = await asAlice('/api/chats', {
 check('seed: a channel exists', channel.status === 201, `${channel.status} ${channel.text.slice(0, 140)}`);
 const convId = channel.json.chat.id;
 
+const iceConfig = await asAlice(`/api/chats/${convId}/ice`);
+check('call ICE config is available to a room member', iceConfig.status === 200,
+  `${iceConfig.status} ${iceConfig.text.slice(0, 120)}`);
+check('without TURN secrets, the call gets explicit STUN fallback',
+  iceConfig.json?.turnAvailable === false
+    && iceConfig.json?.iceServers?.some((server) => String(server.urls).includes('stun:stun.cloudflare.com:3478')),
+  JSON.stringify(iceConfig.json));
+
 /* ------------------------------------------------------- the upgrade route */
 
 // The gate that decides whether a Durable Object is woken at all. A plain GET on
