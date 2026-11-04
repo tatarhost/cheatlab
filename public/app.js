@@ -397,6 +397,7 @@ async function api(path, { method = 'GET', body, secret, key, signal, noAuth, he
   if (body !== undefined && !isBlob) headers['content-type'] = 'application/json';
   const res = await fetch(API + path, {
     method,
+    cache: 'no-store',
     headers,
     body: body === undefined ? undefined : isBlob ? body : JSON.stringify(body),
     signal,
@@ -2936,6 +2937,9 @@ let chatDraft = '';
  */
 let chatMissed = 0;
 let chatUnreadFrom = null;
+let chatPollTimer = null;
+let chatPollBusy = false;
+let chatPollRoomId = null;
 
 /** Resets both when a different conversation is opened. */
 function chatClearMissed() {
@@ -2994,11 +2998,16 @@ function chatNotify(title, body, tag, onClick) {
     n.onclick = () => { window.focus(); onClick?.(); n.close(); };
   } catch (err) { console.warn('[chat] notification failed', err); }
 }
+function chatCallInviteMode(body) {
+  // Match the marker even if a version/client added surrounding text or whitespace.
+  const match = /CHEATLAB_CALL\s*:\s*(audio|video)/i.exec(String(body || ''));
+  return match ? match[1].toLowerCase() : null;
+}
 function chatNotifyMessage(message) {
   const sender = message.nick || message.user?.nick || 'Новое сообщение';
-  const invite = /^\[\[CHEATLAB_CALL:(audio|video)\]\]$/.exec(String(message.body || '').trim());
-  const body = invite ? (invite[1] === 'video' ? 'Приглашение в видеозвонок' : 'Приглашение в аудиозвонок') : String(message.body || 'Вложение').slice(0, 120);
-  chatNotify(invite ? 'Входящий звонок' : sender, invite ? `${sender}: ${body}. Откройте чат, чтобы присоединиться.` : body, `chat-message-${message.id}`, () => {});
+  const mode = chatCallInviteMode(message.body);
+  const body = mode ? (mode === 'video' ? 'Приглашение в видеозвонок' : 'Приглашение в аудиозвонок') : String(message.body || 'Вложение').slice(0, 120);
+  chatNotify(mode ? 'Входящий звонок' : sender, mode ? `${sender}: ${body}. Откройте чат, чтобы присоединиться.` : body, `chat-message-${message.id}`, () => {});
 }
 function chatToggleDrawer() {
   document.querySelector('.messenger-drawer')?.remove();
@@ -3108,6 +3117,66 @@ async function chatConnect(convId) {
   ws.onerror = (event) => { console.warn('[chat] WebSocket transport error', event); };
 }
 
+/**
+ * HTTP fallback for messages missed while the WebSocket is reconnecting.
+ * The cursor means this asks for only new rows, not the full conversation.
+ */
+function chatStopPolling() {
+  if (chatPollTimer) clearTimeout(chatPollTimer);
+  chatPollTimer = null;
+  chatPollRoomId = null;
+}
+async function chatPollOnce(convId) {
+  if (chatPollBusy || chatRoom?.id !== convId) return;
+  chatPollBusy = true;
+  try {
+    const last = chatMessages[chatMessages.length - 1];
+    const params = new URLSearchParams({
+      after: String(last?.createdAt || 0),
+      afterId: String(last?.id || ''),
+      limit: '60',
+    });
+    const data = await api(`/api/chats/${convId}?${params.toString()}`);
+    if (chatRoom?.id !== convId) return;
+    const oldChat = JSON.stringify(chatRoom.chat);
+    if (data.chat) chatRoom.chat = data.chat;
+    for (const message of data.messages || []) {
+      if (!chatMessages.some((item) => item.id === message.id)) {
+        if (message.userId !== account?.id) chatNotifyMessage(message);
+        chatAdd(message, convId);
+      }
+    }
+    if (data.chat && oldChat !== JSON.stringify(data.chat) && !(data.messages || []).length) {
+      chatRender('keep');
+    }
+    const socket = chatSockets.get(convId)?.ws;
+    if (!socket || socket.readyState === WebSocket.CLOSED) chatConnect(convId);
+  } catch (err) {
+    // Keep the heartbeat alive after a transient network or API error.
+    console.warn('[chat] sync poll failed', err);
+  } finally {
+    chatPollBusy = false;
+  }
+}
+function chatStartPolling(convId) {
+  if (chatPollRoomId === convId && chatPollTimer) return;
+  chatStopPolling();
+  chatPollRoomId = convId;
+  const tick = async () => {
+    if (chatRoom?.id !== convId || !document.querySelector('.chat-log')) {
+      chatStopPolling();
+      return;
+    }
+    if (document.visibilityState === 'visible') await chatPollOnce(convId);
+    if (chatRoom?.id === convId && document.querySelector('.chat-log')) {
+      chatPollTimer = setTimeout(tick, 1000);
+    } else {
+      chatStopPolling();
+    }
+  };
+  chatPollTimer = setTimeout(tick, 1000);
+}
+
 // A laptop that was asleep comes back with its socket already dead and no error
 // worth reporting, so the room is re-opened when the tab becomes visible again or
 // the network returns. Both are cheap: one ticket, and only if nothing is open.
@@ -3128,6 +3197,7 @@ async function chatOpen(convId, { keepSocket = false } = {}) {
   if (!convId) return;
   if (chatRoom?.id && chatRoom.id !== convId && chatCall) chatCallEnd(true);
   if (!keepSocket) {
+    chatStopPolling();
     chatClose(chatRoom?.id);
     chatRoom = { id: convId, connects: 0, live: false };
     chatMessages = [];
@@ -3161,6 +3231,7 @@ async function chatOpen(convId, { keepSocket = false } = {}) {
   chatRender();
   chatMarkRead(convId);
   if (!keepSocket) chatConnect(convId);
+  chatStartPolling(convId);
 }
 
 /** Clears the unread badge the moment a room is actually read. */
@@ -3306,8 +3377,8 @@ async function chatRetract(messageId, convId = chatRoom?.id) {
 /** One message line. The body is a text node, never markup. */
 function chatBubble(m, grouped = false) {
   const mine = account && m.userId === account.id;
-  const callInvite = !m.deleted && /^\[\[CHEATLAB_CALL:(audio|video)\]\]$/.exec(String(m.body || '').trim());
-  const callMode = callInvite?.[1] || 'audio';
+  const callMode = chatCallInviteMode(m.body) || 'audio';
+  const callInvite = !m.deleted && !!chatCallInviteMode(m.body);
   const callExpired = callInvite && m.createdAt && Date.now() - Number(m.createdAt) > 2 * 60 * 60 * 1000;
   const when_ = m.createdAt ? ago(m.createdAt) : '';
   // A run of messages from one person names them once. Repeating the name above
@@ -3347,7 +3418,7 @@ function chatBubble(m, grouped = false) {
               ? h('span', { class: 'chat-call-invite-expired', text: 'Приглашение устарело' })
               : mine
                 ? h('span', { class: 'chat-call-invite-expired', text: 'Приглашение сохранено в истории чата' })
-                : h('button', { class: 'btn btn-primary chat-call-join', type: 'button', onclick: async () => {
+                : h('button', { class: 'btn btn-primary chat-call-join', type: 'button', onClick: async () => {
                     if (chatCall) { toast('Сначала завершите текущий звонок', true); return; }
                     chatCall = { convId: chatRoom?.id, mode: callMode, initiator: false, initiatorId: m.userId, incoming: true, active: false, accepting: false, peers: new Map(), remoteStreams: new Map(), pendingIce: new Map(), status: 'Подключение к звонку…' };
                     chatCallRender();
