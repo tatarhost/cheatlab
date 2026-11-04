@@ -278,7 +278,18 @@ a:hover { text-decoration: none; }
 /* Mobile navigation discoverability hint */
 @media (max-width: 900px) {
   .nav {
+    position: relative;
     isolation: isolate;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    width: 100%;
+    max-width: 100%;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x;
+    scrollbar-width: none;
   }
   .nav::after {
     content: "Ещё разделы · листайте  ›";
