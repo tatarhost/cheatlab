@@ -655,7 +655,7 @@ async function viewAuth(url) {
         : h('a', { class: 'btn btn-ghost', href: mode === 'register' ? '/auth' : '/auth?mode=register' }, mode === 'register' ? 'Уже есть аккаунт — войти' : 'Нет аккаунта — создать')),
       signedIn() ? h('button', { class: 'btn btn-ghost', type: 'button',
         onclick: async () => { await logoutAccount(); toast('Вышли'); navigate('/'); } }, 'Выйти из текущего аккаунта') : null
-    );
+    ).filter(Boolean);
   };
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
