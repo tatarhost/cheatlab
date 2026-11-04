@@ -52,6 +52,15 @@ async function humanGate(env, body, reply) {
     selected.sort((a, b) => a - b);
   } catch { return fail(); }
   if (!(await verifyCaptcha(env.DB, env, hc.ct, JSON.stringify(selected)))) return fail();
+  // Lightweight, privacy-preserving bot score: server-measured solve time plus
+  // the number of actual ring toggles. No pointer trails or device fingerprinting.
+  const challengeId = String(hc.ct).split('.')[0];
+  const issued = await env.DB.prepare('SELECT issued_at FROM captcha WHERE id = ?').bind(challengeId).first();
+  const elapsed = issued ? Date.now() - Number(issued.issued_at) : 0;
+  const clicks = Number(hc.k);
+  const botScore = (elapsed < 300 ? 2 : elapsed < 750 ? 1 : 0)
+    + (!Number.isInteger(clicks) || clicks < selected.length ? 2 : clicks > 30 ? 1 : 0);
+  if (botScore >= 2) return fail();
   return null;
 }
 
