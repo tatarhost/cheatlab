@@ -3857,12 +3857,14 @@ function chatListView(data, banner) {
     } }, h('input', { class: 'chat-input', placeholder: 'Название нового канала', maxlength: '80' }), h('button', { class: 'btn btn-sm', type: 'submit' }, 'Создать канал')),
   );
   $view.replaceChildren(
-    h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Чаты' }), h('p', { class: 'page-sub', text: 'Личные переписки, группы и каналы.' }))),
-    banner || null,
-    h('div', { class: 'chat-start' }, friendForm, dmForm, groupForm),
+    ...[
+      h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Чаты' }), h('p', { class: 'page-sub', text: 'Личные переписки, группы и каналы.' }))),
+      banner,
+      h('div', { class: 'chat-start' }, friendForm, dmForm, groupForm),
     channels,
     h('h2', { class: 'chat-section-title', text: 'Ваши переписки' }),
-    rows.length ? h('div', { class: 'chat-list' }, ...rows) : h('p', { class: 'hint', text: 'Пока нет чатов. Добавь друга или создай группу выше.' }),
+      rows.length ? h('div', { class: 'chat-list' }, ...rows) : h('p', { class: 'hint', text: 'Пока нет чатов. Добавь друга или создай группу выше.' }),
+    ].filter(node => node !== null && node !== undefined && node !== false),
   );
 }
 async function viewChat(url) {
