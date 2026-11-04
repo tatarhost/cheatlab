@@ -1077,8 +1077,24 @@ async function viewFeed(path, url) {
   params.set('limit', '40');
 
   const { items, total } = await api(`/api/items?${params}`);
+  if (q.trim().length >= 2 && path === '/search') {
+    try {
+      const found = await api(`/api/users?q=${encodeURIComponent(q.trim().replace(/^@/, ''))}`);
+      const people = (found.users || []).filter(u => u.id !== account?.id);
+      const peopleSection = h('section', { class: 'global-search-people' },
+        h('h2', { text: 'Люди' }),
+        people.length ? h('div', { class: 'global-search-people-list' }, ...people.map(u => h('a', { class: 'global-search-person', href: `/u/${u.id}` },
+          h('span', { class: 'global-search-avatar', text: String(u.nick || u.id).slice(0,1).toUpperCase() }),
+          h('span', {}, h('strong', { text: `@${u.nick || u.id}` }), h('small', { text: u.bio || 'Профиль пользователя' })),
+          h('span', { class: 'spacer' }), icon('arrow-up-right','i i-sm'),
+        ))) : h('p', { class: 'hint', text: 'Люди не найдены.' }),
+      );
+      $view.append(peopleSection);
+    } catch (err) { console.warn('[search] user search failed', err); }
+  }
   const list = h('div', { class: 'list' });
   if (!items.length) {
+    if (q.trim().length >= 2 && path === '/search') { $view.append(h('p', { class: 'hint', text: 'Публикации не найдены.' })); return; }
     $view.append(emptyState(
       filtered ? 'Ничего не нашлось' : 'Пока пусто',
         filtered ? 'Попробуй другой запрос или сними фильтр.' : 'Опубликуй первым — регистрация не обязательна.',
@@ -2959,6 +2975,47 @@ function chatClose(convId) {
   chatSockets.delete(convId);
 }
 
+
+let chatNotificationsEnabled = false;
+function chatEnableNotifications() {
+  if (!('Notification' in window)) { toast('Уведомления не поддерживаются этим браузером', true); return; }
+  if (Notification.permission === 'granted') { chatNotificationsEnabled = true; toast('Уведомления включены'); return; }
+  if (Notification.permission === 'denied') { toast('Разреши уведомления для сайта в настройках браузера', true); return; }
+  Notification.requestPermission().then(permission => {
+    chatNotificationsEnabled = permission === 'granted';
+    toast(chatNotificationsEnabled ? 'Уведомления включены' : 'Разрешение не выдано', !chatNotificationsEnabled);
+  });
+}
+function chatNotify(title, body, tag, onClick) {
+  if (!chatNotificationsEnabled || Notification.permission !== 'granted') return;
+  if (document.visibilityState === 'visible' && document.hasFocus()) return;
+  try {
+    const n = new Notification(title, { body, tag, icon: '/assets/logo.png', renotify: false });
+    n.onclick = () => { window.focus(); onClick?.(); n.close(); };
+  } catch (err) { console.warn('[chat] notification failed', err); }
+}
+function chatNotifyMessage(message) {
+  const sender = message.nick || message.user?.nick || 'Новое сообщение';
+  const body = String(message.body || 'Вложение').slice(0, 120);
+  chatNotify(sender, body, `chat-message-${message.id}`, () => {});
+}
+function chatToggleDrawer() {
+  document.querySelector('.messenger-drawer')?.remove();
+  api('/api/chats').then(data => {
+    const drawer = h('aside', { class: 'messenger-drawer', role: 'dialog', 'aria-label': 'Список переписок' },
+      h('div', { class: 'messenger-drawer-head' }, h('strong', { text: 'Сообщения' }),
+        h('button', { class: 'icon-btn', type: 'button', title: 'Закрыть', onclick: () => drawer.remove() }, icon('x','i'))),
+      h('a', { class: 'messenger-drawer-new', href: '/chat' }, icon('square-pen','i i-sm'), ' Новое сообщение'),
+      ...(data.chats || []).map(item => h('a', { class: 'messenger-drawer-row', href: `/chat/${item.id}` },
+        h('span', { class: 'messenger-drawer-name', text: item.title || 'Личный чат' }),
+        item.unread ? h('span', { class: 'chat-badge', text: String(item.unread) }) : null,
+      )),
+    );
+    drawer.addEventListener('click', e => { if (e.target === drawer) drawer.remove(); });
+    document.body.append(drawer);
+  }).catch(err => toast(err.message || 'Не удалось загрузить переписки', true));
+}
+
 /**
  * Opens the live connection for a room.
  *
@@ -2968,6 +3025,8 @@ function chatClose(convId) {
  * almost immediately, unlike a session token in a query string.
  */
 async function chatConnect(convId) {
+  const existing = chatSockets.get(convId);
+  if (existing?.ws && [WebSocket.CONNECTING, WebSocket.OPEN].includes(existing.ws.readyState)) return;
   chatClose(convId);
   let grant;
   try {
@@ -2986,11 +3045,16 @@ async function chatConnect(convId) {
   const query = new URLSearchParams({ id: convId, t: grant.ticketId, ticket: grant.ticket });
   let ws;
   try {
-    ws = new WebSocket(`${base}${grant.url}?${query}`);
-  } catch {
+    const socketUrl = new URL(grant.url, API || location.origin);
+    socketUrl.protocol = socketUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+    for (const [key, value] of query) socketUrl.searchParams.set(key, value);
+    ws = new WebSocket(socketUrl.toString());
+  } catch (err) {
+    console.warn('[chat] WebSocket URL failed', err);
+    if (chatRoom?.id === convId) { chatRoom.live = false; chatRender('keep'); }
     return;
   }
-  const entry = { ws, timer: null };
+  const entry = { ws, timer: null, attempts: 0 };
   chatSockets.set(convId, entry);
 
   ws.onmessage = (ev) => {
@@ -3006,11 +3070,13 @@ async function chatConnect(convId) {
     if (frame.t === 'stale') { chatOpen(convId); return; }
     if (frame.t === 'call') { chatCallSignal(frame); return; }
     if (frame.t !== 'msg' || !frame.m) return;
+    if (frame.m.userId !== account?.id) chatNotifyMessage(frame.m);
     chatAdd(frame.m);
   };
 
   ws.onopen = () => {
     entry.open = true;
+    entry.attempts = 0;
     if (chatRoom?.id !== convId) return;
     chatRoom.live = true;
     // A socket that had to be re-opened missed everything said while it was
@@ -3019,19 +3085,24 @@ async function chatConnect(convId) {
     if (chatRoom.connects++ > 0) chatOpen(convId, { keepSocket: true });
   };
 
-  ws.onclose = () => {
+  ws.onclose = (event) => {
     if (chatSockets.get(convId) !== entry) return;
+    console.warn('[chat] WebSocket closed', { code: event.code, reason: event.reason, clean: event.wasClean });
     chatSockets.delete(convId);
     entry.open = false;
     if (chatRoom?.id === convId) chatRoom.live = false;
     // Only reconnect while the room is still on screen: a background tab must
     // not keep a socket open, and neither must a room the user has left.
     if (chatRoom?.id !== convId) return;
+    const attempts = Math.min((entry.attempts || 0) + 1, 6);
+    const delay = Math.min(1500 * (2 ** (attempts - 1)), 30000);
     entry.timer = setTimeout(() => {
       if (chatRoom?.id === convId) chatConnect(convId);
-    }, 4000);
+    }, delay);
+    entry.attempts = attempts;
+    if (chatRoom?.id === convId) { chatRoom.live = false; chatRender('keep'); }
   };
-  ws.onerror = () => { /* onclose does the recovery */ };
+  ws.onerror = (event) => { console.warn('[chat] WebSocket transport error', event); };
 }
 
 // A laptop that was asleep comes back with its socket already dead and no error
@@ -3444,6 +3515,8 @@ async function chatCallSignal(frame) {
   if (!from || from === account?.id) return;
   if (frame.k === 'invite') {
     if (c) { chatCallSend(from, 'reject'); return; }
+    chatNotify('Входящий звонок', frame.data?.mode === 'video' ? 'Видеозвонок' : 'Аудиозвонок', 'chat-incoming-call', () => chatCallRender());
+    if (navigator.vibrate) navigator.vibrate([180, 90, 180]);
     chatCall = { convId: chatRoom?.id, mode: frame.data?.mode === 'video' ? 'video' : 'audio', initiator: false, initiatorId: from, incoming: true, active: false, peers: new Map(), remoteStreams: new Map(), pendingIce: new Map(), status: 'Вас приглашают в звонок' };
     chatCallRender(); return;
   }
@@ -3634,6 +3707,8 @@ function chatRender(scroll = 'bottom') {
         ),
       ),
       h('div', { class: 'chat-head-actions' },
+        h('button', { class: 'icon-btn messenger-menu-btn', type: 'button', title: 'Переписки', 'aria-label': 'Открыть список переписок', onclick: chatToggleDrawer }, icon('menu','i')),
+        h('button', { class: 'icon-btn', type: 'button', title: 'Включить уведомления', 'aria-label': 'Включить уведомления', onclick: chatEnableNotifications }, icon('bell','i')),
         chat.kind !== 'channel' && chat.rights?.canPost ? h('button', { class: 'btn btn-sm btn-ghost', type: 'button', title: 'Аудиозвонок', onclick: () => chatCallStart('audio') }, icon('phone', 'i i-sm'), ' Позвонить') : null,
         chat.kind !== 'channel' && chat.rights?.canPost ? h('button', { class: 'btn btn-sm', type: 'button', title: 'Видеозвонок', onclick: () => chatCallStart('video') }, icon('video', 'i i-sm'), ' Видео') : null,
         h('a', { class: 'btn btn-sm btn-ghost', href: '/chat' }, 'К списку'),
