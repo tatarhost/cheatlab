@@ -698,6 +698,59 @@ async function viewAuth(url) {
   $view.replaceChildren(form);
 }
 
+async function viewSettings() {
+  if (!signedIn()) { navigate('/auth'); return; }
+  const info = await api('/api/auth/settings');
+  const emailText = h('p', { class: 'hint', text: info.emailVerified ? `Подтверждённая почта: ${info.email}` : 'Почта пока не подтверждена.' });
+  const twoFactor = h('div', { class: 'row', style: 'display:flex;align-items:center;gap:12px;margin:14px 0' },
+    icon('shield', 'i i-lg'),
+    h('div', {},
+      h('strong', { text: info.twoFactorEnabled ? 'Двухфакторная защита включена' : 'Двухфакторная защита не настроена' }),
+      h('p', { class: 'hint', text: info.twoFactorEnabled
+        ? 'При каждом входе CHEATLAB запрашивает одноразовый код из письма. Обязательную проверку отключить нельзя.'
+        : 'Подтвердите почту ниже — после этого код будет требоваться при каждом входе.' })
+    )
+  );
+  const email = h('input', { class: 'input', type: 'email', name: 'email', required: true, maxlength: 254, autocomplete: 'email', placeholder: 'Новая почта' });
+  const code = h('input', { class: 'input', type: 'text', name: 'code', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: 6, pattern: '[0-9]{6}', placeholder: '6-значный код' });
+  const status = h('p', { class: 'hint', role: 'status' });
+  const error = h('p', { class: 'form-error', role: 'alert' });
+  const submit = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Отправить код на почту');
+  const form = h('form', { class: 'panel auth-card', style: 'max-width:560px;display:grid;gap:14px' },
+    h('h2', { text: info.emailVerified ? 'Изменить почту' : 'Добавить почту' }), email, code, error, status, submit
+  );
+  let pending = null;
+  code.hidden = true;
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault(); error.textContent = ''; status.textContent = ''; submit.disabled = true;
+    try {
+      if (!pending) {
+        const result = await api('/api/auth/email/request', { method: 'POST', body: { email: email.value.trim() } });
+        if (!result.challengeId) throw new Error('Сервер не создал проверку почты.');
+        pending = result; email.disabled = true; code.hidden = false; code.required = true;
+        submit.textContent = 'Подтвердить почту';
+        status.textContent = `Код отправлен на ${result.email}. Он действует 10 минут.`;
+        code.focus();
+      } else {
+        const result = await api('/api/auth/email/verify', { method: 'POST', body: { challengeId: pending.challengeId, code: code.value.trim() } });
+        if (!result.emailVerified) throw new Error('Почта не подтверждена.');
+        await refreshAccount(); toast('Почта подтверждена. Двухфакторная защита активна.'); navigate('/settings');
+      }
+    } catch (err) {
+      error.textContent = err.message || 'Не удалось выполнить запрос.';
+    } finally { submit.disabled = false; }
+  });
+  const head = h('div', { class: 'page-head' }, h('div', {},
+    h('h1', { text: 'Настройки аккаунта' }),
+    h('p', { class: 'page-sub', text: `Аккаунт @${account?.nick || ''}` })
+  ));
+  $view.replaceChildren(head,
+    h('section', { class: 'panel', style: 'max-width:560px;margin-bottom:16px' },
+      h('h2', { text: 'Безопасность' }), emailText, twoFactor
+    ), form
+  );
+}
+
 function uploadFile(itemId, file, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -5049,6 +5102,8 @@ async function route() {
       await viewStats();
     } else if (path === '/auth') {
       await viewAuth(url);
+    } else if (path === '/settings') {
+      await viewSettings();
     } else if (path === '/admin' || path.startsWith('/admin/')) {
       const tab = path.slice('/admin'.length).replace(/^\//, '') || 'reports';
       await viewAdmin(['reports', 'items', 'users', 'nicks'].includes(tab) ? tab : 'reports');
