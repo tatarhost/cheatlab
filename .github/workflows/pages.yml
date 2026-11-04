@@ -41,6 +41,13 @@ jobs:
       - name: Check application JavaScript syntax
         run: node --check public/app.js
 
+      - name: Upload legacy changes archive for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: cheatlab-changes-review
+          path: cheatlab-changes.zip
+          retention-days: 1
+
       - name: Upload static site
         uses: actions/upload-pages-artifact@v3
         with:
