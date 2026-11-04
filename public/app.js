@@ -3420,7 +3420,9 @@ async function chatCallPeer(peerId) {
   const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
   const stream = new MediaStream();
   c.remoteStreams.set(peerId, stream);
-  for (const track of c.localStream?.getTracks() || []) pc.addTrack(track, c.localStream);
+  const localTracks = c.localStream?.getTracks() || [];
+  for (const track of localTracks) pc.addTrack(track, c.localStream);
+  if (!localTracks.some(track => track.kind === 'video')) pc.addTransceiver('video', { direction: 'sendrecv' });
   pc.ontrack = (event) => {
     const target = c.remoteStreams.get(peerId);
     if (target && !target.getTracks().some(t => t.id === event.track.id)) target.addTrack(event.track);
@@ -3491,18 +3493,17 @@ async function chatCallShare() {
   try {
     const screen = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
     const track = screen.getVideoTracks()[0]; if (!track) return;
-    const senders = [...c.peers.values()].map(pc => pc.getSenders().find(s => s.track?.kind === 'video'));
+    const senders = [...c.peers.values()].map(pc => pc.getSenders().find(s => s.track?.kind === 'video') || pc.getTransceivers().find(t => t.receiver?.track?.kind === 'video')?.sender);
     for (let i = 0; i < c.peers.size; i++) {
-      const pc = [...c.peers.values()][i], sender = senders[i];
+      const sender = senders[i];
       if (sender) await sender.replaceTrack(track);
-      else pc.addTrack(track, screen);
     }
     c.screenStream = screen; c.status = 'Вы демонстрируете экран'; chatCallRender();
     track.onended = async () => {
       const camera = c.localStream?.getVideoTracks?.()[0] || null;
       for (const pc of c.peers.values()) {
-        const sender = pc.getSenders().find(s => s.track?.kind === 'video');
-        if (sender && camera) await sender.replaceTrack(camera);
+        const sender = pc.getSenders().find(s => s.track?.kind === 'video') || pc.getTransceivers().find(t => t.receiver?.track?.kind === 'video')?.sender;
+        if (sender) await sender.replaceTrack(camera);
       }
       c.screenStream = null; c.status = 'Демонстрация завершена'; chatCallRender();
     };
