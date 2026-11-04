@@ -448,21 +448,19 @@ const powBits = () => Math.min(30, Math.max(8, Number(config?.powBits) || 18));
  * also the one place a bot most wants, so the work is done before the request
  * rather than after a rejection.
  */
-async function registerAccount({ nick, password }, onProgress) {
+async function registerAccount({ nick, password, email }, onProgress) {
   const { challenge } = await api('/api/auth/pow', { noAuth: true });
   const nonce = await solvePow(challenge, powBits(), onProgress);
-  // The proof travels in headers, not the body: powGate reads it from there so a
-  // body field can never be replayed as if it were the verified work.
   return api('/api/auth/register', {
-    method: 'POST',
-    noAuth: true,
-    body: { nick, password },
+    method: 'POST', noAuth: true, body: { nick, password, email },
     headers: { 'x-cheatlab-pow': challenge, 'x-cheatlab-pow-nonce': nonce },
   });
 }
-
-async function loginAccount({ nick, password }) {
-  return api('/api/auth/login', { method: 'POST', noAuth: true, body: { nick, password } });
+async function loginAccount({ nick, password, email }) {
+  return api('/api/auth/login', { method: 'POST', noAuth: true, body: { nick, password, email } });
+}
+async function verifyAccountEmail(mode, challengeId, code) {
+  return api(`/api/auth/${mode}/verify`, { method: 'POST', noAuth: true, body: { challengeId, code } });
 }
 
 async function logoutAccount() {
@@ -627,76 +625,76 @@ function field(name, input) {
 async function viewAuth(url) {
   const mode = url.searchParams.get('mode') === 'register' ? 'register' : 'login';
   const notice = h('p', { class: 'form-error', role: 'alert' });
-  const nick = h('input', {
-    class: 'input', name: 'nick', autocomplete: 'username', required: true,
-    minlength: 3, maxlength: 24, spellcheck: false, autocapitalize: 'off',
-    placeholder: '3–24 символа, латиница и цифры',
-  });
-  const password = h('input', {
-    class: 'input', name: 'password', type: 'password', required: true,
-    minlength: 10, autocomplete: mode === 'register' ? 'new-password' : 'current-password',
-    placeholder: 'минимум 10 символов',
-  });
-  const submit = h('button', { class: 'btn btn-primary', type: 'submit' },
-    mode === 'register' ? 'Создать аккаунт' : 'Войти');
   const status = h('p', { class: 'hint' });
-
-  const form = h('form', {
-    class: 'panel auth-card',
-    onsubmit: async (e) => {
-      e.preventDefault();
-      notice.textContent = '';
-      status.textContent = '';
-      const body = { nick: nick.value.trim(), password: password.value };
-      if (!body.nick || !body.password) {
-        notice.textContent = 'Заполните оба поля.';
+  const nick = h('input', { class: 'input', name: 'nick', autocomplete: 'username', required: true,
+    minlength: 3, maxlength: 24, spellcheck: false, autocapitalize: 'off', placeholder: '3–24 символа, латиница и цифры' });
+  const password = h('input', { class: 'input', name: 'password', type: 'password', required: true,
+    minlength: 10, autocomplete: mode === 'register' ? 'new-password' : 'current-password', placeholder: 'минимум 10 символов' });
+  const email = h('input', { class: 'input', name: 'email', type: 'email', autocomplete: 'email',
+    required: mode === 'register', maxlength: 254, placeholder: 'name@example.com' });
+  const code = h('input', { class: 'input', name: 'code', inputmode: 'numeric', autocomplete: 'one-time-code',
+    maxlength: 6, pattern: '[0-9]{6}', placeholder: '6-значный код', required: true });
+  const submit = h('button', { class: 'btn btn-primary', type: 'submit' }, mode === 'register' ? 'Создать аккаунт' : 'Войти');
+  const form = h('form', { class: 'panel auth-card' });
+  let pending = null;
+  const render = () => {
+    form.replaceChildren(
+      h('h1', { text: pending ? 'Подтверждение почты' : (mode === 'register' ? 'Регистрация' : 'Вход') }),
+      h('p', { class: 'page-sub', text: pending
+        ? `Мы отправили код на ${pending.email}. Он действует 10 минут.`
+        : (mode === 'register'
+          ? 'Укажите почту: она обязательна и понадобится для подтверждения каждого входа.'
+          : 'После пароля мы отправим одноразовый код на вашу привязанную почту.') }),
+      ...(pending ? [field('Код из письма', code)] : [
+        field('Ник', nick), field('Пароль', password),
+        ...(mode === 'register' ? [field('Электронная почта', email)] : [field('Почта для старого аккаунта', email)]),
+      ]),
+      notice, status,
+      h('div', { class: 'field-row' }, submit,
+        pending ? h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => { pending = null; code.value = ''; notice.textContent = ''; status.textContent = ''; submit.textContent = mode === 'register' ? 'Создать аккаунт' : 'Войти'; render(); } }, 'Назад')
+        : h('a', { class: 'btn btn-ghost', href: mode === 'register' ? '/auth' : '/auth?mode=register' }, mode === 'register' ? 'Уже есть аккаунт — войти' : 'Нет аккаунта — создать')),
+      signedIn() ? h('button', { class: 'btn btn-ghost', type: 'button',
+        onclick: async () => { await logoutAccount(); toast('Вышли'); navigate('/'); } }, 'Выйти из текущего аккаунта') : null
+    );
+  };
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    notice.textContent = ''; status.textContent = '';
+    submit.disabled = true;
+    try {
+      if (pending) {
+        const res = await verifyAccountEmail(mode, pending.challengeId, code.value.trim());
+        if (!res.token) throw new Error('Сервер не выдал сессию после подтверждения.');
+        saveSession({ token: res.token });
+        await refreshAccount();
+        toast(mode === 'register' ? 'Почта подтверждена, аккаунт создан' : 'Вход подтверждён');
+        navigate(account ? `/u/${account.id}` : '/');
         return;
       }
-      submit.disabled = true;
-      try {
-        if (mode === 'register') {
-          // Registration is the one gated action: the browser does the
-          // proof-of-work first, so the user sees progress instead of a refusal.
-          status.textContent = 'Проверка…';
-          submit.textContent = 'Проверка…';
-          const res = await registerAccount(body, (n) => { status.textContent = `Проверка… ${n.toLocaleString('ru')}`; });
-          saveSession({ token: res.token });
-        } else {
-          const res = await loginAccount(body);
-          saveSession({ token: res.token });
-        }
-        await refreshAccount();
-        toast(mode === 'register' ? 'Аккаунт создан' : 'Вход выполнен');
-        navigate(account ? `/u/${account.id}` : '/');
-      } catch (err) {
-        notice.textContent = err.message;
-        submit.disabled = false;
-        submit.textContent = mode === 'register' ? 'Создать аккаунт' : 'Войти';
-        status.textContent = '';
+      const body = { nick: nick.value.trim(), password: password.value, email: email.value.trim() };
+      if (!body.nick || !body.password || (mode === 'register' && !body.email)) throw new Error('Заполните обязательные поля.');
+      let res;
+      if (mode === 'register') {
+        status.textContent = 'Проверка регистрации…';
+        submit.textContent = 'Проверка…';
+        res = await registerAccount(body, (n) => { status.textContent = `Проверка… ${n.toLocaleString('ru')}`; });
+      } else {
+        res = await loginAccount(body);
       }
-    },
-  },
-    h('h1', { text: mode === 'register' ? 'Регистрация' : 'Вход' }),
-    h('p', { class: 'page-sub', text: mode === 'register'
-      ? 'Ник, пароль, никакой почты. Восстановить пароль нельзя — запомните его.'
-      : 'Войдите, чтобы публиковать без проверки и следить за своим профилем.' }),
-    field('Ник', nick),
-    field('Пароль', password),
-    notice,
-    status,
-    h('div', { class: 'field-row' },
-      submit,
-      h('a', {
-        class: 'btn btn-ghost',
-        href: mode === 'register' ? '/auth' : '/auth?mode=register',
-      }, mode === 'register' ? 'Уже есть аккаунт — войти' : 'Нет аккаунта — создать'),
-    ),
-    signedIn() ? h('button', {
-      class: 'btn btn-ghost', type: 'button',
-      onclick: async () => { await logoutAccount(); toast('Вышли'); navigate('/'); },
-    }, 'Выйти из текущего аккаунта') : null,
-  );
-
+      if (!res.verificationRequired || !res.challengeId) throw new Error('Сервер не создал проверку почты.');
+      pending = res;
+      submit.textContent = 'Подтвердить код';
+      code.value = '';
+      render();
+      code.focus();
+    } catch (err) {
+      notice.textContent = err.message;
+    } finally {
+      submit.disabled = false;
+      if (!pending) submit.textContent = mode === 'register' ? 'Создать аккаунт' : 'Войти';
+    }
+  });
+  render();
   $view.replaceChildren(form);
 }
 
