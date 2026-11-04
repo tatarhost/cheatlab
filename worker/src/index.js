@@ -3072,7 +3072,11 @@ export default {
 
   /** Cron trigger: age out the throttle table. */
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(new Store(env.DB).sweepRate());
+    const store = new Store(env.DB);
+    ctx.waitUntil(Promise.all([
+      store.sweepRate(),
+      env.DB.prepare('DELETE FROM email_otp WHERE expires_at < ? OR used_at < ?').bind(now(), now() - 24 * 60 * 60 * 1000).run(),
+    ]));
   },
 };
 
