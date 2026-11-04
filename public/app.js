@@ -448,9 +448,8 @@ function askRingCaptcha(challenge) {
     const backdrop = h('div', { class: 'modal-backdrop ring-captcha-backdrop' });
     const selected = new Set();
     let interactions = 0;
-    const started = performance.now();
     const grid = h('div', { class: 'ring-captcha-grid', role: 'group', 'aria-label': 'Кольца для проверки' });
-    const cards = (challenge.rings || []).map((ring, index) => {
+    (challenge.rings || []).forEach((ring, index) => {
       const button = h('button', {
         class: 'ring-captcha-tile', type: 'button', 'aria-pressed': 'false',
         'aria-label': `Кольцо ${index + 1}`,
@@ -475,7 +474,6 @@ function askRingCaptcha(challenge) {
       svg.append(circle);
       button.append(svg);
       grid.append(button);
-      return button;
     });
     const error = h('p', { class: 'form-error', role: 'alert' });
     const done = (value) => { backdrop.remove(); resolve(value); };
@@ -486,7 +484,6 @@ function askRingCaptcha(challenge) {
         done({
           ct: challenge.token,
           ca: JSON.stringify([...selected].sort((x, y) => x - y)),
-          ms: Math.round(performance.now() - started),
           k: interactions,
         });
       },
