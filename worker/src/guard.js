@@ -12,13 +12,12 @@
  */
 import worker, { ConversationRoom } from './index.js';
 import { Store } from './store.js';
-import { issueCaptcha, verifyCaptcha, meetsDifficulty } from './abuse.js';
+import { issueRingCaptcha, verifyCaptcha } from './abuse.js';
 import { moderateText, moderateImage, imageMimeOf, rejection } from './moderation.js';
 import { handleThemes } from './themes.js';
 
 export { ConversationRoom };
 
-const HC_BITS = 14;                 // ~16k hashes: instant for a browser, a cost for a flood
 const HC_TTL_MS = 10 * 60 * 1000;
 const SMALL = 4_000_000;
 const enc = new TextEncoder();
@@ -38,41 +37,21 @@ function replyFor(env) {
   });
 }
 
-async function hmac(env, text) {
-  const key = await crypto.subtle.importKey('raw', enc.encode(env.CAPTCHA_SECRET || 'dev'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  return hex(await crypto.subtle.sign('HMAC', key, enc.encode(text)));
-}
-
-async function newChallenge(env) {
-  const ts = Date.now();
-  const rand = hex(crypto.getRandomValues(new Uint8Array(8)));
-  return `${ts}.${rand}.${await hmac(env, `${ts}.${rand}`)}`;
-}
-
-async function challengeValid(env, challenge, nonce) {
-  const [ts, rand, sig] = String(challenge || '').split('.');
-  if (!ts || !rand || !sig || !/^\d+$/.test(ts) || !/^[0-9a-f]{16}$/.test(rand)) return false;
-  if (Date.now() - Number(ts) > HC_TTL_MS || Number(ts) > Date.now() + 60_000) return false;
-  if ((await hmac(env, `${ts}.${rand}`)) !== sig) return false;
-  if (typeof nonce !== 'string' || !/^\d{1,12}$/.test(nonce)) return false;
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(`${challenge}.${nonce}`)));
-  if (!meetsDifficulty(digest, HC_BITS)) return false;
-  // A solved challenge is good once. KV is eventually consistent, which is fine for a 10 minute window.
-  if (env.BUCKET) {
-    if (await env.BUCKET.get(`hc:${rand}`)) return false;
-    await env.BUCKET.put(`hc:${rand}`, '1', { expirationTtl: 900 });
-  }
-  return true;
-}
-
 /** Returns a Response when the human check fails, otherwise null. */
 async function humanGate(env, body, reply) {
   const fail = () => reply(403, { error: 'Проверка не пройдена. Попробуйте ещё раз.', humanCheck: false });
   if (typeof body?.hp === 'string' && body.hp.trim()) return fail();       // honeypot filled
   const hc = body?.hc;
   if (!hc || typeof hc !== 'object') return fail();
-  if (!(await verifyCaptcha(env.DB, env, hc.ct, hc.ca))) return fail();     // burns the question
-  if (!(await challengeValid(env, hc.c, hc.n))) return fail();
+  let selected;
+  try {
+    selected = JSON.parse(String(hc.ca));
+    if (!Array.isArray(selected) || selected.length < 1 || selected.length > 9
+      || selected.some((n) => !Number.isInteger(n) || n < 0 || n > 8)
+      || new Set(selected).size !== selected.length) return fail();
+    selected.sort((a, b) => a - b);
+  } catch { return fail(); }
+  if (!(await verifyCaptcha(env.DB, env, hc.ct, JSON.stringify(selected)))) return fail();
   return null;
 }
 
@@ -124,19 +103,18 @@ async function guard(request, env, ctx) {
   if (m === 'GET' && p === '/api/hc/challenge') {
     const key = request.headers.get('x-cheatlab-client') || request.headers.get('cf-connecting-ip') || 'anon';
     if (!(await new Store(env.DB).throttle(`hc:${key}`, 'pow', { cap: 30, windowMs: 60_000 }))) return reply(429, { error: 'slow down' });
-    const cap = await issueCaptcha(env.DB, env);
-    return reply(200, { challenge: await newChallenge(env), bits: HC_BITS, captcha: { q: cap.q, token: cap.token } });
+    const cap = await issueRingCaptcha(env.DB, env);
+    return reply(200, { captcha: cap });
   }
 
   if (m !== 'OPTIONS' && p.startsWith('/api/themes')) {
     return handleThemes(request, env, { whoami: (req) => whoami(req, env, ctx), reply });
   }
 
-  // Sign-in and registration. Registration is only checked once the app has done its own
-  // proof of work, so the first attempt (which the app expects to be refused) costs nothing.
+  // Sign-in and registration are protected by the one-use visual ring challenge.
   const isLogin = m === 'POST' && p === '/api/auth/login';
   const isRegister = m === 'POST' && p === '/api/auth/register';
-  if (isLogin || (isRegister && request.headers.get('x-cheatlab-pow-nonce'))) {
+  if (isLogin || isRegister) {
     const { raw, json } = await readBody(request);
     const bad = await humanGate(env, json, reply);
     if (bad) return bad;
