@@ -4172,7 +4172,7 @@ function safeMailHtml(raw, plainText = false) {
         else { child.replaceWith(...child.childNodes); }
         continue;
       }
-      if (child.tagName === 'STYLE') child.textContent = child.textContent.replace(/url\\s*\\([^)]*\\)/gi, 'none').replace(/@import[^;]+;?/gi, '');
+      if (child.tagName === 'STYLE') child.textContent = child.textContent.replace(/url\s*\([^)]*\)/gi, 'none').replace(/@import[^;]+;?/gi, '');
       for (const attr of [...child.attributes]) {
         const name = attr.name.toLowerCase();
         const value = attr.value.trim();
@@ -4324,7 +4324,7 @@ async function viewMail(url) {
     const content = h('iframe', {
       class: 'mail-html-frame', title: 'Содержимое письма',
       sandbox: 'allow-same-origin allow-popups allow-popups-to-escape-sandbox',
-      srcdoc: '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src https: data:; style-src \'unsafe-inline\' https:;"><style>body{font:14px Arial,sans-serif;color:#202124;line-height:1.55;margin:18px;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%;border-collapse:collapse}a{color:#1769aa}pre{white-space:pre-wrap}</style></head><body>' +
+      srcdoc: '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; style-src \'unsafe-inline\';"><style>body{font:14px Arial,sans-serif;color:#202124;line-height:1.55;margin:18px;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%;border-collapse:collapse}a{color:#1769aa}pre{white-space:pre-wrap}</style></head><body>' +
         safeMailHtml(msg.htmlBody || msg.textBody || 'Текст письма отсутствует.', !msg.htmlBody) +
         '</body></html>'
     });
