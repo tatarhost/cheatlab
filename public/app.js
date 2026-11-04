@@ -4163,12 +4163,42 @@ function safeMailHtml(raw) {
         }
         if (name === 'href' && !/^(https:\/\/|mailto:)/i.test(value)) child.removeAttribute(attr.name);
         if (name === 'src') { const imageUrl = value.startsWith('//') ? 'https:' + value : value; if (child.tagName === 'IMG' && (/^https:\/\//i.test(imageUrl) || /^data:image\/(?:png|jpeg|gif|webp);base64,/i.test(imageUrl))) { child.setAttribute('src', imageUrl); child.setAttribute('referrerpolicy', 'no-referrer'); child.setAttribute('loading', 'eager'); } else child.removeAttribute(attr.name); }
-        if (name === 'target') child.setAttribute('rel','noopener noreferrer');
+        if (child.tagName === 'A') {
+          child.setAttribute('target', '_blank');
+          child.setAttribute('rel', 'noopener noreferrer');
+        }
       }
       clean(child);
     }
   };
   clean(doc.body);
+  // Render bare image URLs too: some mail senders include a URL instead of an <img>.
+  const imageUrlPattern = /https?:\\/\\/[^\\s<>"']+?\\.(?:png|jpe?g|gif|webp)(?:\\?[^\\s<>"']*)?/gi;
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+  const textNodes = [];
+  while (walker.nextNode()) textNodes.push(walker.currentNode);
+  for (const textNode of textNodes) {
+    const value = textNode.nodeValue || '';
+    imageUrlPattern.lastIndex = 0;
+    let match, last = 0, changed = false;
+    const fragment = doc.createDocumentFragment();
+    while ((match = imageUrlPattern.exec(value))) {
+      changed = true;
+      if (match.index > last) fragment.append(doc.createTextNode(value.slice(last, match.index)));
+      const imageUrl = match[0].replace(/[),.;]+$/, '');
+      const link = doc.createElement('a');
+      link.href = imageUrl; link.target = '_blank'; link.rel = 'noopener noreferrer';
+      const image = doc.createElement('img');
+      image.src = imageUrl; image.alt = 'Изображение из письма';
+      image.loading = 'lazy'; image.referrerPolicy = 'no-referrer';
+      link.append(image); fragment.append(link);
+      last = match.index + imageUrl.length; imageUrlPattern.lastIndex = last;
+    }
+    if (changed) {
+      if (last < value.length) fragment.append(doc.createTextNode(value.slice(last)));
+      textNode.replaceWith(fragment);
+    }
+  }
   return doc.body.innerHTML;
 }
 
@@ -4299,7 +4329,7 @@ async function viewMail(url) {
     const codeMatch = searchableCodeText.match(/(?:код|code|verification|verify|login|otp|one[- ]time)[^\d]{0,60}(\d{4,8})|\b(\d{6})\b/i);
     const verificationCode = codeMatch ? (codeMatch[1] || codeMatch[2]) : '';
     const content = msg.htmlBody
-      ? h('iframe', { class: 'mail-html-frame', title: 'Содержимое письма', sandbox: '', srcdoc: '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src https: data:; style-src \'unsafe-inline\';"><style>body{font:14px Arial,sans-serif;color:#202124;line-height:1.55;margin:18px;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%;border-collapse:collapse}a{color:#1769aa}pre{white-space:pre-wrap}</style></head><body>' + safeMailHtml(msg.htmlBody) + '</body></html>' })
+      ? h('iframe', { class: 'mail-html-frame', title: 'Содержимое письма', sandbox: 'allow-popups allow-popups-to-escape-sandbox', srcdoc: '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src https: data:; style-src \'unsafe-inline\';"><style>body{font:14px Arial,sans-serif;color:#202124;line-height:1.55;margin:18px;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%;border-collapse:collapse}a{color:#1769aa}pre{white-space:pre-wrap}</style></head><body>' + safeMailHtml(msg.htmlBody) + '</body></html>' })
       : h('div', { class: 'mail-message-body', text: msg.textBody || 'Текст письма отсутствует.' });
     main.replaceChildren(
       h('div', { class: 'mail-toolbar' },
