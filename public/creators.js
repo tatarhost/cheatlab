@@ -42,7 +42,11 @@
         close();location.href='./new?type=app&creator=1';
       }
     });
-    panel.addEventListener('input',e=>{const k=e.target.dataset.field;if(!k)return;s[k]=e.target.value;render();});
+    panel.addEventListener('input',e=>{
+      const k=e.target.dataset.field;if(!k)return;s[k]=e.target.value;
+      const frame=panel.querySelector('iframe');if(frame)frame.srcdoc=source();
+      const code=panel.querySelector('[data-code]');if(code)code.textContent=source();
+    });
     render();
   }
   function mount(){
