@@ -170,7 +170,7 @@ export class ConversationRoom {
     const sender = ws.deserializeAttachment?.();
     if (!sender?.convId || !sender?.userId) return;
     const target = typeof frame.to === 'string' && /^[A-Za-z0-9_-]{3,40}$/.test(frame.to) ? frame.to : '';
-    if (frame.k !== 'invite' && !target) return;
+    if (!['invite', 'end'].includes(frame.k) && !target) return;
     const data = frame.data && typeof frame.data === 'object' ? frame.data : {};
     if ((frame.k === 'offer' || frame.k === 'answer') && (typeof data.sdp !== 'string' || data.sdp.length > 32_000)) return;
     if (frame.k === 'ice' && (typeof data.candidate !== 'string' || data.candidate.length > 4_000)) return;
