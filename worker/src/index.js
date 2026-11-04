@@ -603,11 +603,33 @@ route('GET', /^\/api\/mail\/messages$/, async (request, env, _m, url) => {
   const folder = url.searchParams.get('folder') === 'sent' ? 'sent' : 'inbox';
   const owned = await env.STORE.db.prepare('SELECT id,address FROM mail_mailbox WHERE id = ? AND owner_user_id = ?').bind(box, who.user.id).first();
   if (!owned) return fail(404, 'mailbox not found');
-  const rows = await env.STORE.rows(
-    "SELECT id, direction, from_address, to_address, subject, text_body, html_body, created_at, is_read, is_starred FROM mail_message WHERE mailbox_id = ? AND ((? = 'starred' AND is_starred = 1) OR (? <> 'starred' AND direction = ?)) ORDER BY created_at DESC LIMIT 100",
-    box, folder, folder, folder === 'sent' ? 'sent' : 'inbox',
-  );
-  return json({ messages: rows.map(r => ({ id:r.id, direction:r.direction, fromAddress:r.from_address, toAddress:r.to_address, subject:r.subject, textBody:r.text_body, htmlBody:r.html_body, attachments:(()=>{try{return JSON.parse(r.attachments_json||'[]')}catch{return []}})(), createdAt:r.created_at, isRead:!!r.is_read, isStarred:!!r.is_starred })) });
+  const params = [box, folder, folder, folder === 'sent' ? 'sent' : 'inbox'];
+  let rows;
+  try {
+    // Current schema includes rich-body, read/starred and attachment columns.
+    rows = await env.STORE.rows(
+      "SELECT id, direction, from_address, to_address, subject, text_body, html_body, attachments_json, created_at, is_read, is_starred FROM mail_message WHERE mailbox_id = ? AND ((? = 'starred' AND is_starred = 1) OR (? <> 'starred' AND direction = ?)) ORDER BY created_at DESC LIMIT 100",
+      ...params,
+    );
+  } catch (err) {
+    // Keep inbox readable if an older D1 database has not received the optional
+    // mail feature migrations yet. Core message columns were created in 0007.
+    console.warn('mail rich-schema query failed; using base message fields', err?.message || err);
+    rows = await env.STORE.rows(
+      "SELECT id, direction, from_address, to_address, subject, text_body, created_at FROM mail_message WHERE mailbox_id = ? AND direction = ? ORDER BY created_at DESC LIMIT 100",
+      box, folder === 'sent' ? 'sent' : 'inbox',
+    );
+  }
+  return json({ messages: rows.map(r => {
+    let attachments = [];
+    try { attachments = JSON.parse(r.attachments_json || '[]'); } catch {}
+    return {
+      id: r.id, direction: r.direction, fromAddress: r.from_address,
+      toAddress: r.to_address, subject: r.subject, textBody: r.text_body,
+      htmlBody: r.html_body || '', attachments, createdAt: r.created_at,
+      isRead: !!r.is_read, isStarred: !!r.is_starred,
+    };
+  }) });
 });
 
 route('PATCH', /^\/api\/mail\/messages\/([A-Za-z0-9_-]{8,32})$/, async (request, env, m) => {
