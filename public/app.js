@@ -3877,15 +3877,15 @@ function chatListView(data, banner) {
       catch (err) { toast(err.message || 'Не удалось создать канал', true); }
     } }, h('input', { class: 'chat-input', placeholder: 'Название нового канала', maxlength: '80' }), h('button', { class: 'btn btn-sm', type: 'submit' }, 'Создать канал')),
   );
-  $view.replaceChildren(
+  const chatPageNodes = [
     h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Чаты' }), h('p', { class: 'page-sub', text: 'Личные переписки, группы и каналы.' }))),
-    ...(banner ? [banner] : []),
+    banner,
     h('div', { class: 'chat-start' }, friendForm, dmForm, groupForm),
     channels,
     h('h2', { class: 'chat-section-title', text: 'Ваши переписки' }),
-      rows.length ? h('div', { class: 'chat-list' }, ...rows) : h('p', { class: 'hint', text: 'Пока нет чатов. Добавь друга или создай группу выше.' }),
-    ].filter(node => node !== null && node !== undefined && node !== false),
-  );
+    rows.length ? h('div', { class: 'chat-list' }, ...rows) : h('p', { class: 'hint', text: 'Пока нет чатов. Добавь друга или создай группу выше.' }),
+  ];
+  $view.replaceChildren(...chatPageNodes.filter(node => node instanceof Node));
 }
 async function viewChat(url) {
   // A signed-out reader is offered the sign-in page rather than an error, since
