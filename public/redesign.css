@@ -568,3 +568,88 @@ a:hover { text-decoration: none; }
   .view > *, .nav, .panel, .row, .st-card { animation:none !important; }
   .panel, .row, .st-card, .btn, .tab, .nav-link, .i { transition:none !important; }
 }
+
+
+/* Final single source of truth for the phone navigation: compact floating rail. */
+@media (max-width: 900px) {
+  .rail { position: static !important; height: auto !important; }
+  .nav {
+    position: fixed !important;
+    z-index: 30 !important;
+    left: 50% !important;
+    right: auto !important;
+    bottom: calc(9px + env(safe-area-inset-bottom)) !important;
+    top: auto !important;
+    transform: translateX(-50%) !important;
+    box-sizing: border-box !important;
+    display: flex !important;
+    flex-flow: row nowrap !important;
+    align-items: center !important;
+    gap: 3px !important;
+    width: min(360px, calc(100vw - 28px)) !important;
+    max-width: calc(100vw - 28px) !important;
+    height: 56px !important;
+    min-height: 56px !important;
+    margin: 0 !important;
+    padding: 5px 36px 5px 8px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    white-space: nowrap !important;
+    scrollbar-width: none !important;
+    -webkit-overflow-scrolling: touch !important;
+    touch-action: pan-x !important;
+    overscroll-behavior-x: contain !important;
+    border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent) !important;
+    border-radius: 17px !important;
+    background: color-mix(in srgb, var(--paper) 82%, transparent) !important;
+    box-shadow: 0 9px 30px rgba(0,0,0,.28) !important;
+    backdrop-filter: blur(22px) saturate(1.35) !important;
+    -webkit-backdrop-filter: blur(22px) saturate(1.35) !important;
+  }
+  .nav::-webkit-scrollbar { display: none !important; }
+  .nav > .nav-link {
+    display: flex !important;
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 62px !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 5px 7px !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 2px !important;
+    border: 0 !important;
+    border-radius: 11px !important;
+    font-size: 10px !important;
+    line-height: 1.1 !important;
+    white-space: nowrap !important;
+  }
+  .nav > .nav-link .i { width: 17px !important; height: 17px !important; }
+  .nav-scroll-hint {
+    display: flex !important;
+    position: absolute !important;
+    top: 50% !important;
+    right: 5px !important;
+    left: auto !important;
+    bottom: auto !important;
+    width: 25px !important;
+    height: 32px !important;
+    transform: translateY(-50%) !important;
+    align-items: center !important;
+    justify-content: center !important;
+    z-index: 5 !important;
+    border: 1px solid var(--line) !important;
+    border-radius: 9px !important;
+    background: color-mix(in srgb, var(--paper) 96%, transparent) !important;
+    color: var(--ink) !important;
+    font-size: 22px !important;
+    line-height: 1 !important;
+    pointer-events: none !important;
+    opacity: 1 !important;
+  }
+  body { padding-bottom: calc(82px + env(safe-area-inset-bottom)) !important; }
+}
+@media (min-width: 901px) {
+  .nav-scroll-hint { display: none !important; }
+}
