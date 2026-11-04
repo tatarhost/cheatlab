@@ -213,6 +213,7 @@ export function publicUser(row, env) {
     admin: adminOf(env, row.id),
     // 'moderator' or 'user'. Never 'admin': full admin is the env var above.
     role: row.role === 'moderator' ? 'moderator' : 'user',
+    emailVerified: Number(row.email_verified) === 1,
     // Admin-set mark for a popular author. Not a claim of any kind the site
     // verifies by itself - it says an operator picked this account out.
     popular: Number(row.popular) === 1,
