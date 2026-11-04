@@ -4172,6 +4172,7 @@ function safeMailHtml(raw, plainText = false) {
         else { child.replaceWith(...child.childNodes); }
         continue;
       }
+      if (child.tagName === 'STYLE') child.textContent = child.textContent.replace(/url\\s*\\([^)]*\\)/gi, 'none').replace(/@import[^;]+;?/gi, '');
       for (const attr of [...child.attributes]) {
         const name = attr.name.toLowerCase();
         const value = attr.value.trim();
