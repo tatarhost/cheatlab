@@ -414,6 +414,17 @@ export class ChatStore {
     return rows;
   }
 
+  /** New messages after a stable (timestamp, id) cursor, oldest first. */
+  async listMessagesAfter(convId, { afterAt = 0, afterId = '', limit = 60 } = {}) {
+    return this.rows(
+      `SELECT x.*, u.nick, u.popular, u.avatar_id
+         FROM message x JOIN user u ON u.id = x.user_id
+        WHERE x.conv_id = ? AND (x.created_at, x.id) > (?,?)
+        ORDER BY x.created_at ASC, x.id ASC LIMIT ?`,
+      convId, Math.max(0, Number(afterAt) || 0), String(afterId || '').slice(0, 24), clampLimit(limit, 100),
+    );
+  }
+
   /**
    * Takes a message down without removing the row. The conversation keeps its
    * shape - which matters more than it sounds, because a member counting the
