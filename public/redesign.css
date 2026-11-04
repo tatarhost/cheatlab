@@ -676,3 +676,41 @@ a:hover { text-decoration: none; }
     transform: translateX(-50%) !important;
   }
 }
+
+
+/* The phone nav is moved directly under <body> by app.js, outside all glass/layout ancestors. */
+@media (max-width: 900px) {
+  body > .nav.mobile-floating-nav {
+    position: fixed !important;
+    z-index: 9999 !important;
+    top: auto !important;
+    left: 50% !important;
+    right: auto !important;
+    bottom: calc(12px + env(safe-area-inset-bottom)) !important;
+    transform: translateX(-50%) !important;
+    width: min(360px, calc(100vw - 28px)) !important;
+    max-width: calc(100vw - 28px) !important;
+    height: 56px !important;
+    min-height: 56px !important;
+    margin: 0 !important;
+    padding: 5px 36px 5px 8px !important;
+    display: flex !important;
+    flex-flow: row nowrap !important;
+    align-items: center !important;
+    gap: 3px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    white-space: nowrap !important;
+    scrollbar-width: none !important;
+    -webkit-overflow-scrolling: touch !important;
+    touch-action: pan-x !important;
+    overscroll-behavior-x: contain !important;
+    border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent) !important;
+    border-radius: 17px !important;
+    background: color-mix(in srgb, var(--paper) 82%, transparent) !important;
+    box-shadow: 0 9px 30px rgba(0,0,0,.32) !important;
+    backdrop-filter: blur(22px) saturate(1.35) !important;
+    -webkit-backdrop-filter: blur(22px) saturate(1.35) !important;
+  }
+  body > .nav.mobile-floating-nav::-webkit-scrollbar { display: none !important; }
+}
