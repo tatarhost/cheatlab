@@ -801,6 +801,7 @@ document.addEventListener('click', (e) => {
 });
 
 function navigate(href) {
+  if (chatCall && !String(href || '').startsWith('/chat')) chatCallEnd(true);
   history.pushState({}, '', appPath(href));
   route();
 }
@@ -2895,7 +2896,7 @@ let chatField = null;
  * Held here rather than in the composer because a render rebuilds the composer
  * and would otherwise drop the picked file every time anything else re-painted.
  */
-let chatPick = null;
+let chatPicks = [];
 
 /**
  * The half-typed message, kept here rather than read back off the field.
@@ -3003,6 +3004,7 @@ async function chatConnect(convId) {
     // "stale" means something was stored while this room had no subscribers, so
     // the socket cannot say what - history is re-read once rather than guessed at.
     if (frame.t === 'stale') { chatOpen(convId); return; }
+    if (frame.t === 'call') { chatCallSignal(frame); return; }
     if (frame.t !== 'msg' || !frame.m) return;
     chatAdd(frame.m);
   };
@@ -3050,6 +3052,7 @@ document.addEventListener('visibilitychange', () => {
  */
 async function chatOpen(convId, { keepSocket = false } = {}) {
   if (!convId) return;
+  if (chatRoom?.id && chatRoom.id !== convId && chatCall) chatCallEnd(true);
   if (!keepSocket) {
     chatClose(chatRoom?.id);
     chatRoom = { id: convId, connects: 0, live: false };
@@ -3058,7 +3061,7 @@ async function chatOpen(convId, { keepSocket = false } = {}) {
     // A draft belongs to the conversation it was written in. Carrying it into the
     // next room would post one person's unfinished thought to somebody else.
     chatDraft = '';
-    chatPick = null;
+    chatPicks = [];
   }
   chatLog = null;
 
@@ -3155,17 +3158,18 @@ function chatAdd(msg, convId = chatRoom?.id) {
  * retraction only touches a message this send created, and only while it is
  * still empty.
  */
-async function chatSend(text, file = null) {
+async function chatSend(text, files = []) {
   const convId = chatRoom?.id;
   const body = String(text || '').slice(0, 2000);
-  if (!convId || (!body.trim() && !file)) return false;
+  const attachments = (Array.isArray(files) ? files : files ? [files] : []).slice(0, 4);
+  if (!convId || (!body.trim() && !attachments.length)) return false;
   let saved;
   try {
     saved = await api(`/api/chats/${convId}/messages`, {
       method: 'POST',
       // `attach` is what tells the server an empty body is deliberate and a file
       // is coming, rather than a mistake worth refusing.
-      body: { body, attach: !!file },
+      body: { body, attach: attachments.length > 0 },
     });
     // Painted from the answer, not waited for on the socket. The fan-out is best
     // effort by design - the Durable Object can be asleep, upgrading or restarting
@@ -3181,18 +3185,20 @@ async function chatSend(text, file = null) {
     return false;
   }
 
-  if (!file || !saved?.message) return true;
-  try {
-    const up = await api(`/api/chats/${convId}/messages/${saved.message.id}/files`, {
-      method: 'POST', body: file, headers: { 'x-filename': encodeURIComponent(file.name) },
-    });
-    chatAttachFile(saved.message.id, up.file, convId);
-  } catch (err) {
-    // The message is already stored, so the send counts; the file did not make
-    // it and the sender is told, rather than being left to wonder.
-    toast(err.message || 'файл не загрузился', true);
-    if (!body.trim()) await chatRetract(saved.message.id, convId);
-    return !!body.trim();
+  if (!attachments.length || !saved?.message) return true;
+  let uploaded = 0;
+  for (const file of attachments) {
+    try {
+      const up = await api(`/api/chats/${convId}/messages/${saved.message.id}/files`, {
+        method: 'POST', body: file, headers: { 'x-filename': encodeURIComponent(file.name) },
+      });
+      chatAttachFile(saved.message.id, up.file, convId);
+      uploaded++;
+    } catch (err) {
+      toast(`${file.name}: ${err.message || 'файл не загрузился'}`, true);
+      if (!body.trim() && uploaded === 0) await chatRetract(saved.message.id, convId);
+      return !!body.trim() || uploaded > 0;
+    }
   }
   return true;
 }
@@ -3260,9 +3266,9 @@ function chatBubble(m, grouped = false) {
       h('span', { text: m.game.name || `Игра ${m.game.id}` }),
     ) : null,
     (m.files || []).length ? h('div', { class: 'chat-files' },
-      ...m.files.map((f) => h('a', {
-        class: 'chat-file', href: f.url, target: '_blank', rel: 'noopener',
-      }, icon('file', 'i i-sm'), h('span', { text: `${f.name} · ${bytes(f.size)}` }))),
+      ...m.files.map((f) => /^image\//i.test(f.mime || '')
+        ? h('a', { class: 'chat-image-file', href: f.url, target: '_blank', rel: 'noopener' }, h('img', { src: f.url, alt: f.name, loading: 'lazy' }), h('span', { text: f.name }))
+        : h('a', { class: 'chat-file', href: f.url, target: '_blank', rel: 'noopener' }, icon('file', 'i i-sm'), h('span', { text: `${f.name} · ${bytes(f.size)}` }))),
     ) : null,
   );
 }
@@ -3310,7 +3316,7 @@ async function sendComposer(roomId) {
   // input event ever firing, and the words that end up posted should be the words
   // in the box the reader is looking at.
   const text = chatField ? chatField.value : chatDraft;
-  const file = chatPick;
+  const file = chatPicks.slice();
   // Cleared straight away so a slow send does not feel stuck, and put back if the
   // words really did not go anywhere. The file goes back with them: it is the
   // same send that failed.
@@ -3318,11 +3324,11 @@ async function sendComposer(roomId) {
   // The state is what gets restored, not the field. This node is about to be
   // thrown away by the render below, so writing to it would restore nothing.
   chatDraft = '';
-  chatPick = null;
+  chatPicks = [];
   chatRender('keep');
   if (!(await chatSend(text, file)) && chatRoom?.id === roomId) {
     chatDraft = text;
-    chatPick = file;
+    chatPicks = file;
     chatRender('keep');
     chatField?.focus?.();
   }
@@ -3340,9 +3346,184 @@ function chatAutoGrow(el) {
   el.style.height = `${Math.min(el.scrollHeight || 0, 160)}px`;
 }
 
+
+/* WebRTC calls use the authenticated room socket only for signalling. Media is
+   peer-to-peer; no camera or microphone is opened until the user starts/accepts. */
+let chatCall = null;
+function chatCallSend(to, kind, data = {}) {
+  const ws = chatSockets.get(chatRoom?.id)?.ws;
+  if (!ws || ws.readyState !== WebSocket.OPEN) { toast('Связь с чатом ещё подключается', true); return false; }
+  ws.send(JSON.stringify({ t: 'call', to: to || undefined, k: kind, data }));
+  return true;
+}
+function chatCallRender() {
+  document.querySelector('.chat-call-layer')?.remove();
+  const c = chatCall;
+  if (!c) return;
+  const media = h('div', { class: 'chat-call-media' });
+  if (c.localStream) {
+    const local = h('video', { autoplay: true, muted: true, playsinline: true });
+    local.srcObject = c.localStream;
+    media.append(local);
+  }
+  for (const [id, stream] of c.remoteStreams || []) {
+    const video = h('video', { autoplay: true, playsinline: true, controls: false, title: 'Участник звонка' });
+    video.srcObject = stream;
+    media.append(video);
+  }
+  const controls = [];
+  if (c.incoming) {
+    controls.push(h('button', { class: 'btn btn-primary', type: 'button', onclick: chatCallAccept }, 'Принять'));
+    controls.push(h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => { const id = c.initiatorId; if (id) chatCallSend(id, 'reject'); chatCallEnd(false); } }, 'Отклонить'));
+  } else {
+    if (c.active) controls.push(h('button', { class: 'btn btn-ghost', type: 'button', onclick: chatCallShare }, icon('monitor-up','i i-sm'), ' Экран'));
+    controls.push(h('button', { class: 'btn btn-danger', type: 'button', onclick: () => chatCallEnd(true) }, icon('phone-off','i i-sm'), ' Завершить'));
+  }
+  const layer = h('section', { class: 'chat-call-layer', role: 'dialog', 'aria-label': 'Звонок' },
+    h('div', { class: 'chat-call-head' },
+      h('strong', { text: c.incoming ? 'Входящий звонок' : c.mode === 'video' ? 'Видеозвонок' : 'Аудиозвонок' }),
+      h('span', { class: 'chat-call-state', text: c.status || 'Подключение…' }),
+    ),
+    media,
+    h('div', { class: 'chat-call-controls' }, ...controls),
+    h('p', { class: 'chat-call-note', text: 'Камера и микрофон используются только во время звонка. Передача медиа идёт напрямую между участниками; демонстрация экрана доступна в поддерживаемых браузерах.' }),
+  );
+  document.body.append(layer);
+}
+async function chatCallMedia(mode) {
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error('Браузер не поддерживает доступ к камере и микрофону');
+  return navigator.mediaDevices.getUserMedia({ audio: true, video: mode === 'video' ? { facingMode: 'user' } : false });
+}
+async function chatCallStart(mode) {
+  if (!chatRoom?.id || chatRoom.chat?.kind === 'channel') return;
+  if (chatCall) { toast('Сначала завершите текущий звонок', true); return; }
+  try {
+    const stream = await chatCallMedia(mode);
+    chatCall = { convId: chatRoom.id, mode, initiator: true, incoming: false, active: false, localStream: stream, peers: new Map(), remoteStreams: new Map(), pendingIce: new Map(), status: 'Вызов участникам…' };
+    if (!chatCallSend('', 'invite', { mode })) { await chatCallEnd(false); return; }
+    chatCallRender();
+  } catch (err) { toast(err.message || 'Не удалось начать звонок', true); }
+}
+async function chatCallAccept() {
+  const c = chatCall;
+  if (!c?.incoming) return;
+  try {
+    c.localStream = await chatCallMedia(c.mode);
+    c.incoming = false; c.active = true; c.status = 'Подключение…';
+    chatCallSend(c.initiatorId, 'accept');
+    chatCallRender();
+  } catch (err) { toast(err.message || 'Не удалось подключить камеру/микрофон', true); await chatCallEnd(true); }
+}
+async function chatCallPeer(peerId) {
+  const c = chatCall;
+  if (!c || c.peers.has(peerId)) return c?.peers.get(peerId);
+  const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+  const stream = new MediaStream();
+  c.remoteStreams.set(peerId, stream);
+  const localTracks = c.localStream?.getTracks() || [];
+  for (const track of localTracks) pc.addTrack(track, c.localStream);
+  if (!localTracks.some(track => track.kind === 'video')) pc.addTransceiver('video', { direction: 'sendrecv' });
+  pc.ontrack = (event) => {
+    const target = c.remoteStreams.get(peerId);
+    if (target && !target.getTracks().some(t => t.id === event.track.id)) target.addTrack(event.track);
+    chatCallRender();
+  };
+  pc.onicecandidate = (event) => {
+    if (event.candidate) chatCallSend(peerId, 'ice', { candidate: event.candidate.candidate, sdpMid: event.candidate.sdpMid, sdpMLineIndex: event.candidate.sdpMLineIndex });
+  };
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === 'connected') c.status = 'Звонок подключён';
+    if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') c.status = 'Проблема соединения';
+    chatCallRender();
+  };
+  c.peers.set(peerId, pc);
+  return pc;
+}
+async function chatCallSignal(frame) {
+  const from = frame.from, c = chatCall;
+  if (!from || from === account?.id) return;
+  if (frame.k === 'invite') {
+    if (c) { chatCallSend(from, 'reject'); return; }
+    chatCall = { convId: chatRoom?.id, mode: frame.data?.mode === 'video' ? 'video' : 'audio', initiator: false, initiatorId: from, incoming: true, active: false, peers: new Map(), remoteStreams: new Map(), pendingIce: new Map(), status: 'Вас приглашают в звонок' };
+    chatCallRender(); return;
+  }
+  if (!c || c.convId !== chatRoom?.id) return;
+  if (frame.k === 'accept' && c.initiator) {
+    c.active = true; c.status = 'Участник подключается…';
+    try {
+      const pc = await chatCallPeer(from);
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      chatCallSend(from, 'offer', { sdp: pc.localDescription.sdp });
+      chatCallRender();
+    } catch (err) { toast(err.message || 'Не удалось создать соединение', true); }
+    return;
+  }
+  if (frame.k === 'reject') { c.status = 'Кто-то отклонил вызов'; chatCallRender(); return; }
+  if (frame.k === 'end') {
+    const pc = c.peers.get(from); pc?.close(); c.peers.delete(from); c.remoteStreams.delete(from);
+    if (!c.peers.size && !c.initiator) chatCallEnd(false); else { c.status = 'Участник вышел'; chatCallRender(); }
+    return;
+  }
+  try {
+    if (frame.k === 'offer') {
+      const pc = await chatCallPeer(from);
+      await pc.setRemoteDescription({ type: 'offer', sdp: frame.data.sdp });
+      const answer = await pc.createAnswer(); await pc.setLocalDescription(answer);
+      chatCallSend(from, 'answer', { sdp: pc.localDescription.sdp });
+      for (const candidate of c.pendingIce.get(from) || []) await pc.addIceCandidate(candidate);
+      c.pendingIce.delete(from); c.active = true; c.status = 'Звонок подключается…'; chatCallRender();
+    } else if (frame.k === 'answer') {
+      const pc = c.peers.get(from); if (!pc) return;
+      await pc.setRemoteDescription({ type: 'answer', sdp: frame.data.sdp });
+      for (const candidate of c.pendingIce.get(from) || []) await pc.addIceCandidate(candidate);
+      c.pendingIce.delete(from); c.status = 'Звонок подключён'; chatCallRender();
+    } else if (frame.k === 'ice') {
+      const candidate = { candidate: frame.data.candidate, sdpMid: frame.data.sdpMid, sdpMLineIndex: frame.data.sdpMLineIndex };
+      const pc = c.peers.get(from);
+      if (pc?.remoteDescription) await pc.addIceCandidate(candidate);
+      else { const queue = c.pendingIce.get(from) || []; queue.push(candidate); c.pendingIce.set(from, queue); }
+    }
+  } catch (err) { console.warn('call signalling failed', err); }
+}
+async function chatCallShare() {
+  const c = chatCall;
+  if (!c?.active) return;
+  if (!navigator.mediaDevices?.getDisplayMedia) { toast('Демонстрация экрана не поддерживается этим браузером', true); return; }
+  try {
+    const screen = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    const track = screen.getVideoTracks()[0]; if (!track) return;
+    const senders = [...c.peers.values()].map(pc => pc.getSenders().find(s => s.track?.kind === 'video') || pc.getTransceivers().find(t => t.receiver?.track?.kind === 'video')?.sender);
+    for (let i = 0; i < c.peers.size; i++) {
+      const sender = senders[i];
+      if (sender) await sender.replaceTrack(track);
+    }
+    c.screenStream = screen; c.status = 'Вы демонстрируете экран'; chatCallRender();
+    track.onended = async () => {
+      const camera = c.localStream?.getVideoTracks?.()[0] || null;
+      for (const pc of c.peers.values()) {
+        const sender = pc.getSenders().find(s => s.track?.kind === 'video') || pc.getTransceivers().find(t => t.receiver?.track?.kind === 'video')?.sender;
+        if (sender) await sender.replaceTrack(camera);
+      }
+      c.screenStream = null; c.status = 'Демонстрация завершена'; chatCallRender();
+    };
+  } catch (err) { if (err.name !== 'NotAllowedError') toast(err.message || 'Не удалось включить трансляцию', true); }
+}
+async function chatCallEnd(notify = true) {
+  const c = chatCall; if (!c) return;
+  if (notify) {
+    if (c.initiator) chatCallSend('', 'end');
+    else if (c.initiatorId) chatCallSend(c.initiatorId, 'end');
+  }
+  for (const pc of c.peers.values()) pc.close();
+  for (const track of c.localStream?.getTracks() || []) track.stop();
+  for (const track of c.screenStream?.getTracks() || []) track.stop();
+  chatCall = null; document.querySelector('.chat-call-layer')?.remove();
+}
+
 /**
  * Draws the open room.
- *
+
  * The whole log is replaced rather than patched. That is affordable because the
  * page is capped at a few hundred rows and it removes a whole class of bug where
  * a re-render leaves a node that was deleted, or duplicates a row that is still
@@ -3391,16 +3572,15 @@ function chatRender(scroll = 'bottom') {
       icon('file', 'i i-sm'),
       h('span', { class: 'sr-only', text: 'Прикрепить файл' }),
       h('input', {
-        type: 'file', class: 'sr-only', tabindex: '-1',
+        type: 'file', class: 'sr-only', tabindex: '-1', multiple: true,
+        accept: 'image/*,video/*,audio/*,.pdf,.txt,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx',
         onchange: async (e) => {
-          const picked = [...(e.target?.files || [])][0];
+          const picked = [...(e.target?.files || [])].slice(0, 4 - chatPicks.length);
           e.target.value = '';
-          if (!picked) return;
-          // Shrunk on the way in, for the same reason the editor shrinks: the
-          // limit is on the stored file, not on what the camera wrote.
-          const shrunk = await downscaleImage(picked);
+          if (!picked.length) return;
+          const prepared = await Promise.all(picked.map(async (file) => (await downscaleImage(file)).file));
           if (chatRoom?.id !== chat.id) return;
-          chatPick = shrunk.file;
+          chatPicks = [...chatPicks, ...prepared].slice(0, 4);
           chatRender('keep');
         },
       }),
@@ -3410,16 +3590,13 @@ function chatRender(scroll = 'bottom') {
     class: 'chat-composer',
     onSubmit: (e) => { e.preventDefault(); sendComposer(chat.id); },
   },
-    chatPick ? h('div', { class: 'chat-pending' },
-      icon('file', 'i i-sm'),
-      h('span', { text: chatPick.name }),
-      h('button', {
-        class: 'chat-del', type: 'button', title: 'Убрать файл', 'aria-label': 'Убрать файл',
-        onClick: () => { chatPick = null; chatRender('keep'); },
-      }, icon('trash', 'i i-sm')),
-    ) : null,
+    chatPicks.length ? h('div', { class: 'chat-pending-list' }, ...chatPicks.map((file, index) => h('div', { class: 'chat-pending' },
+      icon('file', 'i i-sm'), h('span', { text: `${file.name} · ${bytes(file.size)}` }),
+      h('button', { class: 'chat-remove-file', type: 'button', title: 'Убрать файл', 'aria-label': `Убрать ${file.name}`,
+        onclick: () => { chatPicks = chatPicks.filter((_, i) => i !== index); chatRender('keep'); } }, icon('x', 'i i-sm')),
+    ))) : null,
     h('div', { class: 'chat-compose-row' }, picker, chatField),
-    h('button', { class: 'btn btn-sm', type: 'submit', disabled: !chat.rights?.canPost }, 'Отправить'),
+    h('button', { class: 'btn btn-sm chat-send', type: 'submit', disabled: !chat.rights?.canPost }, icon('send', 'i i-sm'), ' Отправить'),
   );
 
   // A public channel can be read without joining it, and a reader who cannot post
@@ -3456,7 +3633,11 @@ function chatRender(scroll = 'bottom') {
           live,
         ),
       ),
-      h('a', { class: 'btn btn-sm btn-ghost', href: '/chat' }, 'К списку'),
+      h('div', { class: 'chat-head-actions' },
+        chat.kind !== 'channel' && chat.rights?.canPost ? h('button', { class: 'btn btn-sm btn-ghost', type: 'button', title: 'Аудиозвонок', onclick: () => chatCallStart('audio') }, icon('phone', 'i i-sm'), ' Позвонить') : null,
+        chat.kind !== 'channel' && chat.rights?.canPost ? h('button', { class: 'btn btn-sm', type: 'button', title: 'Видеозвонок', onclick: () => chatCallStart('video') }, icon('video', 'i i-sm'), ' Видео') : null,
+        h('a', { class: 'btn btn-sm btn-ghost', href: '/chat' }, 'К списку'),
+      ),
     ),
     h('div', { class: 'chat-wrap' },
       // Floated over the log rather than below it: the point is to be reachable
@@ -3491,111 +3672,121 @@ function chatRender(scroll = 'bottom') {
 }
 
 /** Sidebar of rooms plus the ways to start a new one. */
+
 function chatListView(data, banner) {
   const rows = (data.chats || []).map((c) => h('a', {
-    class: `chat-row${c.unread ? ' is-unread' : ''}`,
-    href: `/chat/${c.id}`,
-    dataset: { chat: c.id },
+    class: `chat-row${c.unread ? ' is-unread' : ''}`, href: `/chat/${c.id}`, dataset: { chat: c.id },
   },
     h('span', { class: 'chat-row-main' },
       h('span', { class: 'chat-row-title', text: c.title || 'Личный чат' }),
-      h('span', { class: 'chat-row-sub', text: c.lastAt ? ago(c.lastAt) : 'нет сообщений' }),
+      h('span', { class: 'chat-row-sub', text: c.lastAt ? ago(c.lastAt) : 'Пока нет сообщений' }),
     ),
     c.unread ? h('span', { class: 'chat-badge', text: String(c.unread) }) : null,
   ));
-
-  let kindField = null;
-  let titleField = null;
-  const create = h('form', {
-    class: 'chat-create',
-    onSubmit: async (e) => {
-      e.preventDefault();
-      const title = titleField.value.trim();
-      if (!title) return;
-      try {
-        const made = await api('/api/chats', { method: 'POST', body: { kind: kindField.value, title } });
-        navigate(`/chat/${made.chat.id}`);
-      } catch (err) { toast(err.message || 'не создано', true); }
-    },
-  },
-    kindField = h('select', { class: 'chat-kind' },
-      h('option', { value: 'channel', text: 'Канал — читают все' }),
-      h('option', { value: 'group', text: 'Группа — по приглашению' }),
-    ),
-    titleField = h('input', { class: 'chat-input', type: 'text', placeholder: 'Название', maxlength: '80' }),
-    h('button', { class: 'btn btn-sm', type: 'submit' }, 'Создать'),
-  );
-
-  // A direct message needs a person, not a name, so it is started from the two
-  // lists of people below rather than from a title field.
-  //
-  // The field takes either an id or a nick, because both are things a person has.
-  // An id goes straight through; a nick is resolved first, and an ambiguous one is
-  // asked about rather than guessed at - picking the most popular stranger and
-  // opening a conversation with them is not an acceptable guess.
-  let dmField = null;
-  const dmHits = h('div', { class: 'chat-hits' });
-  const openDm = async (userId) => {
+  const friendSearch = h('input', { class: 'chat-input', placeholder: 'Ник или ID пользователя', maxlength: '40', autocomplete: 'off' });
+  const friendHits = h('div', { class: 'chat-hits' });
+  async function findPeople(query, target) {
+    const q = String(query || '').trim().replace(/^@/, '');
+    if (!q) { target.replaceChildren(); return; }
     try {
-      const made = await api(`/api/chats/dm/${encodeURIComponent(userId)}`, { method: 'POST' });
+      const result = await api(`/api/users?q=${encodeURIComponent(q)}`);
+      const people = (result.users || []).filter(u => u.id !== account?.id);
+      target.replaceChildren(...(people.length ? people : [null]).map(u => u ? h('div', { class: 'chat-person-hit' },
+        h('span', { class: 'chat-person-name', text: `@${u.nick || u.id}` }),
+        h('span', { class: 'spacer' }),
+        h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: async () => {
+          try {
+            await api(`/api/users/${encodeURIComponent(u.id)}/follow`, { method: 'POST' });
+            toast('Подписка добавлена. Чтобы открыть личный чат, вы должны быть подписаны друг на друга.');
+            try { const dm = await api(`/api/chats/dm/${encodeURIComponent(u.id)}`, { method: 'POST' }); navigate(`/chat/${dm.chat.id}`); }
+            catch (err) { if (!/follow|friend|mutual|подпис/i.test(err.message || '')) toast(err.message || 'Подписка добавлена'); }
+          } catch (err) { toast(err.message || 'Не удалось добавить', true); }
+        } }, icon('user-plus','i i-sm'), ' Добавить'),
+      ) : h('p', { class: 'chat-help', text: 'Пользователи не найдены.' })));
+    } catch (err) { toast(err.message || 'Не удалось найти пользователя', true); }
+  }
+  const friendForm = h('form', { class: 'chat-start-card', onsubmit: (e) => { e.preventDefault(); findPeople(friendSearch.value, friendHits); } },
+    h('h2', {}, icon('user-plus','i i-sm'), 'Добавить друга'),
+    h('p', { text: 'Найди пользователя и подпишись на него. Личный чат откроется, когда вы подпишетесь друг на друга.' }),
+    friendSearch,
+    h('div', { class: 'chat-start-actions' }, h('button', { class: 'btn btn-primary', type: 'submit' }, 'Найти пользователя')),
+    friendHits,
+  );
+
+  const dmField = h('input', { class: 'chat-input', placeholder: 'Имя или @id для личного чата', maxlength: '40', autocomplete: 'off' });
+  const dmHits = h('div', { class: 'chat-hits' });
+  const dmForm = h('form', { class: 'chat-start-card', onsubmit: async (e) => {
+    e.preventDefault();
+    const q = dmField.value.trim().replace(/^@/, '');
+    if (!q) return;
+    try {
+      const result = await api(`/api/users?q=${encodeURIComponent(q)}`);
+      const people = (result.users || []).filter(u => u.id !== account?.id);
+      if (people.length === 1) {
+        try { const opened = await api(`/api/chats/dm/${encodeURIComponent(people[0].id)}`, { method: 'POST' }); navigate(`/chat/${opened.chat.id}`); }
+        catch (err) { toast(err.message || 'Чтобы начать переписку, подпишитесь друг на друга', true); }
+        return;
+      }
+      dmHits.replaceChildren(...(people.length ? people.map(u => h('button', { class: 'chat-chip', type: 'button', onclick: async () => {
+        try { const opened = await api(`/api/chats/dm/${encodeURIComponent(u.id)}`, { method: 'POST' }); navigate(`/chat/${opened.chat.id}`); }
+        catch (err) { toast(err.message || 'Чтобы начать переписку, подпишитесь друг на друга', true); }
+      } }, String(u.nick || u.id))) : [h('span', { class: 'chat-help', text: 'Пользователи не найдены.' })]));
+    } catch (err) { toast(err.message || 'Не удалось найти пользователя', true); }
+  } },
+    h('h2', {}, icon('message-circle','i i-sm'), 'Открыть личный чат'),
+    h('p', { text: 'Найди человека по нику или ID. Если чат не открывается, сначала добавьте друг друга в друзья.' }),
+    dmField,
+    h('div', { class: 'chat-start-actions' }, h('button', { class: 'btn btn-ghost', type: 'submit' }, 'Найти и написать')),
+    dmHits,
+  );
+  const groupTitle = h('input', { class: 'chat-input', placeholder: 'Например, Команда', maxlength: '80', required: true });
+  const groupSearch = h('input', { class: 'chat-input', placeholder: 'Найти участников по нику или ID', maxlength: '40' });
+  const groupHits = h('div', { class: 'chat-hits' });
+  const selected = [];
+  const selectedBox = h('div', { class: 'chat-selected' });
+  const drawSelected = () => selectedBox.replaceChildren(...selected.map((u, i) => h('span', { class: 'chat-selected-chip' },
+    `@${u.nick || u.id}`, h('button', { type: 'button', title: 'Убрать', onclick: () => { selected.splice(i, 1); drawSelected(); } }, '×'),
+  )));
+  const groupFind = h('form', { class: 'chat-start-actions', onsubmit: (e) => {
+    e.preventDefault(); const q = groupSearch.value.trim().replace(/^@/, ''); if (!q) return;
+    api(`/api/users?q=${encodeURIComponent(q)}`).then(result => {
+      const people = (result.users || []).filter(u => u.id !== account?.id && !selected.some(s => s.id === u.id));
+      groupHits.replaceChildren(...(people.length ? people.map(u => h('button', { class: 'chat-chip', type: 'button', onclick: () => {
+        if (selected.length >= 39) return toast('В группе может быть до 40 участников');
+        selected.push(u); drawSelected(); groupHits.replaceChildren();
+      } }, icon('plus','i i-sm'), ` @${u.nick || u.id}`)) : [h('span', { class: 'chat-help', text: 'Никого не нашли.' })]));
+    }).catch(err => toast(err.message || 'Не удалось найти', true));
+  } }, groupSearch, h('button', { class: 'btn btn-sm btn-ghost', type: 'submit' }, 'Найти'));
+  const groupForm = h('form', { class: 'chat-start-card', onsubmit: async (e) => {
+    e.preventDefault(); if (!groupTitle.value.trim()) return;
+    try {
+      const made = await api('/api/chats', { method: 'POST', body: { kind: 'group', title: groupTitle.value.trim(), members: selected.map(u => u.id) } });
       navigate(`/chat/${made.chat.id}`);
-      return true;
-    } catch (err) {
-      // "no such account" is not a final answer to something that may equally be a
-      // name, so it is handed back to the caller to try the other reading. Every
-      // other refusal - blocked, not followed, throttled - is a real answer, and
-      // is reported as one instead of being retried as if it were a typo.
-      if (err?.message && err.message !== 'no such account') toast(err.message, true);
-      return false;
-    }
-  };
-  const dm = h('form', {
-    class: 'chat-create',
-    onSubmit: async (e) => {
-      e.preventDefault();
-      const typed = dmField.value.trim().replace(/^@/, '');
-      if (!typed) return;
-      dmHits.replaceChildren();
-      // Most nicks are spelled like ids, so the id is tried first and the name
-      // second. Only a miss at both ends is a miss.
-      if (/^[A-Za-z0-9_-]{3,40}$/.test(typed) && await openDm(typed)) return;
-      try {
-        const found = await api(`/api/users?q=${encodeURIComponent(typed)}`);
-        const people = found.users || [];
-        if (people.length === 1) { await openDm(people[0].id); return; }
-        if (!people.length) { toast('ник не найден', true); return; }
-        dmHits.replaceChildren(...people.map((u) => h('button', {
-          class: 'chat-chip', type: 'button', onClick: () => openDm(u.id),
-        }, u.nick, u.id === account?.id ? h('span', { class: 'chat-chip-self', text: 'это вы' }) : null)));
-      } catch (err) { toast(err.message || 'не найти', true); }
-    },
-  },
-    dmField = h('input', { class: 'chat-input', type: 'text', placeholder: 'Имя или @id для личного чата', maxlength: '40' }),
-    h('button', { class: 'btn btn-sm', type: 'submit' }, 'Написать'),
+    } catch (err) { toast(err.message || 'Не удалось создать группу', true); }
+  } },
+    h('h2', {}, icon('users','i i-sm'), 'Создать группу'),
+    h('p', { text: 'Задай название, найди участников и создай закрытый групповой чат.' }),
+    groupTitle, groupFind, groupHits, selectedBox,
+    h('div', { class: 'chat-start-actions' }, h('button', { class: 'btn btn-primary', type: 'submit' }, icon('users','i i-sm'), ' Создать группу')),
   );
-  const dmBlock = h('div', {}, dm, dmHits);
-
   const channels = h('details', { class: 'chat-discover' },
-    h('summary', { text: 'Публичные каналы' }),
-    h('div', { class: 'chat-discover-list' },
-      ...(data.channels || []).map((c) => h('a', { class: 'chat-chip', href: `/chat/${c.id}` }, `# ${c.title}`)),
-    ),
+    h('summary', { text: 'Публичные каналы и создание канала' }),
+    h('div', { class: 'chat-discover-list' }, ...(data.channels || []).map(c => h('a', { class: 'chat-chip', href: `/chat/${c.id}` }, `# ${c.title}`))),
+    h('form', { class: 'chat-create', onsubmit: async (e) => {
+      e.preventDefault(); const field = e.currentTarget.querySelector('input'); if (!field.value.trim()) return;
+      try { const made = await api('/api/chats', { method: 'POST', body: { kind: 'channel', title: field.value.trim() } }); navigate(`/chat/${made.chat.id}`); }
+      catch (err) { toast(err.message || 'Не удалось создать канал', true); }
+    } }, h('input', { class: 'chat-input', placeholder: 'Название нового канала', maxlength: '80' }), h('button', { class: 'btn btn-sm', type: 'submit' }, 'Создать канал')),
   );
-
   $view.replaceChildren(
-    h('div', { class: 'page-head' },
-      h('div', {}, h('h1', { text: 'Чат' }), h('p', { class: 'page-sub', text: 'Каналы, группы и личные переписки.' })),
-    ),
+    h('div', { class: 'page-head' }, h('div', {}, h('h1', { text: 'Чаты' }), h('p', { class: 'page-sub', text: 'Личные переписки, группы и каналы.' }))),
     banner || null,
-    create,
-    dmBlock,
+    h('div', { class: 'chat-start' }, friendForm, dmForm, groupForm),
     channels,
-    rows.length
-      ? h('div', { class: 'chat-list' }, ...rows)
-      : h('p', { class: 'hint', text: 'У вас пока нет диалогов. Создайте канал или группу выше.' }),
+    h('h2', { class: 'chat-section-title', text: 'Ваши переписки' }),
+    rows.length ? h('div', { class: 'chat-list' }, ...rows) : h('p', { class: 'hint', text: 'Пока нет чатов. Добавь друга или создай группу выше.' }),
   );
 }
-
 async function viewChat(url) {
   // A signed-out reader is offered the sign-in page rather than an error, since
   // a chat needs an account for the same reason posting does.
