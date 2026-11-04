@@ -907,10 +907,10 @@ async function sendEmailCode(env, email, code, purpose) {
   if (!env.RESEND_API_KEY) return false;
   const subject = purpose === 'register' ? 'Подтверждение регистрации CHEATLAB' : purpose === 'email_change' ? 'Подтверждение новой почты CHEATLAB' : 'Код входа в CHEATLAB';
   const text = purpose === 'register'
-    ? `Код подтверждения регистрации CHEATLAB: ${code}\\n\\nКод действует 10 минут. Если вы не регистрировались, проигнорируйте письмо.`
+    ? `Код подтверждения регистрации CHEATLAB: ${code}\n\nКод действует 10 минут. Если вы не регистрировались, проигнорируйте письмо.`
     : purpose === 'email_change'
-      ? `Код подтверждения новой почты CHEATLAB: ${code}\\n\\nКод действует 10 минут. Если вы не меняли почту, проигнорируйте письмо.`
-      : `Код входа в CHEATLAB: ${code}\\n\\nКод действует 10 минут. Если вы не пытались войти, проигнорируйте письмо.`;
+      ? `Код подтверждения новой почты CHEATLAB: ${code}\n\nКод действует 10 минут. Если вы не меняли почту, проигнорируйте письмо.`
+      : `Код входа в CHEATLAB: ${code}\n\nКод действует 10 минут. Если вы не пытались войти, проигнорируйте письмо.`;
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + env.RESEND_API_KEY, 'Content-Type': 'application/json' },
