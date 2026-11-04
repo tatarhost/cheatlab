@@ -193,6 +193,26 @@ export async function issueCaptcha(db, env, { risk = 0 } = {}) {
   return { id, q: p.q, token, exp: expires, risk };
 }
 
+/** Visual ring CAPTCHA. The answer stays in D1; only drawing geometry reaches the browser. */
+export async function issueRingCaptcha(db, env) {
+  const id = newId(10);
+  const issuedAt = now();
+  const expires = issuedAt + CAPTCHA_TTL_MS;
+  const closedCount = 3 + Math.floor(Math.random() * 3);
+  const closed = new Set();
+  while (closed.size < closedCount) closed.add(Math.floor(Math.random() * 9));
+  const rings = Array.from({ length: 9 }, (_, index) => ({
+    gap: closed.has(index) ? 0 : 0.14 + Math.random() * 0.18,
+    offset: Math.random(),
+  }));
+  const answer = JSON.stringify([...closed].sort((a, b) => a - b));
+  await db.prepare('DELETE FROM captcha WHERE expires_at < ?').bind(issuedAt - CAPTCHA_TTL_MS).run();
+  await db.prepare(
+    'INSERT INTO captcha (id, question, answer, issued_at, expires_at, used_at) VALUES (?, ?, ?, ?, ?, NULL)'
+  ).bind(id, 'Выберите все полностью замкнутые кольца.', answer, issuedAt, expires).run();
+  return { token: await signCaptcha(env, id), q: 'Выберите все полностью замкнутые кольца.', rings, exp: expires };
+}
+
 async function signCaptcha(env, id) {
   const sig = await secretHash(`${captchaKey(env)}.${id}`);
   return `${id}.${sig}`;
