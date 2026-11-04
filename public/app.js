@@ -5037,7 +5037,7 @@ let renderToken = 0;
 async function route() {
   const token = ++renderToken;
   const rawPath = stripBase(location.pathname);
-  const path = rawPath.length > 1 ? rawPath.replace(/\\/+$/, '') : rawPath;
+  const path = rawPath.length > 1 ? rawPath.replace(/\/+$/, '') : rawPath;
   const url = new URL(location.href);
   markNav();
   if (path === '/search') searchInput.value = url.searchParams.get('q') || '';
