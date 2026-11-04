@@ -893,6 +893,78 @@ route('GET', /^\/api\/auth\/captcha$/, async (request, env, _m, url) => {
   return json({ id: cid, q, token, exp });
 });
 
+
+/* -------------------------------------------------------- email OTP auth -- */
+const EMAIL_RE = /^[^\\s@<>]+@[^\\s@<>]+\\.[^\\s@<>]{2,}$/;
+const maskEmail = (email) => {
+  const [name, domain] = String(email || '').split('@');
+  return name && domain ? name.slice(0, 1) + '•••@' + domain : '';
+};
+function makeEmailCode() {
+  return String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, '0');
+}
+async function sendEmailCode(env, email, code, purpose) {
+  if (!env.RESEND_API_KEY) return false;
+  const subject = purpose === 'register' ? 'Подтверждение регистрации CHEATLAB' : 'Код входа в CHEATLAB';
+  const text = purpose === 'register'
+    ? `Код подтверждения регистрации CHEATLAB: ${code}\\n\\nКод действует 10 минут. Если вы не регистрировались, проигнорируйте письмо.`
+    : `Код входа в CHEATLAB: ${code}\\n\\nКод действует 10 минут. Если вы не пытались войти, проигнорируйте письмо.`;
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + env.RESEND_API_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from: 'CHEATLAB <cheatlab@cheatlab.fun>', to: [email], subject, text }),
+  });
+  if (!response.ok) {
+    console.error('[auth-email] Resend rejected verification email', response.status);
+    return false;
+  }
+  return true;
+}
+async function createEmailOtp(env, { purpose, email, userId = '', nick = '', nickKeyValue = '', passHash = '', passSalt = '', iterations = 0 }) {
+  const { STORE } = env;
+  if (!(await STORE.throttle('email-otp:' + email, 'email-otp', { cap: 5, windowMs: 60 * 60 * 1000 }))) {
+    return { error: fail(429, 'Слишком много писем с кодами. Попробуйте позже.') };
+  }
+  const code = makeEmailCode();
+  const id = newId(20);
+  const expires = now() + 10 * 60 * 1000;
+  await STORE.db.prepare(
+    'INSERT INTO email_otp (id,purpose,email,user_id,nick,nick_key,pass_hash,pass_salt,iterations,code_hash,expires_at,attempts,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)'
+  ).bind(id, purpose, email, userId, nick, nickKeyValue, passHash, passSalt, iterations, await secretHash(code), expires, 0, now()).run();
+  const sent = await sendEmailCode(env, email, code, purpose === 'register' ? 'register' : 'login');
+  if (!sent) {
+    await STORE.db.prepare('DELETE FROM email_otp WHERE id = ?').bind(id).run();
+    return { error: fail(503, 'Не удалось отправить код. Проверьте отправку почты CHEATLAB.') };
+  }
+  return { id, email: maskEmail(email), expiresAt: expires };
+}
+async function verifyEmailOtp(env, id, code, purpose) {
+  const row = await env.STORE.db.prepare(
+    'SELECT * FROM email_otp WHERE id = ? AND purpose = ? AND used_at IS NULL AND expires_at > ? AND attempts < 5'
+  ).bind(id, purpose, now()).first();
+  if (!row) return { error: fail(400, 'Код истёк или попытки закончились. Запросите новый код.') };
+  if (!/^\\d{6}$/.test(String(code || '')) || !(await secretMatches(String(code), row.code_hash))) {
+    await env.STORE.db.prepare(
+      'UPDATE email_otp SET attempts = attempts + 1 WHERE id = ? AND used_at IS NULL AND attempts < 5'
+    ).bind(id).run();
+    return { error: fail(400, 'Неверный код подтверждения.') };
+  }
+  const consumed = await env.STORE.db.prepare(
+    'UPDATE email_otp SET used_at = ? WHERE id = ? AND purpose = ? AND used_at IS NULL AND expires_at > ? AND attempts < 5'
+  ).bind(now(), id, purpose, now()).run();
+  if (!(consumed.meta?.changes > 0)) return { error: fail(409, 'Этот код уже использован. Запросите новый.') };
+  return { row };
+}
+async function issueAccountSession(request, env, user) {
+  const client = clientOf(request);
+  const { token, tokenHash } = await newSession();
+  await env.STORE.createSession({
+    tokenHash, userId: user.id, createdAt: now(), expiresAt: now() + SESSION_TTL_MS,
+    clientId: client, userAgent: str(request.headers.get('user-agent'), 200),
+  });
+  return json({ user: publicUser(user, env), token, expiresAt: now() + SESSION_TTL_MS });
+}
+
 route('POST', /^\/api\/auth\/register$/, async (request, env) => {
   const { STORE } = env;
   const c = config(env);
@@ -1050,48 +1122,31 @@ route('POST', /^\/api\/auth\/keylogin$/, async (request, env) => {
   const c = config(env);
   const client = clientOf(request);
   if (!client) return fail(401, 'missing client id');
-
-  // This is a credential-guessing surface like login: same bucket, same cap.
   if (!(await STORE.throttle(`keylogin:${client}`, 'auth', { cap: 10, windowMs: 15 * 60 * 1000 }))) {
     return fail(429, 'too many login attempts, try later');
   }
-
   let payload;
-  try {
-    payload = await readJson(request, c.maxTextBytes);
-  } catch (err) {
-    return fail(err.code === 'TOO_LARGE' ? 413 : 400, err.message);
-  }
-
+  try { payload = await readJson(request, c.maxTextBytes); }
+  catch (err) { return fail(err.code === 'TOO_LARGE' ? 413 : 400, err.message); }
   const secret = env.LOGIN_KEY_SECRET;
   if (!secret) return fail(503, 'login keys are not configured');
-
-  // One message for every way a key can fail. The caller cannot tell a bad
-  // signature from a deleted account, so probing a key says nothing about
-  // which account ids exist.
   const parsed = await verifyLoginKey(secret, str(payload.key, 300));
   if (!parsed) return fail(401, 'key is not valid or has expired');
-
   const user = await STORE.getUser(parsed.userId);
   if (!user) return fail(401, 'key is not valid or has expired');
-
-  // Verification mode: the answer the key page shows for "is this account
-  // registered", with no session minted and nothing to replay.
-  if (payload.verify) {
-    return json({ ok: true, nick: user.nick, userId: user.id, expiresAt: parsed.expiresAt });
+  if (payload.verify) return json({ ok: true, nick: user.nick, userId: user.id, expiresAt: parsed.expiresAt });
+  let email = String(user.email || '').toLowerCase();
+  let purpose = 'login';
+  if (!user.email_verified || !EMAIL_RE.test(email)) {
+    email = str(payload.email, 254).toLowerCase();
+    if (!EMAIL_RE.test(email)) return fail(400, 'Для старого аккаунта укажите почту, чтобы включить защиту входа.');
+    const occupied = await STORE.db.prepare('SELECT id FROM user WHERE lower(email) = ? AND id <> ?').bind(email, user.id).first();
+    if (occupied) return fail(409, 'Эта почта уже привязана к другому аккаунту.');
+    purpose = 'login_bind';
   }
-
-  const { token, tokenHash } = await newSession();
-  await STORE.createSession({
-    tokenHash,
-    userId: user.id,
-    createdAt: now(),
-    expiresAt: now() + SESSION_TTL_MS,
-    clientId: client,
-    userAgent: str(request.headers.get('user-agent'), 200),
-  });
-
-  return json({ user: publicUser(user, env), token, expiresAt: now() + SESSION_TTL_MS });
+  const pending = await createEmailOtp(env, { purpose, email, userId: user.id });
+  if (pending.error) return pending.error;
+  return json({ verificationRequired: true, challengeId: pending.id, email: pending.email, expiresAt: pending.expiresAt }, 202);
 });
 
 /** Who am I, and which tier am I on. The frontend calls this on boot. */
