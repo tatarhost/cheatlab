@@ -201,6 +201,29 @@ const afterJoin = await asBob(`/api/chats/${convId}/messages`, {
 });
 check('and can post once they have', afterJoin.status === 201, `${afterJoin.status} ${afterJoin.text.slice(0, 140)}`);
 
+// Relay group-call peer lists to the newly accepted participant, and
+// broadcast an end-call frame so every participant can close the meeting.
+const fakeBobSocket = {
+  closed: false,
+  attachment: { convId, userId: bobId },
+  sent: [],
+  deserializeAttachment() { return this.attachment; },
+  send(frame) { this.sent.push(frame); },
+};
+room.sockets.push(fakeBobSocket);
+await room.instance.webSocketMessage(room.sockets[0], JSON.stringify({
+  t: 'call', to: bobId, k: 'peers', data: { peerIds: [who.carol.user.id] },
+}));
+check('group peer list is relayed to the selected member',
+  fakeBobSocket.sent.some((raw) => JSON.parse(raw).k === 'peers'),
+  fakeBobSocket.sent.join('\n'));
+await room.instance.webSocketMessage(room.sockets[0], JSON.stringify({
+  t: 'call', k: 'end-call', data: {},
+}));
+check('end-call is broadcast to the other room members',
+  fakeBobSocket.sent.some((raw) => JSON.parse(raw).k === 'end-call'),
+  fakeBobSocket.sent.join('\n'));
+
 await room.fetch('https://room.internal/publish', {
   method: 'POST',
   body: JSON.stringify({ ...afterJoin.json.message, files: [] }),
