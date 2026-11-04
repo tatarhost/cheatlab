@@ -2996,8 +2996,9 @@ function chatNotify(title, body, tag, onClick) {
 }
 function chatNotifyMessage(message) {
   const sender = message.nick || message.user?.nick || 'Новое сообщение';
-  const body = String(message.body || 'Вложение').slice(0, 120);
-  chatNotify(sender, body, `chat-message-${message.id}`, () => {});
+  const invite = /^\[\[CHEATLAB_CALL:(audio|video)\]\]$/.exec(String(message.body || '').trim());
+  const body = invite ? (invite[1] === 'video' ? 'Приглашение в видеозвонок' : 'Приглашение в аудиозвонок') : String(message.body || 'Вложение').slice(0, 120);
+  chatNotify(invite ? 'Входящий звонок' : sender, invite ? `${sender}: ${body}. Откройте чат, чтобы присоединиться.` : body, `chat-message-${message.id}`, () => {});
 }
 function chatToggleDrawer() {
   document.querySelector('.messenger-drawer')?.remove();
@@ -3305,6 +3306,9 @@ async function chatRetract(messageId, convId = chatRoom?.id) {
 /** One message line. The body is a text node, never markup. */
 function chatBubble(m, grouped = false) {
   const mine = account && m.userId === account.id;
+  const callInvite = !m.deleted && /^\[\[CHEATLAB_CALL:(audio|video)\]\]$/.exec(String(m.body || '').trim());
+  const callMode = callInvite?.[1] || 'audio';
+  const callExpired = callInvite && m.createdAt && Date.now() - Number(m.createdAt) > 2 * 60 * 60 * 1000;
   const when_ = m.createdAt ? ago(m.createdAt) : '';
   // A run of messages from one person names them once. Repeating the name above
   // every line of a paragraph they are typing turns the log into a list of forms.
@@ -3333,7 +3337,24 @@ function chatBubble(m, grouped = false) {
     ),
     m.deleted
       ? h('p', { class: 'chat-body is-deleted', text: 'сообщение удалено' })
-      : h('p', { class: 'chat-body', text: m.body || '' }),
+      : callInvite
+        ? h('div', { class: 'chat-call-invite-message' },
+            h('div', { class: 'chat-call-invite-title' },
+              icon(callMode === 'video' ? 'video' : 'phone', 'i i-sm'),
+              callMode === 'video' ? 'Видеозвонок' : 'Аудиозвонок'),
+            h('p', { class: 'chat-body', text: mine ? 'Вы отправили приглашение в звонок.' : 'Вас пригласили в звонок. Можно присоединиться прямо из переписки.' }),
+            callExpired
+              ? h('span', { class: 'chat-call-invite-expired', text: 'Приглашение устарело' })
+              : mine
+                ? h('span', { class: 'chat-call-invite-expired', text: 'Приглашение сохранено в истории чата' })
+                : h('button', { class: 'btn btn-primary chat-call-join', type: 'button', onclick: async () => {
+                    if (chatCall) { toast('Сначала завершите текущий звонок', true); return; }
+                    chatCall = { convId: chatRoom?.id, mode: callMode, initiator: false, initiatorId: m.userId, incoming: true, active: false, accepting: false, peers: new Map(), remoteStreams: new Map(), pendingIce: new Map(), status: 'Подключение к звонку…' };
+                    chatCallRender();
+                    await chatCallAccept();
+                  } }, icon('phone-call', 'i i-sm'), ' Присоединиться'),
+          )
+        : h('p', { class: 'chat-body', text: m.body || '' }),
     m.game ? h('a', { class: 'chat-game', href: `/games/${m.game.id}` },
       m.game.cover ? h('img', { class: 'chat-game-cover', src: m.game.cover, alt: '', loading: 'lazy' }) : null,
       h('span', { text: m.game.name || `Игра ${m.game.id}` }),
@@ -3473,6 +3494,10 @@ async function chatCallStart(mode) {
   let stream;
   try {
     stream = await chatCallMedia(mode);
+    // Store a durable invitation in chat history first. A recipient can open the
+    // conversation later and join while the caller is still in this live call.
+    const invitationSaved = await chatSend(`[[CHEATLAB_CALL:${mode}]]`);
+    if (!invitationSaved) throw new Error('Не удалось отправить приглашение в чат');
     await chatCallSendReady('', 'invite', { mode });
     chatCall = { convId: chatRoom.id, mode, initiator: true, incoming: false, active: false, localStream: stream, peers: new Map(), remoteStreams: new Map(), pendingIce: new Map(), status: 'Вызов участникам…' };
     chatCallRender();
