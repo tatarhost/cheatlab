@@ -31,7 +31,7 @@
       '<label class="field"><span class="label">Название сайта</span><input class="input" data-field="title" maxlength="70" value="'+esc(s.title)+'"></label><label class="field"><span class="label">Описание</span><textarea class="textarea" data-field="desc" rows="4" maxlength="220">'+esc(s.desc)+'</textarea></label><label class="field"><span class="label">Основной цвет</span><input type="color" data-field="color" value="'+esc(s.color)+'"></label><p class="cl-create-note">Готовая адаптивная HTML-страница с glass-дизайном. Скачай index.html или опубликуй исходник в CHEATLAB.</p>':
       '<div class="cl-create-note"><b>Шаг 1. Создай приложение Discord</b><p>Нажми кнопку ниже. Discord откроет форму нового приложения — придумай имя и подтверди создание.</p><a class="btn btn-primary" href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer">Открыть Discord Developer Portal ↗</a></div>'+
       '<div class="cl-create-note"><b>Шаг 2. Создай бота и скопируй Client ID</b><p>В приложении открой раздел Bot и нажми Add Bot. Затем в OAuth2 → General скопируй Application ID (Client ID).</p><label class="field"><span class="label">Client ID (только цифры)</span><input class="input" inputmode="numeric" data-field="clientId" maxlength="20" placeholder="Например, 123456789012345678" value="'+esc(s.clientId)+'"></label>'+
-      '<b>Шаг 3. Пригласи бота на сервер</b><p>Ссылка создаётся локально из Client ID. CHEATLAB не получает твой токен.</p><'+(invite?'a':'button')+' class="btn btn-primary" '+(invite?'href="'+invite+'" target="_blank" rel="noopener noreferrer"':'type="button" disabled')+'>Сгенерировать ссылку приглашения ↗</'+(invite?'a':'button')+'>'+
+      '<b>Шаг 3. Пригласи бота на сервер</b><p>Ссылка создаётся локально из Client ID. CHEATLAB не получает твой токен.</p><button class="btn btn-primary" type="button" data-invite '+(invite?'':'disabled')+'>Открыть ссылку приглашения ↗</button>'+
       '<b>Шаг 4. Получи токен и запусти</b><p>В Bot → Reset Token создай токен и скопируй его. Включи Message Content Intent, если хочешь команды с префиксом. Токен не вставляй в CHEATLAB, чат или исходный код — задай его как секрет <code>DISCORD_TOKEN</code> на своём хостинге.</p>'+
       '<label class="field"><span class="label">Имя бота в проекте</span><input class="input" data-field="bot" maxlength="50" value="'+esc(s.bot)+'"></label><label class="field"><span class="label">Префикс команд</span><input class="input" data-field="prefix" maxlength="4" value="'+esc(s.prefix)+'"></label><p class="cl-create-note">CHEATLAB подготовит исходник Discord.js. Сам сайт не запускает постоянные процессы и не хранит токены.</p>')+
       '<div class="cl-create-actions"><button class="btn btn-primary" data-download>Скачать '+(isSite?'index.html':'bot.js')+'</button><button class="btn" data-publish>Опубликовать исходник в CHEATLAB</button></div></div><div class="cl-create-preview">'+(isSite?'<iframe title="Предпросмотр сайта" sandbox="allow-same-origin"></iframe>':'<div style="padding:18px"><strong>Предпросмотр команд</strong><p class="hint">'+esc(s.prefix)+'ping → Pong! 🏓</p><p class="hint">'+esc(s.prefix)+'help → список команд</p><pre class="cl-create-code" data-code></pre></div>')+'</div></div>';
@@ -48,6 +48,7 @@
       if(b.dataset.close!==undefined)return close();
       if(b.dataset.kind){s.kind=b.dataset.kind;return render();}
       if(b.dataset.download!==undefined)return download();
+      if(b.dataset.invite!==undefined){const url=inviteUrl();if(url)window.open(url,'_blank','noopener,noreferrer');return;}
       if(b.dataset.publish!==undefined){
         try{localStorage.setItem('cheatlab.creatorDraft',JSON.stringify({title:s.kind==='site'?s.title:s.bot,body:source(),language:s.kind==='site'?'html':'javascript',type:'app'}));}catch{}
         close();location.href='./new?type=app&creator=1';
@@ -57,6 +58,7 @@
       const k=e.target.dataset.field;if(!k)return;s[k]=e.target.value;
       const frame=panel.querySelector('iframe');if(frame)frame.srcdoc=source();
       const code=panel.querySelector('[data-code]');if(code)code.textContent=source();
+      const inviteButton=panel.querySelector('[data-invite]');if(inviteButton)inviteButton.disabled=!inviteUrl();
     });
     render();
   }
