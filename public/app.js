@@ -5251,7 +5251,9 @@ async function route() {
       await viewFeed(path, url);
     } else if (GAME_PAGE.test(path)) {
       await viewGame(path.slice('/games/'.length));
-    } else if (path === '/downloads') {\n      await viewDownloads();\n    } else if (path === '/new') {
+    } else if (path === '/downloads') {
+      await viewDownloads();
+    } else if (path === '/new') {
       await viewNew(url);
     } else if (path === '/me') {
       await viewMe();
