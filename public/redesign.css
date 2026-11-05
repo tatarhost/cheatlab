@@ -751,3 +751,26 @@ a:hover { text-decoration: none; }
 .cl-publish-global span{font-size:24px;line-height:1}
 .topbar-actions .btn-primary{display:none!important}
 @media(min-width:901px){.cl-publish-global{bottom:24px!important;right:24px!important}}
+
+/* CHEATLAB Android downloads page */
+.download-page{max-width:920px;margin:0 auto;padding:12px 0 36px;color:var(--ink)}
+.download-hero{position:relative;overflow:hidden;text-align:center;padding:clamp(26px,6vw,54px) 22px 30px;border:1px solid var(--line);border-radius:26px;background:radial-gradient(ellipse at 50% 0%,color-mix(in srgb,var(--accent) 20%,transparent),transparent 62%),var(--paper);box-shadow:0 18px 60px rgba(0,0,0,.13)}
+.download-kicker{font-size:11px;font-weight:800;letter-spacing:.18em;color:var(--mute)}
+.download-app-icon{width:88px;height:88px;margin:18px auto 16px;padding:8px;border:1px solid var(--line);border-radius:23px;background:var(--paper);box-shadow:0 12px 34px rgba(0,0,0,.18)}
+.download-app-icon img{display:block;width:100%;height:100%;object-fit:contain;border-radius:16px}
+.download-hero h1{margin:0;font-size:clamp(25px,5vw,38px);letter-spacing:-.04em}
+.download-lead{max-width:540px;margin:12px auto 18px;color:var(--mute);font-size:14px;line-height:1.65}
+.download-meta{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin:0 auto 20px}
+.download-meta span{padding:7px 11px;border:1px solid var(--line);border-radius:999px;background:var(--fog);font-size:12px;color:var(--mute)}
+.download-main-btn{min-height:48px;padding:0 22px!important;display:inline-flex!important;align-items:center;justify-content:center;gap:9px;text-decoration:none}
+.download-status{min-height:18px;margin:12px 0 0;color:var(--mute);font-size:12px}
+.download-details{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:14px}
+.download-detail{display:flex;align-items:flex-start;gap:12px;min-width:0;padding:17px;border:1px solid var(--line);border-radius:17px;background:var(--paper)}
+.download-detail>.i{width:20px;height:20px;flex:0 0 20px;color:var(--mute)}
+.download-detail strong{display:block;font-size:13px}
+.download-detail p{margin:6px 0 0;color:var(--mute);font-size:12px;line-height:1.55}
+.download-footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:16px;padding:14px 4px;color:var(--mute);font-size:12px}
+.download-footer a{color:var(--ink);text-decoration:none}
+.download-footer a:hover{text-decoration:underline}
+.download-main-btn[aria-disabled="true"]{opacity:.55;pointer-events:none}
+@media(max-width:680px){.download-page{padding-top:4px}.download-hero{padding:26px 16px 24px;border-radius:21px}.download-details{grid-template-columns:1fr}.download-detail{padding:14px}.download-footer{flex-direction:column}}
