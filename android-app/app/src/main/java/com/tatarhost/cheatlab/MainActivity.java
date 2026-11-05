@@ -163,6 +163,7 @@ public class MainActivity extends Activity {
         root.addView(webView, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         setContentView(root);
+        UpdateChecker.check(this, false);
 
         if (savedInstanceState == null) {
             webView.loadUrl(HOME);
@@ -173,13 +174,16 @@ public class MainActivity extends Activity {
 
     private void showMenu(View anchor) {
         PopupMenu popup = new PopupMenu(this, anchor);
+        popup.getMenu().add("Проверить обновления");
         popup.getMenu().add("О приложении");
         popup.getMenu().add("Лицензия и уведомления");
         popup.getMenu().add("Политика конфиденциальности");
         popup.getMenu().add("Открыть сайт в браузере");
         popup.setOnMenuItemClickListener(item -> {
             String title = item.getTitle().toString();
-            if (title.equals("О приложении")) {
+            if (title.equals("Проверить обновления")) {
+                UpdateChecker.check(MainActivity.this, true);
+            } else if (title.equals("О приложении")) {
                 showInfo();
             } else if (title.equals("Лицензия и уведомления")) {
                 showLicense();
