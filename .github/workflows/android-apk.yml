@@ -36,17 +36,17 @@ jobs:
       - name: Build debug APK
         run: gradle -p android-app --no-daemon :app:assembleDebug
 
-      - name: Publish APK to website downloads
-        run: |
-          mkdir -p public/downloads
-          cp android-app/app/build/outputs/apk/debug/app-debug.apk public/downloads/CHEATLAB.apk
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add public/downloads/CHEATLAB.apk
-          if ! git diff --cached --quiet; then
-            git commit -m "Publish latest CHEATLAB Android APK"
-            git push
-          fi
+      - name: Create GitHub release with APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: CHEATLAB Android 1.0.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          make_latest: true
+          files: android-app/app/build/outputs/apk/debug/app-debug.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload APK build artifact
         uses: actions/upload-artifact@v4
