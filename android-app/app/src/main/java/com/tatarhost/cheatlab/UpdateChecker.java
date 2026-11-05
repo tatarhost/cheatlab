@@ -65,7 +65,7 @@ final class UpdateChecker {
                 if (assets != null) {
                     for (int i = 0; i < assets.length(); i++) {
                         JSONObject asset = assets.optJSONObject(i);
-                        if (asset != null && "app-debug.apk".equals(asset.optString("name"))) {
+                        if (asset != null && asset.optString("name").toLowerCase(java.util.Locale.ROOT).endsWith(".apk") && !asset.optString("name").toLowerCase(java.util.Locale.ROOT).contains("unaligned")) {
                             apkUrl = asset.optString("browser_download_url", null);
                             break;
                         }
