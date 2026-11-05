@@ -10,8 +10,9 @@ android {
         applicationId 'com.tatarhost.cheatlab'
         minSdk 23
         targetSdk 35
-        versionCode 1
-        versionName '1.0.0'
+        def ciVersionCode = (System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
+        versionCode ciVersionCode
+        versionName "1.0.${ciVersionCode}"
     }
 
     compileOptions {
