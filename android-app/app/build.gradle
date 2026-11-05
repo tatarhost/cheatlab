@@ -29,3 +29,14 @@ android {
         }
     }
 }
+
+
+// Use the exact CHEATLAB logo already shipped with the website as the Android launcher icon.
+tasks.register('copyCheatlabLauncherIcon', Copy) {
+    from("$rootProject.projectDir/../public/assets/logo.png")
+    into("$projectDir/src/main/res/drawable-nodpi")
+    rename { "cheatlab_logo.png" }
+}
+tasks.named('preBuild').configure {
+    dependsOn('copyCheatlabLauncherIcon')
+}
