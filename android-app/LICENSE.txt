@@ -1,0 +1,16 @@
+CHEATLAB ANDROID CLIENT LICENSE
+
+Copyright (c) 2026 CHEATLAB / tatarhost. All rights reserved.
+
+Permission is granted to the end user to install and use an unmodified copy of
+this application for personal use.
+
+Without prior written permission from the copyright holder, the application
+and its source code may not be redistributed, relicensed, sold, or modified
+for distribution.
+
+This notice does not grant rights to CHEATLAB trademarks, the CHEATLAB website,
+user-uploaded content, or third-party software. Those materials remain subject
+to their respective terms and rights.
+
+This application is provided "as is", without warranties of any kind.
