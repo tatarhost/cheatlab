@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: cheatlab-android-apk
@@ -36,7 +36,19 @@ jobs:
       - name: Build debug APK
         run: gradle -p android-app --no-daemon :app:assembleDebug
 
-      - name: Upload APK
+      - name: Publish APK to website downloads
+        run: |
+          mkdir -p public/downloads
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk public/downloads/CHEATLAB.apk
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/downloads/CHEATLAB.apk
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish latest CHEATLAB Android APK"
+            git push
+          fi
+
+      - name: Upload APK build artifact
         uses: actions/upload-artifact@v4
         with:
           name: cheatlab-android-debug
