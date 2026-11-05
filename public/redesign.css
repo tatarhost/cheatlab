@@ -829,3 +829,29 @@ a:hover { text-decoration: none; }
     transform: none !important;
   }
 }
+
+
+/* Final mobile search positioning override: explicitly fixed to the viewport. */
+@media (max-width: 900px) {
+  body > header.topbar.mobile-fixed-search {
+    position: fixed !important;
+    display: flex !important;
+    top: calc(56px + env(safe-area-inset-top)) !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: auto !important;
+    z-index: 1200 !important;
+    width: 100% !important;
+    height: 58px !important;
+    min-height: 58px !important;
+    margin: 0 !important;
+    padding: 8px 16px !important;
+    box-sizing: border-box !important;
+    transform: translate3d(0, 0, 0) !important;
+    background: color-mix(in srgb, var(--paper) 96%, transparent) !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--line) !important;
+    backdrop-filter: blur(20px) saturate(1.25) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(1.25) !important;
+  }
+}
