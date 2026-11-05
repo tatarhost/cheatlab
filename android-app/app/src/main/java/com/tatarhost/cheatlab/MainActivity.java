@@ -41,6 +41,7 @@ public class MainActivity extends Activity {
     private static final int FILE_CHOOSER_REQUEST = 4101;
     private static final int MEDIA_PERMISSION_REQUEST = 4102;
     static final int INSTALL_PERMISSION_REQUEST = 4103;
+    private static final int APK_INSTALL_REQUEST = 4104;
     private android.content.BroadcastReceiver downloadCompleteReceiver;
 
     private WebView webView;
@@ -179,12 +180,13 @@ public class MainActivity extends Activity {
                             Toast.LENGTH_LONG).show();
                     return;
                 }
-                UpdateChecker.clearPendingDownload(MainActivity.this);
-                Intent install = new Intent(Intent.ACTION_VIEW);
-                install.setDataAndType(apkUri, "application/vnd.android.package-archive");
+                Intent install = new Intent(Intent.ACTION_INSTALL_PACKAGE);
+                install.setData(apkUri);
                 install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                try { startActivity(install); }
+                install.putExtra(Intent.EXTRA_RETURN_RESULT, true);
+                try { startActivityForResult(install, APK_INSTALL_REQUEST); }
                 catch (ActivityNotFoundException ex) {
+                    UpdateChecker.clearPendingDownload(MainActivity.this);
                     Toast.makeText(MainActivity.this, "Не найден установщик пакетов Android",
                             Toast.LENGTH_LONG).show();
                 }
@@ -366,6 +368,16 @@ public class MainActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == INSTALL_PERMISSION_REQUEST) {
             UpdateChecker.resumePendingInstall(this);
+            return;
+        }
+        if (requestCode == APK_INSTALL_REQUEST) {
+            long downloadId = UpdateChecker.getPendingDownloadId(this);
+            if (resultCode == RESULT_OK && downloadId >= 0) {
+                DownloadManager manager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+                if (manager != null) manager.remove(downloadId); // Remove the installer APK after a successful update.
+                Toast.makeText(this, "Обновление установлено. Файл APK удалён.", Toast.LENGTH_SHORT).show();
+            }
+            UpdateChecker.clearPendingDownload(this);
             return;
         }
         if (requestCode == FILE_CHOOSER_REQUEST && fileCallback != null) {
