@@ -63,9 +63,7 @@
     render();
   }
   function mount(){
-    if(!document.querySelector('[data-mobile-publish]')){
-      const publish=document.createElement('a');publish.href='./new';publish.className='cl-mobile-publish';publish.dataset.mobilePublish='1';publish.innerHTML='<svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span>Опубликовать</span>';publish.setAttribute('aria-label','Опубликовать');document.body.append(publish);
-    }
+    // Publish action is owned by index.html and stays outside the app layout.
     const nav=document.querySelector('.nav');if(!nav||nav.querySelector('[data-creators]'))return;
     const b=document.createElement('button');b.type='button';b.className='nav-link';b.dataset.creators='1';b.innerHTML='<svg class="i" aria-hidden="true"><use href="#i-box"/></svg>Создать';b.addEventListener('click',open);
     const after=nav.querySelector('[data-studio]');after?after.after(b):nav.append(b);
