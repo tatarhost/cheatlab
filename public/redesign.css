@@ -810,3 +810,22 @@ a:hover { text-decoration: none; }
   }
   .topbar .search { min-width: 0 !important; width: 100% !important; max-width: none !important; }
 }
+
+
+/* The mobile search bar is moved to body by app.js so transformed app shells
+   cannot turn position:fixed into a scrolling/offset element. */
+@media (max-width: 900px) {
+  body > .topbar.mobile-fixed-search {
+    position: fixed !important;
+    top: calc(var(--rail-h, 0px) + env(safe-area-inset-top)) !important;
+    left: 0 !important;
+    right: 0 !important;
+    z-index: 1200 !important;
+    width: 100vw !important;
+    height: 58px !important;
+    min-height: 58px !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+    transform: none !important;
+  }
+}
