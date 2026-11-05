@@ -5159,7 +5159,7 @@ async function viewDownloads() {
         h('strong', { text: 'Обновления' }),
         h('p', { text: 'Приложение может проверить наличие новой версии при запуске.' }),
       )),
-      h('article', { class: 'download-detail' }, icon('smartphone'), h('div', {},
+      h('article', { class: 'download-detail' }, icon('phone'), h('div', {},
         h('strong', { text: 'Установка' }),
         h('p', { text: 'Скачай APK и подтверди установку Android. Для обновления может потребоваться удалить старую тестовую сборку, если подпись отличается.' }),
       )),
