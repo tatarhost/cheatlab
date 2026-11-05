@@ -774,3 +774,14 @@ a:hover { text-decoration: none; }
 .download-footer a:hover{text-decoration:underline}
 .download-main-btn[aria-disabled="true"]{opacity:.55;pointer-events:none}
 @media(max-width:680px){.download-page{padding-top:4px}.download-hero{padding:26px 16px 24px;border-radius:21px}.download-details{grid-template-columns:1fr}.download-detail{padding:14px}.download-footer{flex-direction:column}}
+
+
+/* Android release checker */
+.download-actions{display:flex;justify-content:center;align-items:center;gap:10px;flex-wrap:wrap}
+.download-check-btn{min-height:48px;padding:0 18px;display:inline-flex;align-items:center;justify-content:center;gap:8px}
+.download-check-btn:disabled{opacity:.6;cursor:wait}
+.download-release{margin-top:14px;padding:18px 20px;border:1px solid var(--line);border-radius:17px;background:var(--paper);color:var(--ink)}
+.download-release[hidden]{display:none}
+.download-release strong{display:block;font-size:13px;margin-bottom:8px}
+.download-release p{margin:0;color:var(--mute);font-size:13px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:680px){.download-actions{display:grid;grid-template-columns:1fr;width:100%}.download-actions>*{width:100%}}
