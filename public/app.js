@@ -889,6 +889,29 @@ function markNav() {
   }
 }
 
+// Keep the mobile search bar fixed to the viewport, outside transformed app containers.
+const mobileSearchBar = document.querySelector('.topbar');
+if (mobileSearchBar) {
+  const searchHome = mobileSearchBar.parentNode;
+  const searchMarker = document.createComment('CHEATLAB search bar position');
+  searchHome.insertBefore(searchMarker, mobileSearchBar);
+  const mobileSearchQuery = window.matchMedia('(max-width: 900px)');
+  const placeSearchBar = () => {
+    if (mobileSearchQuery.matches) {
+      if (mobileSearchBar.parentNode !== document.body) document.body.appendChild(mobileSearchBar);
+      mobileSearchBar.classList.add('mobile-fixed-search');
+    } else {
+      mobileSearchBar.classList.remove('mobile-fixed-search');
+      if (searchMarker.parentNode && mobileSearchBar.parentNode !== searchHome) {
+        searchHome.insertBefore(mobileSearchBar, searchMarker.nextSibling);
+      }
+    }
+  };
+  placeSearchBar();
+  if (mobileSearchQuery.addEventListener) mobileSearchQuery.addEventListener('change', placeSearchBar);
+  else mobileSearchQuery.addListener(placeSearchBar);
+}
+
 const searchInput = document.getElementById('searchInput');
 document.getElementById('searchForm').addEventListener('submit', (e) => {
   e.preventDefault();
