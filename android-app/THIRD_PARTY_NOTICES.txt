@@ -1,0 +1,10 @@
+CHEATLAB Android — Third-party notices
+
+The Android application source does not bundle third-party Android runtime
+libraries. It uses Android platform APIs and the Android System WebView
+installed on the user's device. The WebView implementation and its components
+are supplied by the device platform/provider and remain subject to their own
+licenses and notices.
+
+The Android Gradle Plugin and Gradle are build-time tools only; they are not
+packaged into the installed application.
