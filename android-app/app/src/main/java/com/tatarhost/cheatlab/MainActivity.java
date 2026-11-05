@@ -60,27 +60,7 @@ public class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.rgb(10, 10, 10));
 
-        LinearLayout toolbar = new LinearLayout(this);
-        toolbar.setGravity(Gravity.CENTER_VERTICAL);
-        toolbar.setPadding(dp(18), 0, dp(10), 0);
-        toolbar.setBackgroundColor(Color.rgb(10, 10, 10));
-        TextView brand = new TextView(this);
-        brand.setText("CHEATLAB");
-        brand.setTextColor(Color.WHITE);
-        brand.setTextSize(17);
-        brand.setTypeface(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD);
-        toolbar.addView(brand, new LinearLayout.LayoutParams(0, dp(54), 1));
-
-        Button menu = new Button(this);
-        menu.setText("⋯");
-        menu.setTextSize(23);
-        menu.setTextColor(Color.WHITE);
-        menu.setBackgroundColor(Color.TRANSPARENT);
-        menu.setMinWidth(dp(48));
-        menu.setOnClickListener(v -> showMenu(menu));
-        toolbar.addView(menu, new LinearLayout.LayoutParams(dp(52), dp(50)));
-        root.addView(toolbar, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
+        // Full-screen web client: remove the extra native title/toolbar row.
 
         webView = new WebView(this);
         webView.setBackgroundColor(Color.rgb(10, 10, 10));
