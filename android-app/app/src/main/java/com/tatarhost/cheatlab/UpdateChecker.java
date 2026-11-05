@@ -3,8 +3,11 @@ package com.tatarhost.cheatlab;
 import android.app.Activity;
 import android.app.DownloadManager;
 import android.content.Context;
+import android.content.Intent;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Environment;
+import android.provider.Settings;
 import android.widget.Toast;
 import android.app.AlertDialog;
 
@@ -20,6 +23,10 @@ import java.net.URL;
 final class UpdateChecker {
     private static final String RELEASE_API =
             "https://api.github.com/repos/tatarhost/cheatlab/releases/latest";
+    private static final String PREFS = "cheatlab_updater";
+    private static final String PENDING_URL = "pending_url";
+    private static final String PENDING_TAG = "pending_tag";
+    private static final String DOWNLOAD_ID = "download_id";
 
     private UpdateChecker() {}
 
@@ -51,11 +58,8 @@ final class UpdateChecker {
                 try {
                     android.content.pm.PackageInfo info =
                             activity.getPackageManager().getPackageInfo(activity.getPackageName(), 0);
-                    if (android.os.Build.VERSION.SDK_INT >= 28) {
-                        localVersion = (int) info.getLongVersionCode();
-                    } else {
-                        localVersion = info.versionCode;
-                    }
+                    localVersion = Build.VERSION.SDK_INT >= 28
+                            ? (int) info.getLongVersionCode() : info.versionCode;
                 } catch (Exception e) {
                     localVersion = 1;
                 }
@@ -65,7 +69,9 @@ final class UpdateChecker {
                 if (assets != null) {
                     for (int i = 0; i < assets.length(); i++) {
                         JSONObject asset = assets.optJSONObject(i);
-                        if (asset != null && asset.optString("name").toLowerCase(java.util.Locale.ROOT).endsWith(".apk") && !asset.optString("name").toLowerCase(java.util.Locale.ROOT).contains("unaligned")) {
+                        if (asset != null &&
+                                asset.optString("name").toLowerCase(java.util.Locale.ROOT).endsWith(".apk") &&
+                                !asset.optString("name").toLowerCase(java.util.Locale.ROOT).contains("unaligned")) {
                             apkUrl = asset.optString("browser_download_url", null);
                             break;
                         }
@@ -80,8 +86,8 @@ final class UpdateChecker {
                         new AlertDialog.Builder(activity)
                                 .setTitle("Доступно обновление CHEATLAB")
                                 .setMessage("Найдена версия " + releaseTag +
-                                        ". Скачать APK из официального GitHub-релиза?")
-                                .setPositiveButton("Скачать", (dialog, which) ->
+                                        ". Разрешить установку обновлений из CHEATLAB и установить её?")
+                                .setPositiveButton("Продолжить", (dialog, which) ->
                                         download(activity, downloadUrl, releaseTag))
                                 .setNegativeButton("Позже", null)
                                 .show();
@@ -102,40 +108,80 @@ final class UpdateChecker {
         }, "cheatlab-update-check").start();
     }
 
-    private static int trailingVersion(String tag) {
-        int dot = tag.lastIndexOf('.');
-        if (dot < 0 || dot == tag.length() - 1) return 0;
-        try {
-            return Integer.parseInt(tag.substring(dot + 1));
-        } catch (NumberFormatException ignored) {
-            return 0;
+    static void resumePendingInstall(Activity activity) {
+        android.content.SharedPreferences prefs = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String url = prefs.getString(PENDING_URL, null);
+        String tag = prefs.getString(PENDING_TAG, "latest");
+        if (url == null) return;
+        if (Build.VERSION.SDK_INT >= 26 && !activity.getPackageManager().canRequestPackageInstalls()) {
+            Toast.makeText(activity, "Разрешение не выдано. Установку можно повторить позже в обновлениях.",
+                    Toast.LENGTH_LONG).show();
+            return;
         }
+        prefs.edit().remove(PENDING_URL).remove(PENDING_TAG).apply();
+        enqueueDownload(activity, url, tag);
     }
 
-    private static void download(Context context, String url, String tag) {
+    private static void download(Activity activity, String url, String tag) {
         Uri uri = Uri.parse(url);
         String host = uri.getHost();
         if (!"https".equals(uri.getScheme()) || host == null ||
                 !(host.equalsIgnoreCase("github.com") ||
                   host.equalsIgnoreCase("objects.githubusercontent.com") ||
                   host.equalsIgnoreCase("release-assets.githubusercontent.com"))) {
-            Toast.makeText(context, "GitHub вернул недопустимую ссылку", Toast.LENGTH_LONG).show();
+            Toast.makeText(activity, "GitHub вернул недопустимую ссылку", Toast.LENGTH_LONG).show();
             return;
         }
-        DownloadManager manager = (DownloadManager) context.getSystemService(Context.DOWNLOAD_SERVICE);
-        if (manager == null) {
-            Toast.makeText(context, "Загрузчик Android недоступен", Toast.LENGTH_LONG).show();
+        if (Build.VERSION.SDK_INT >= 26 && !activity.getPackageManager().canRequestPackageInstalls()) {
+            activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                    .putString(PENDING_URL, url).putString(PENDING_TAG, tag).apply();
+            try {
+                Intent settings = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:" + activity.getPackageName()));
+                activity.startActivityForResult(settings, MainActivity.INSTALL_PERMISSION_REQUEST);
+            } catch (Exception e) {
+                Toast.makeText(activity, "Откройте настройки «Установка неизвестных приложений» для CHEATLAB.",
+                        Toast.LENGTH_LONG).show();
+            }
             return;
         }
-        DownloadManager.Request request = new DownloadManager.Request(uri);
-        request.setTitle("Обновление CHEATLAB " + tag);
-        request.setDescription("Загрузка APK из официального GitHub-релиза");
-        request.setMimeType("application/vnd.android.package-archive");
-        request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-        request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS,
-                "CHEATLAB-" + tag.replaceAll("[^A-Za-z0-9._-]", "") + ".apk");
-        manager.enqueue(request);
-        Toast.makeText(context, "Загрузка началась. APK появится в папке «Загрузки».",
-                Toast.LENGTH_LONG).show();
+        enqueueDownload(activity, url, tag);
+    }
+
+    private static void enqueueDownload(Context context, String url, String tag) {
+        try {
+            DownloadManager manager = (DownloadManager) context.getSystemService(Context.DOWNLOAD_SERVICE);
+            if (manager == null) throw new IllegalStateException("DownloadManager unavailable");
+            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+            request.setTitle("CHEATLAB " + tag);
+            request.setDescription("Загрузка обновления из официального GitHub-релиза");
+            request.setMimeType("application/vnd.android.package-archive");
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS,
+                    "CHEATLAB-" + tag.replaceAll("[^A-Za-z0-9._-]", "") + ".apk");
+            long id = manager.enqueue(request);
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                    .putLong(DOWNLOAD_ID, id).apply();
+            Toast.makeText(context, "APK загружается. После загрузки откроется установка.",
+                    Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            Toast.makeText(context, "Не удалось начать загрузку обновления",
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    static long getPendingDownloadId(Context context) {
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong(DOWNLOAD_ID, -1L);
+    }
+
+    static void clearPendingDownload(Context context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(DOWNLOAD_ID).apply();
+    }
+
+    private static int trailingVersion(String tag) {
+        int dot = tag.lastIndexOf('.');
+        if (dot < 0 || dot == tag.length() - 1) return 0;
+        try { return Integer.parseInt(tag.substring(dot + 1)); }
+        catch (NumberFormatException ignored) { return 0; }
     }
 }
