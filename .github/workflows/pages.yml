@@ -16,7 +16,7 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -39,7 +39,11 @@ jobs:
       # from either file.
 
       - name: Check application JavaScript syntax
-        run: node --check public/app.js
+        run: |
+          for file in public/*.js; do
+            echo "Checking $file"
+            node --check "$file"
+          done
 
       # A unique artifact name per attempt prevents stale artifacts from a
       # previous rerun being selected alongside the current Pages artifact.
