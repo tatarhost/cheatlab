@@ -5133,6 +5133,70 @@ async function viewKey(url) {
   }
 }
 
+// ---------------------------------------------------------------- app downloads
+
+async function viewDownloads() {
+  const card = h('section', { class: 'download-page' },
+    h('div', { class: 'download-hero' },
+      h('div', { class: 'download-kicker', text: 'CHEATLAB · ANDROID' }),
+      h('div', { class: 'download-app-icon' }, h('img', { src: 'assets/logo.png', alt: 'CHEATLAB' })),
+      h('h1', { text: 'CHEATLAB для Android' }),
+      h('p', { class: 'download-lead', text: 'Твой CHEATLAB всегда под рукой. Установи приложение и открывай сайт в удобном мобильном формате.' }),
+      h('div', { class: 'download-meta' },
+        h('span', { id: 'downloadVersion', text: 'Последняя версия' }),
+        h('span', { text: 'Android · APK' }),
+      ),
+      h('a', { class: 'btn btn-primary download-main-btn', href: 'https://github.com/tatarhost/cheatlab/releases/latest/download/app-debug.apk' },
+        icon('download'), ' Скачать APK'),
+      h('p', { class: 'download-status', id: 'downloadStatus', text: 'Проверяем последнюю версию…' }),
+    ),
+    h('div', { class: 'download-details' },
+      h('article', { class: 'download-detail' }, icon('shield'), h('div', {},
+        h('strong', { text: 'Безопасная загрузка' }),
+        h('p', { text: 'Файл публикуется в официальном GitHub-релизе CHEATLAB.' }),
+      )),
+      h('article', { class: 'download-detail' }, icon('refresh-cw'), h('div', {},
+        h('strong', { text: 'Обновления' }),
+        h('p', { text: 'Приложение может проверить наличие новой версии при запуске.' }),
+      )),
+      h('article', { class: 'download-detail' }, icon('smartphone'), h('div', {},
+        h('strong', { text: 'Установка' }),
+        h('p', { text: 'Скачай APK и подтверди установку Android. Для обновления может потребоваться удалить старую тестовую сборку, если подпись отличается.' }),
+      )),
+    ),
+    h('div', { class: 'download-footer' },
+      h('a', { href: 'https://github.com/tatarhost/cheatlab/releases', target: '_blank', rel: 'noopener noreferrer' }, 'Все версии и история изменений'),
+      h('span', { text: 'Официальная страница загрузки CHEATLAB' }),
+    ),
+  );
+  $view.replaceChildren(card);
+  try {
+    const response = await fetch('https://api.github.com/repos/tatarhost/cheatlab/releases/latest', {
+      headers: { Accept: 'application/vnd.github+json' },
+      cache: 'no-store',
+    });
+    if (!response.ok) throw new Error('Релиз пока не опубликован');
+    const release = await response.json();
+    const asset = (release.assets || []).find((item) => item.name === 'app-debug.apk');
+    const version = release.tag_name || 'Последняя версия';
+    const versionNode = document.getElementById('downloadVersion');
+    const statusNode = document.getElementById('downloadStatus');
+    const button = card.querySelector('.download-main-btn');
+    if (versionNode) versionNode.textContent = version;
+    if (asset && button) {
+      button.href = asset.browser_download_url;
+      if (statusNode) statusNode.textContent = 'Готово к загрузке · ' + (asset.size ? (asset.size / 1048576).toFixed(1) + ' МБ' : 'APK');
+    } else if (statusNode) {
+      statusNode.textContent = 'Релиз найден, но APK ещё не прикреплён. Попробуй позже.';
+      button.setAttribute('aria-disabled', 'true');
+      button.addEventListener('click', (event) => event.preventDefault(), { once: true });
+    }
+  } catch (error) {
+    const statusNode = document.getElementById('downloadStatus');
+    if (statusNode) statusNode.textContent = 'Не удалось получить сведения о версии. Кнопка ведёт на страницу последней загрузки.';
+  }
+}
+
 // ---------------------------------------------------------------- router
 
 let renderToken = 0;
@@ -5151,7 +5215,7 @@ async function route() {
       await viewFeed(path, url);
     } else if (GAME_PAGE.test(path)) {
       await viewGame(path.slice('/games/'.length));
-    } else if (path === '/new') {
+    } else if (path === '/downloads') {\n      await viewDownloads();\n    } else if (path === '/new') {
       await viewNew(url);
     } else if (path === '/me') {
       await viewMe();
