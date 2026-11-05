@@ -39,6 +39,8 @@ public class MainActivity extends Activity {
     private static final String HOME = "https://cheatlab.fun/";
     private static final int FILE_CHOOSER_REQUEST = 4101;
     private static final int MEDIA_PERMISSION_REQUEST = 4102;
+    static final int INSTALL_PERMISSION_REQUEST = 4103;
+    private android.content.BroadcastReceiver downloadCompleteReceiver;
 
     private WebView webView;
     private ValueCallback<Uri[]> fileCallback;
@@ -163,6 +165,37 @@ public class MainActivity extends Activity {
         root.addView(webView, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         setContentView(root);
+        downloadCompleteReceiver = new android.content.BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) {
+                if (!DownloadManager.ACTION_DOWNLOAD_COMPLETE.equals(intent.getAction())) return;
+                long completedId = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L);
+                if (completedId != UpdateChecker.getPendingDownloadId(MainActivity.this)) return;
+                DownloadManager manager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+                Uri apkUri = manager == null ? null : manager.getUriForDownloadedFile(completedId);
+                if (apkUri == null) {
+                    UpdateChecker.clearPendingDownload(MainActivity.this);
+                    Toast.makeText(MainActivity.this, "Загрузка APK не удалась. Проверьте уведомление загрузок.",
+                            Toast.LENGTH_LONG).show();
+                    return;
+                }
+                UpdateChecker.clearPendingDownload(MainActivity.this);
+                Intent install = new Intent(Intent.ACTION_VIEW);
+                install.setDataAndType(apkUri, "application/vnd.android.package-archive");
+                install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                try { startActivity(install); }
+                catch (ActivityNotFoundException ex) {
+                    Toast.makeText(MainActivity.this, "Не найден установщик пакетов Android",
+                            Toast.LENGTH_LONG).show();
+                }
+            }
+        };
+        android.content.IntentFilter downloadFilter =
+                new android.content.IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(downloadCompleteReceiver, downloadFilter, Context.RECEIVER_EXPORTED);
+        } else {
+            registerReceiver(downloadCompleteReceiver, downloadFilter);
+        }
         UpdateChecker.check(this, false);
 
         if (savedInstanceState == null) {
@@ -330,6 +363,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == INSTALL_PERMISSION_REQUEST) {
+            UpdateChecker.resumePendingInstall(this);
+            return;
+        }
         if (requestCode == FILE_CHOOSER_REQUEST && fileCallback != null) {
             Uri[] result = null;
             if (resultCode == RESULT_OK && data != null) {
@@ -360,6 +397,10 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (downloadCompleteReceiver != null) {
+            try { unregisterReceiver(downloadCompleteReceiver); } catch (IllegalArgumentException ignored) {}
+            downloadCompleteReceiver = null;
+        }
         if (fileCallback != null) fileCallback.onReceiveValue(null);
         if (pendingPermissionRequest != null) pendingPermissionRequest.deny();
         if (webView != null) {
