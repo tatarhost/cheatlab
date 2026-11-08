@@ -5327,9 +5327,9 @@ async function route() {
 
 const THEME_KEY = 'cheatlab.theme';
 
-/** Dark is the default; the choice is remembered per browser. */
+/** Classic black-and-white is the default; the choice is remembered per browser. */
 function currentTheme() {
-  return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'aero';
+  return document.documentElement.dataset.theme === 'aero' ? 'aero' : 'dark';
 }
 
 function applyTheme(next) {
