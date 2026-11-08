@@ -44,7 +44,7 @@ document.write('<base href="' +
      browsers otherwise, and every deploy since can leave old code doing the
      work. Bump the query when the site (not the Worker) changes. -->
 <link rel="stylesheet" href="style.css?v=14">
-<link rel="stylesheet" href="redesign.css?v=23">
+<link rel="stylesheet" href="redesign.css?v=24">
 <script src="humancheck.js?v=3"></script>
 
 <!-- Applied before first paint: without this the page flashes white before
@@ -52,12 +52,10 @@ document.write('<base href="' +
 <script>
   try {
     var t = localStorage.getItem('cheatlab.theme');
-    if (!t) t = 'dark';
+    if (t !== 'dark' && t !== 'aero') t = 'aero';
     document.documentElement.dataset.theme = t;
-    if (t === 'light' || t === 'aero') {
-      var m = document.querySelector('meta[name="theme-color"]');
-      if (m) m.setAttribute('content', t === 'aero' ? '#b9edff' : '#ffffff');
-    }
+    var m = document.querySelector('meta[name="theme-color"]');
+    if (m) m.setAttribute('content', t === 'aero' ? '#b9edff' : '#071522');
   } catch (e) {}
 </script>
 </head>
@@ -177,8 +175,8 @@ document.write('<base href="' +
 
     <div class="rail-foot">
       <button class="rail-stat theme-toggle" id="themeToggle" type="button" aria-label="Сменить тему">
-        <svg class="i" aria-hidden="true"><use href="#i-moon" id="themeIcon"/></svg>
-        <span id="themeLabel">Светлая тема</span>
+        <svg class="i" aria-hidden="true"><use href="#i-sun" id="themeIcon"/></svg>
+        <span id="themeLabel">Тёмная тема</span>
       </button>
       <p class="rail-note" id="railNote">Анонимно доступна одна публикация в сутки. С аккаунтом — четыре, без проверки.</p>
       <a class="rail-stat" href="./stats"><span id="statItems">0</span> публикаций</a>
