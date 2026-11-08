@@ -542,6 +542,8 @@ export class Store {
       videos: byType.video || 0,
       documents: byType.file || 0,
       files: await one('SELECT COUNT(*) AS n FROM files'),
+      // Total completed file-download requests accumulated by the existing per-file counter.
+      downloads: await one('SELECT COALESCE(SUM(downloads), 0) AS n FROM files'),
       bytes: await one('SELECT COALESCE(SUM(size), 0) AS n FROM files'),
       clients: await one('SELECT COUNT(*) AS n FROM clients'),
       users: await one('SELECT COUNT(*) AS n FROM user'),
