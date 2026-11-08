@@ -1362,3 +1362,93 @@ a:hover { text-decoration: none; }
     transition: none !important;
   }
 }
+
+/* ====================== Animated icon system ====================== */
+/* Motion stays monochrome and interaction-led: no decorative icon loops. */
+@keyframes cl-icon-pop {
+  0% { transform: scale(.78) rotate(-9deg); }
+  58% { transform: scale(1.16) rotate(4deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+@keyframes cl-icon-wiggle {
+  0%,100% { transform: rotate(0) translateY(0); }
+  25% { transform: rotate(-9deg) translateY(-1px); }
+  55% { transform: rotate(7deg) translateY(-1px); }
+  78% { transform: rotate(-3deg); }
+}
+@keyframes cl-icon-float {
+  0%,100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+@keyframes cl-icon-pulse {
+  0%,100% { transform: scale(1); }
+  50% { transform: scale(1.12); }
+}
+@keyframes cl-icon-send {
+  0% { transform: translate(0,0) rotate(0); }
+  45% { transform: translate(3px,-3px) rotate(7deg); }
+  100% { transform: translate(0,0) rotate(0); }
+}
+.i {
+  transform-origin:50% 50%;
+  transform-box:fill-box;
+  will-change:transform;
+}
+.nav-link .i,
+.btn .i,
+.icon-btn .i,
+.tab .i,
+.mail-folder .i,
+.chat-head-actions .i {
+  backface-visibility:hidden;
+}
+.nav-link:hover .i,
+.nav-link:focus-visible .i,
+.btn:hover .i,
+.btn:focus-visible .i,
+.icon-btn:hover .i,
+.icon-btn:focus-visible .i,
+.tab:hover .i,
+.mail-folder:hover .i,
+.chat-head-actions .btn:hover .i {
+  animation:cl-icon-pop .42s cubic-bezier(.2,.8,.2,1) both;
+}
+.nav-link[aria-current="page"] .i {
+  filter:drop-shadow(0 0 5px color-mix(in srgb,var(--ink) 24%,transparent));
+}
+.nav-link[aria-current="page"]:hover .i { animation:cl-icon-float .72s ease-in-out; }
+.drop:hover > .i,
+.drop:focus-within > .i { animation:cl-icon-float .8s ease-in-out infinite; }
+.btn:hover .i use[href="#i-refresh"],
+.icon-btn:hover .i use[href="#i-refresh"] { animation:cl-icon-wiggle .55s ease; }
+.btn:hover .i use[href="#i-bell"],
+.icon-btn:hover .i use[href="#i-bell"] { animation:cl-icon-wiggle .65s ease; }
+.btn:hover .i use[href="#i-send"],
+.icon-btn:hover .i use[href="#i-send"] { animation:cl-icon-send .48s ease; }
+.toast:not([hidden]) .i { animation:cl-icon-pop .48s cubic-bezier(.2,.8,.2,1) both; }
+.btn:active:not(:disabled) .i,
+.icon-btn:active .i { transform:scale(.88); }
+.mobile-floating-nav .nav-link:active .i { transform:scale(.86); }
+.i.spin,
+.spin { animation:spin 1s linear infinite !important; }
+
+/* Keep all motion comfortable and preserve the user's reduced-motion setting. */
+@media (prefers-reduced-motion:reduce) {
+  .i,
+  .nav-link:hover .i,
+  .nav-link:focus-visible .i,
+  .btn:hover .i,
+  .btn:focus-visible .i,
+  .icon-btn:hover .i,
+  .icon-btn:focus-visible .i,
+  .tab:hover .i,
+  .mail-folder:hover .i,
+  .drop:hover > .i,
+  .drop:focus-within > .i,
+  .toast:not([hidden]) .i {
+    animation:none !important;
+    transition:none !important;
+    transform:none !important;
+    will-change:auto;
+  }
+}
