@@ -1141,3 +1141,63 @@ a:hover { text-decoration: none; }
   :root[data-theme="aero"] .rail { background:transparent; border:0; box-shadow:none; backdrop-filter:none; }
   :root[data-theme="aero"] body > .nav.mobile-floating-nav { background:linear-gradient(130deg,rgba(255,255,255,.93),rgba(185,239,252,.8)) !important; }
 }
+
+
+/* Final Frutiger Aero pass: keep the ocean photograph and glass treatment
+   above the older redesign rules so no later legacy block can flatten it. */
+:root[data-theme="aero"] body {
+  color: #073b59 !important;
+  background-color: #bdefff !important;
+  background-image:
+    linear-gradient(180deg,rgba(194,242,255,.24),rgba(210,255,239,.28)),
+    url("https://images.unsplash.com/photo-1500375592092-40eb2168fd21?auto=format&fit=crop&w=2200&q=85") !important;
+  background-size: cover !important;
+  background-position: center top !important;
+  background-attachment: fixed !important;
+  background-repeat: no-repeat !important;
+}
+:root[data-theme="aero"] .app,
+:root[data-theme="aero"] main,
+:root[data-theme="aero"] .view { background: transparent !important; }
+:root[data-theme="aero"] .rail,
+:root[data-theme="aero"] .topbar,
+:root[data-theme="aero"] body > header.topbar.mobile-fixed-search,
+:root[data-theme="aero"] .panel,
+:root[data-theme="aero"] .row,
+:root[data-theme="aero"] .notice,
+:root[data-theme="aero"] .chat-wrap,
+:root[data-theme="aero"] .mail-side,
+:root[data-theme="aero"] .mail-main,
+:root[data-theme="aero"] .modal-backdrop .auth-card,
+:root[data-theme="aero"] .st-card {
+  color: #073b59 !important;
+  background: linear-gradient(145deg,rgba(255,255,255,.86),rgba(190,239,255,.62) 58%,rgba(207,255,238,.68)) !important;
+  border: 1px solid rgba(255,255,255,.94) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.98), inset 0 -1px 0 rgba(54,154,188,.12), 0 16px 42px rgba(12,105,146,.18) !important;
+  backdrop-filter: blur(26px) saturate(1.65) !important;
+  -webkit-backdrop-filter: blur(26px) saturate(1.65) !important;
+}
+:root[data-theme="aero"] .btn-primary,
+:root[data-theme="aero"] .chat-send {
+  color: #fff !important;
+  background: linear-gradient(180deg,#53c9f0,#0786bd) !important;
+  border: 1px solid rgba(255,255,255,.9) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.85),0 5px 14px rgba(0,112,164,.24) !important;
+}
+:root[data-theme="aero"] .input,
+:root[data-theme="aero"] .select,
+:root[data-theme="aero"] .textarea,
+:root[data-theme="aero"] .chat-input,
+:root[data-theme="aero"] .chat-kind {
+  color: #073b59 !important;
+  background: rgba(255,255,255,.72) !important;
+  border: 1px solid rgba(55,151,185,.32) !important;
+  box-shadow: inset 0 2px 5px rgba(30,112,143,.08),0 1px 0 #fff !important;
+}
+:root[data-theme="aero"] .brand img,
+:root[data-theme="aero"] .download-app-icon img {
+  background: #030609 !important;
+  border-radius: 12px !important;
+  padding: 4px !important;
+  box-shadow: 0 4px 16px rgba(0,65,100,.2) !important;
+}
