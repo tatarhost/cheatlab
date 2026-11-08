@@ -44,7 +44,7 @@ document.write('<base href="' +
      browsers otherwise, and every deploy since can leave old code doing the
      work. Bump the query when the site (not the Worker) changes. -->
 <link rel="stylesheet" href="style.css?v=17">
-<link rel="stylesheet" href="redesign.css?v=27">
+<link rel="stylesheet" href="redesign.css?v=28">
 <script src="humancheck.js?v=3"></script>
 
 <!-- Applied before first paint: without this the page flashes white before
@@ -67,9 +67,29 @@ document.write('<base href="' +
 </head>
 <body>
 <video id="siteVideoBackground" class="site-video-background" autoplay muted loop playsinline webkit-playsinline preload="metadata" aria-hidden="true">
-  <source src="https://raw.githubusercontent.com/tatarhost/cheatlab/main/mb.mp4" type="video/mp4" media="(max-width: 900px)">
-  <source src="https://raw.githubusercontent.com/tatarhost/cheatlab/main/pc.mp4" type="video/mp4">
+  <source id="siteVideoSource" src="https://raw.githubusercontent.com/tatarhost/cheatlab/main/pc.mp4" type="video/mp4">
 </video>
+<script>
+  (() => {
+    const video = document.getElementById('siteVideoBackground');
+    const source = document.getElementById('siteVideoSource');
+    if (!video || !source) return;
+    const mobile = window.matchMedia('(max-width: 900px)');
+    const setVideo = () => {
+      const url = mobile.matches
+        ? 'https://raw.githubusercontent.com/tatarhost/cheatlab/main/mb.mp4'
+        : 'https://raw.githubusercontent.com/tatarhost/cheatlab/main/pc.mp4';
+      if (source.getAttribute('src') !== url) {
+        source.setAttribute('src', url);
+        video.load();
+      }
+      video.play().catch(() => {});
+    };
+    setVideo();
+    if (mobile.addEventListener) mobile.addEventListener('change', setVideo);
+    else mobile.addListener(setVideo);
+  })();
+</script>
 
 <svg class="sprite" aria-hidden="true" focusable="false">
   <symbol id="i-code" viewBox="0 0 24 24"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></symbol>
