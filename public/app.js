@@ -4424,7 +4424,16 @@ async function viewMail(url) {
     }
     let data;
     try { data = await api('/api/mail/messages?mailbox=' + encodeURIComponent(activeBox.id) + '&folder=' + folder); }
-    catch (e) { main.replaceChildren(h('div', { class: 'notice' }, e.message)); return; }
+    catch (e) {
+      const detail = h('p', { class: 'hint', text: e.message || 'Сервер временно недоступен. Попробуйте ещё раз.' });
+      const retry = h('button', { class: 'btn btn-ghost', type: 'button', onclick: paintMessages }, 'Повторить');
+      main.replaceChildren(
+        h('div', { class: 'notice mail-load-error' },
+          icon('alert','i i-sm'),
+          h('div', {}, h('strong', { text: 'Не удалось загрузить письма' }), detail, retry)),
+      );
+      return;
+    }
     const messages = data.messages || [];
     const visible = messages.filter(msg => [msg.fromAddress,msg.toAddress,msg.subject,msg.textBody].join(' ').toLowerCase().includes(query.toLowerCase()));
     const search = h('input', { class: 'input mail-search', type: 'search', placeholder: 'Поиск по письмам…', value: query,
@@ -4436,9 +4445,9 @@ async function viewMail(url) {
         h('button', { class: 'btn btn-ghost', type: 'button', title: 'Обновить', onclick: paintMessages }, icon('refresh-cw','i i-sm')),
         h('button', { class: 'btn btn-primary', type: 'button', onclick: compose }, icon('edit','i i-sm'), 'Написать')));
     const status = activeBox.status === 'active'
-      ? h('div', { class: 'mail-server-ok' }, icon('check','i i-sm'), 'Почтовый сервер отвечает')
+      ? h('div', { class: 'mail-server-ok' }, icon('check','i i-sm'), 'Адрес активен')
       : h('div', { class: 'mail-server-pending' }, icon('info','i i-sm'),
-          'Адрес создан. Первое входящее письмо активирует ящик; доставка зависит от DNS и Resend.');
+          'Адрес ожидает подтверждения. Он станет активным после успешной отправки или получения письма.');
     main.replaceChildren(toolbar, status, search, h('div', { class: 'mail-list', dataset: { mailList: '1' } }));
     paintList(visible, messages);
     function paintList(filtered, all) {
@@ -4521,13 +4530,27 @@ async function viewMail(url) {
     const projectStatus = h('span', { class: 'hint', text: '' });
     const error = h('p', { class: 'form-error' });
     let selectedFiles = [];
+    const previewUrls = new Set();
+    const clearPreviewUrls = () => {
+      for (const url of previewUrls) URL.revokeObjectURL(url);
+      previewUrls.clear();
+    };
     const renderFiles = () => {
-      attachmentList.replaceChildren(...selectedFiles.map((file, i) => h('div', { class: 'mail-attachment-chip' },
-        file.type.startsWith('image/') ? h('img', { src: URL.createObjectURL(file), alt: '', class: 'mail-attachment-thumb' }) : icon('file','i i-sm'),
-        h('span', { text: file.name + ' · ' + bytes(file.size) }),
-        h('button', { type: 'button', class: 'mail-attachment-remove', title: 'Убрать файл', onclick: () => {
-          selectedFiles.splice(i,1); renderFiles();
-        } }, '×'))));
+      clearPreviewUrls();
+      attachmentList.replaceChildren(...selectedFiles.map((file, i) => {
+        let preview = icon('file','i i-sm');
+        if (file.type.startsWith('image/')) {
+          const url = URL.createObjectURL(file);
+          previewUrls.add(url);
+          preview = h('img', { src: url, alt: '', class: 'mail-attachment-thumb' });
+        }
+        return h('div', { class: 'mail-attachment-chip' },
+          preview,
+          h('span', { text: file.name + ' · ' + bytes(file.size) }),
+          h('button', { type: 'button', class: 'mail-attachment-remove', title: 'Убрать файл', onclick: () => {
+            selectedFiles.splice(i,1); renderFiles();
+          } }, '×'));
+      }));
     };
     picker.addEventListener('change', () => {
       const incoming = [...(picker.files || [])];
@@ -4565,7 +4588,7 @@ async function viewMail(url) {
     };
     main.replaceChildren(
       h('div', { class: 'mail-toolbar' }, h('h2', { text: replyTo ? 'Ответить' : 'Новое письмо' }),
-        h('button', { class: 'btn btn-ghost', type: 'button', onclick: paintMessages }, 'Отмена')),
+        h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => { clearPreviewUrls(); paintMessages(); } }, 'Отмена')),
       h('form', { class: 'panel mail-compose', onsubmit: async e => {
         e.preventDefault();
         const submit = e.submitter;
@@ -4581,7 +4604,7 @@ async function viewMail(url) {
             mailboxId: activeBox.id, to: to.value, subject: subject.value,
             textBody: text.value, attachments,
           } });
-          toast('Письмо принято почтовым провайдером'); folder = 'sent'; query = ''; await paintMessages();
+          toast('Письмо принято почтовым провайдером'); clearPreviewUrls(); folder = 'sent'; query = ''; await paintMessages();
         } catch (err) { error.textContent = err.message; if (submit) submit.disabled = false; }
       } },
       field('Кому', to), field('Тема', subject), field('Сообщение', text),
@@ -4598,7 +4621,28 @@ async function viewMail(url) {
     await loadProjects();
     to.focus();
   }
-  await refresh();
+  try {
+    await refresh();
+  } catch (err) {
+    const detail = h('p', { class: 'hint', text: err.message || 'Сервер временно недоступен. Проверьте подключение и попробуйте снова.' });
+    const retry = h('button', { class: 'btn btn-ghost', type: 'button', onclick: async () => {
+      retry.disabled = true;
+      try {
+        await refresh();
+        activeBox = boxes[0] || null;
+        renderSide();
+        await paintMessages();
+      } catch (nextError) {
+        detail.textContent = nextError.message || 'Сервер временно недоступен. Попробуйте снова.';
+      } finally {
+        retry.disabled = false;
+      }
+    } }, 'Повторить');
+    main.replaceChildren(h('div', { class: 'notice mail-load-error' },
+      icon('alert','i i-sm'),
+      h('div', {}, h('strong', { text: 'Не удалось загрузить почтовые адреса' }), detail, retry)));
+    return;
+  }
   activeBox = boxes[0] || null;
   renderSide();
   await paintMessages();
@@ -5367,16 +5411,39 @@ function initTheme() {
   const rail = document.querySelector('.rail');
   if (!nav || !rail) return;
   const account = rail.querySelector('.rail-account');
+  const hint = nav.querySelector('.nav-scroll-hint');
   const mobile = window.matchMedia('(max-width: 900px)');
+
+  // Keep the scroll cue honest: it points towards the remaining navigation,
+  // disappears when everything fits, and reverses once the user reaches the end.
+  const updateHint = () => {
+    if (!hint) return;
+    const canScroll = mobile.matches && nav.scrollWidth > nav.clientWidth + 6;
+    const atEnd = nav.scrollLeft + nav.clientWidth >= nav.scrollWidth - 6;
+    hint.classList.toggle('is-hidden', !canScroll);
+    hint.textContent = atEnd ? '‹' : '›';
+  };
+
   const place = () => {
     if (mobile.matches) {
       if (nav.parentElement !== document.body) document.body.appendChild(nav);
       nav.classList.add('mobile-floating-nav');
+      nav.setAttribute('aria-label', 'Основная навигация');
+      nav.tabIndex = 0;
     } else {
       if (nav.parentElement !== rail) rail.insertBefore(nav, account || null);
       nav.classList.remove('mobile-floating-nav');
+      nav.removeAttribute('tabindex');
     }
+    updateHint();
   };
+
+  nav.addEventListener('scroll', updateHint, { passive: true });
+  window.addEventListener('resize', updateHint, { passive: true });
+  if (typeof ResizeObserver !== 'undefined') {
+    const observer = new ResizeObserver(updateHint);
+    observer.observe(nav);
+  }
   place();
   if (mobile.addEventListener) mobile.addEventListener('change', place);
   else mobile.addListener(place);

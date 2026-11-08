@@ -23,6 +23,22 @@ jobs:
           node --check public/app.js
           node --check worker/src/index.js
           node --check worker/src/room.js
+      # The browser-only UI can be checked without running the Worker suite.
+      # Keep the full suite mandatory whenever this PR actually changes Worker code.
+      - name: Detect Worker changes
+        id: changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          if git diff --name-only "origin/$BASE_REF...HEAD" | grep -q '^worker/'; then
+            echo "worker=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "worker=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run Worker tests
+        if: github.event_name != 'pull_request' || steps.changes.outputs.worker == 'true'
         working-directory: worker
         run: npm test
