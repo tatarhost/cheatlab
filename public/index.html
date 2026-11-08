@@ -53,7 +53,7 @@ document.write('<base href="' +
   try {
     // One-time migration: move existing visitors from the old default dark
     // appearance to the newly introduced Frutiger Aero design.
-    if (localStorage.getItem('cheatlab.aero-migration-v1') !== '1') {
+    if (localStorage.getItem('cheatlab.default-theme-v2') !== '1') {
       localStorage.setItem('cheatlab.theme', 'aero');
       localStorage.setItem('cheatlab.aero-migration-v1', '1');
     }
@@ -283,7 +283,7 @@ document.write('<base href="' +
 <div id="toast" class="toast" hidden></div>
 
   <script src="studio.js?v=6"></script>
-  <script src="app.js?v=44" type="module"></script>
-  <script src="release.js?v=1"></script>
+  <script src="app.js?v=45" type="module"></script>
+  <script src="release.js?v=2"></script>
 </body>
 </html>
