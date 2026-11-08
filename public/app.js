@@ -4445,9 +4445,9 @@ async function viewMail(url) {
         h('button', { class: 'btn btn-ghost', type: 'button', title: 'Обновить', onclick: paintMessages }, icon('refresh-cw','i i-sm')),
         h('button', { class: 'btn btn-primary', type: 'button', onclick: compose }, icon('edit','i i-sm'), 'Написать')));
     const status = activeBox.status === 'active'
-      ? h('div', { class: 'mail-server-ok' }, icon('check','i i-sm'), 'Почтовый сервер отвечает')
+      ? h('div', { class: 'mail-server-ok' }, icon('check','i i-sm'), 'Адрес активен')
       : h('div', { class: 'mail-server-pending' }, icon('info','i i-sm'),
-          'Адрес создан. Первое входящее письмо активирует ящик; доставка зависит от DNS и Resend.');
+          'Адрес ожидает подтверждения. Он станет активным после успешной отправки или получения письма.');
     main.replaceChildren(toolbar, status, search, h('div', { class: 'mail-list', dataset: { mailList: '1' } }));
     paintList(visible, messages);
     function paintList(filtered, all) {
@@ -4621,7 +4621,28 @@ async function viewMail(url) {
     await loadProjects();
     to.focus();
   }
-  await refresh();
+  try {
+    await refresh();
+  } catch (err) {
+    const detail = h('p', { class: 'hint', text: err.message || 'Сервер временно недоступен. Проверьте подключение и попробуйте снова.' });
+    const retry = h('button', { class: 'btn btn-ghost', type: 'button', onclick: async () => {
+      retry.disabled = true;
+      try {
+        await refresh();
+        activeBox = boxes[0] || null;
+        renderSide();
+        await paintMessages();
+      } catch (nextError) {
+        detail.textContent = nextError.message || 'Сервер временно недоступен. Попробуйте снова.';
+      } finally {
+        retry.disabled = false;
+      }
+    } }, 'Повторить');
+    main.replaceChildren(h('div', { class: 'notice mail-load-error' },
+      icon('alert','i i-sm'),
+      h('div', {}, h('strong', { text: 'Не удалось загрузить почтовые адреса' }), detail, retry)));
+    return;
+  }
   activeBox = boxes[0] || null;
   renderSide();
   await paintMessages();
