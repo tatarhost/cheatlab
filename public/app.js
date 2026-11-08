@@ -5328,7 +5328,8 @@ const THEME_KEY = 'cheatlab.theme';
 
 /** Dark is the default; the choice is remembered per browser. */
 function currentTheme() {
-  return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+  const theme = document.documentElement.dataset.theme;
+  return ['dark', 'light', 'aero'].includes(theme) ? theme : 'dark';
 }
 
 function applyTheme(next) {
@@ -5336,10 +5337,10 @@ function applyTheme(next) {
   try { localStorage.setItem(THEME_KEY, next); } catch { /* private mode */ }
   const icon = document.getElementById('themeIcon');
   const label = document.getElementById('themeLabel');
-  if (icon) icon.setAttribute('href', next === 'dark' ? '#i-moon' : '#i-sun');
-  if (label) label.textContent = next === 'dark' ? 'Светлая тема' : 'Тёмная тема';
+  if (icon) icon.setAttribute('href', next === 'dark' ? '#i-moon' : next === 'light' ? '#i-sun' : '#i-image');
+  if (label) label.textContent = next === 'dark' ? 'Светлая тема' : next === 'light' ? 'Frutiger Aero' : 'Тёмная тема';
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', next === 'dark' ? '#0b0b0b' : '#ffffff');
+  if (meta) meta.setAttribute('content', next === 'aero' ? '#b9edff' : next === 'dark' ? '#0b0b0b' : '#ffffff');
 }
 
 function initTheme() {
@@ -5347,7 +5348,8 @@ function initTheme() {
   applyTheme(currentTheme());
   if (!btn) return;
   btn.addEventListener('click', () => {
-    applyTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+    const order = ['dark', 'light', 'aero'];
+    applyTheme(order[(order.indexOf(currentTheme()) + 1) % order.length]);
   });
 }
 
