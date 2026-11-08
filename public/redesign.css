@@ -1419,13 +1419,13 @@ a:hover { text-decoration: none; }
 .nav-link[aria-current="page"]:hover .i { animation:cl-icon-float .72s ease-in-out; }
 .drop:hover > .i,
 .drop:focus-within > .i { animation:cl-icon-float .8s ease-in-out infinite; }
-.btn:hover .i use[href="#i-refresh"],
-.icon-btn:hover .i use[href="#i-refresh"] { animation:cl-icon-wiggle .55s ease; }
-.btn:hover .i use[href="#i-bell"],
-.icon-btn:hover .i use[href="#i-bell"] { animation:cl-icon-wiggle .65s ease; }
-.btn:hover .i use[href="#i-send"],
-.icon-btn:hover .i use[href="#i-send"] { animation:cl-icon-send .48s ease; }
-.toast:not([hidden]) .i { animation:cl-icon-pop .48s cubic-bezier(.2,.8,.2,1) both; }
+.btn:hover .i:has(use[href="#i-refresh"]),
+.icon-btn:hover .i:has(use[href="#i-refresh"]) { animation:cl-icon-wiggle .55s ease; }
+.btn:hover .i:has(use[href="#i-bell"]),
+.icon-btn:hover .i:has(use[href="#i-bell"]) { animation:cl-icon-wiggle .65s ease; }
+.btn:hover .i:has(use[href="#i-send"]),
+.icon-btn:hover .i:has(use[href="#i-send"]) { animation:cl-icon-send .48s ease; }
+#toast:not([hidden]) .i { animation:cl-icon-pop .48s cubic-bezier(.2,.8,.2,1) both; }
 .btn:active:not(:disabled) .i,
 .icon-btn:active .i { transform:scale(.88); }
 .mobile-floating-nav .nav-link:active .i { transform:scale(.86); }
@@ -1445,7 +1445,7 @@ a:hover { text-decoration: none; }
   .mail-folder:hover .i,
   .drop:hover > .i,
   .drop:focus-within > .i,
-  .toast:not([hidden]) .i {
+  #toast:not([hidden]) .i {
     animation:none !important;
     transition:none !important;
     transform:none !important;
