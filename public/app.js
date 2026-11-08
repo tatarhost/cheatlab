@@ -5328,31 +5328,29 @@ const THEME_KEY = 'cheatlab.theme';
 
 /** Dark is the default; the choice is remembered per browser. */
 function currentTheme() {
-  const theme = document.documentElement.dataset.theme;
-  return ['dark', 'light', 'aero'].includes(theme) ? theme : 'dark';
+  return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'aero';
 }
 
 function applyTheme(next) {
+  next = next === 'dark' ? 'dark' : 'aero';
   document.documentElement.dataset.theme = next;
   try { localStorage.setItem(THEME_KEY, next); } catch { /* private mode */ }
   const icon = document.getElementById('themeIcon');
   const label = document.getElementById('themeLabel');
   const mobileBtn = document.getElementById('themeToggleMobile');
-  if (icon) icon.setAttribute('href', next === 'dark' ? '#i-moon' : next === 'light' ? '#i-sun' : '#i-image');
-  if (label) label.textContent = next === 'dark' ? 'Светлая тема' : next === 'light' ? 'Frutiger Aero' : 'Тёмная тема';
-  if (mobileBtn) mobileBtn.title = next === 'dark' ? 'Переключить на светлую тему' : next === 'light' ? 'Включить Frutiger Aero' : 'Переключить на тёмную тему';
+  if (icon) icon.setAttribute('href', next === 'dark' ? '#i-sun' : '#i-moon');
+  if (label) label.textContent = next === 'dark' ? 'Frutiger Aero' : 'Тёмная тема';
+  if (mobileBtn) mobileBtn.title = next === 'dark' ? 'Включить Frutiger Aero' : 'Включить тёмную тему';
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', next === 'aero' ? '#b9edff' : next === 'dark' ? '#0b0b0b' : '#ffffff');
+  if (meta) meta.setAttribute('content', next === 'aero' ? '#b9edff' : '#071522');
 }
 
 function initTheme() {
   const buttons = [document.getElementById('themeToggle'), document.getElementById('themeToggleMobile')].filter(Boolean);
   applyTheme(currentTheme());
-  const cycle = () => {
-    const order = ['dark', 'light', 'aero'];
-    applyTheme(order[(order.indexOf(currentTheme()) + 1) % order.length]);
-  };
-  buttons.forEach((button) => button.addEventListener('click', cycle));
+  buttons.forEach((button) => button.addEventListener('click', () => {
+    applyTheme(currentTheme() === 'aero' ? 'dark' : 'aero');
+  }));
 }
 
 // On phones, detach the navigation from .rail and .app. This avoids fixed-position
