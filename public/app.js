@@ -3015,6 +3015,7 @@ async function viewStats() {
           ...line('Паст', s.pastes),
           ...line('Приложений', s.apps),
           ...line('Файлов', s.files),
+          ...line('Скачиваний', s.downloads ?? 0),
           ...line('Объём', bytes(s.bytes)),
         ),
       ),
