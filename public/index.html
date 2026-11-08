@@ -51,14 +51,13 @@ document.write('<base href="' +
      app.js gets a chance to set the stored preference. -->
 <script>
   try {
-    // One-time migration: move existing visitors from the old default dark
-    // appearance to the newly introduced Frutiger Aero design.
-    if (localStorage.getItem('cheatlab.default-theme-v2') !== '1') {
-      localStorage.setItem('cheatlab.theme', 'aero');
-      localStorage.setItem('cheatlab.aero-migration-v1', '1');
+    // One-time migration: make classic black-and-white the default for everyone.
+    if (localStorage.getItem('cheatlab.default-theme-v3') !== '1') {
+      localStorage.setItem('cheatlab.theme', 'dark');
+      localStorage.setItem('cheatlab.default-theme-v3', '1');
     }
     var t = localStorage.getItem('cheatlab.theme');
-    if (t !== 'dark' && t !== 'aero') t = 'aero';
+    if (t !== 'dark' && t !== 'aero') t = 'dark';
     document.documentElement.dataset.theme = t;
     var m = document.querySelector('meta[name="theme-color"]');
     if (m) m.setAttribute('content', t === 'aero' ? '#b9edff' : '#071522');
@@ -284,6 +283,6 @@ document.write('<base href="' +
 
   <script src="studio.js?v=6"></script>
   <script src="app.js?v=45" type="module"></script>
-  <script src="release.js?v=2"></script>
+  <script src="release.js?v=3"></script>
 </body>
 </html>
