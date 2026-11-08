@@ -1300,3 +1300,65 @@ a:hover { text-decoration: none; }
 :root[data-theme="dark"] .cl-release-dialog { color: #f1f6fa; background: linear-gradient(145deg,#17232e,#0c141c); border-color: rgba(255,255,255,.14); }
 @keyframes cl-release-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .cl-release-backdrop { animation: none; } }
+
+
+/* CHEATLAB polish pass: stateful mobile rail and clearer mail recovery. */
+@media (max-width: 900px) {
+  body > .nav.mobile-floating-nav {
+    box-sizing: border-box;
+    isolation: isolate;
+    padding-right: 36px !important;
+  }
+  body > .nav.mobile-floating-nav .nav-link {
+    flex: 0 0 auto;
+    min-width: 62px;
+    min-height: 44px;
+    justify-content: center;
+    scroll-snap-align: start;
+  }
+  body > .nav.mobile-floating-nav .nav-link:active {
+    transform: scale(.96);
+  }
+  body > .nav.mobile-floating-nav .nav-scroll-hint {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    z-index: 5;
+    display: grid;
+    width: 25px;
+    height: 32px;
+    place-items: center;
+    transform: translateY(-50%);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: color-mix(in srgb, var(--paper) 94%, transparent);
+    color: var(--ink);
+    font: 700 21px/1 var(--sans);
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity .18s ease, background .18s ease;
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+  body > .nav.mobile-floating-nav .nav-scroll-hint.is-hidden {
+    opacity: 0;
+  }
+  body > .nav.mobile-floating-nav:focus-visible {
+    outline-offset: 4px;
+  }
+}
+.mail-load-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 18px;
+}
+.mail-load-error > div { min-width: 0; }
+.mail-load-error .hint { margin: 6px 0 12px; overflow-wrap: anywhere; }
+.mail-load-error .btn { min-height: 40px; }
+@media (prefers-reduced-motion: reduce) {
+  body > .nav.mobile-floating-nav .nav-link,
+  body > .nav.mobile-floating-nav .nav-scroll-hint {
+    transition: none !important;
+  }
+}
