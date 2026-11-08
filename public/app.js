@@ -5337,20 +5337,22 @@ function applyTheme(next) {
   try { localStorage.setItem(THEME_KEY, next); } catch { /* private mode */ }
   const icon = document.getElementById('themeIcon');
   const label = document.getElementById('themeLabel');
+  const mobileBtn = document.getElementById('themeToggleMobile');
   if (icon) icon.setAttribute('href', next === 'dark' ? '#i-moon' : next === 'light' ? '#i-sun' : '#i-image');
   if (label) label.textContent = next === 'dark' ? 'Светлая тема' : next === 'light' ? 'Frutiger Aero' : 'Тёмная тема';
+  if (mobileBtn) mobileBtn.title = next === 'dark' ? 'Переключить на светлую тему' : next === 'light' ? 'Включить Frutiger Aero' : 'Переключить на тёмную тему';
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', next === 'aero' ? '#b9edff' : next === 'dark' ? '#0b0b0b' : '#ffffff');
 }
 
 function initTheme() {
-  const btn = document.getElementById('themeToggle');
+  const buttons = [document.getElementById('themeToggle'), document.getElementById('themeToggleMobile')].filter(Boolean);
   applyTheme(currentTheme());
-  if (!btn) return;
-  btn.addEventListener('click', () => {
+  const cycle = () => {
     const order = ['dark', 'light', 'aero'];
     applyTheme(order[(order.indexOf(currentTheme()) + 1) % order.length]);
-  });
+  };
+  buttons.forEach((button) => button.addEventListener('click', cycle));
 }
 
 // On phones, detach the navigation from .rail and .app. This avoids fixed-position
