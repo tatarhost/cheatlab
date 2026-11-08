@@ -43,8 +43,8 @@ document.write('<base href="' +
 <!-- v=3 on both assets: GitHub Pages serves stale copies to returning
      browsers otherwise, and every deploy since can leave old code doing the
      work. Bump the query when the site (not the Worker) changes. -->
-<link rel="stylesheet" href="style.css?v=16">
-<link rel="stylesheet" href="redesign.css?v=26">
+<link rel="stylesheet" href="style.css?v=17">
+<link rel="stylesheet" href="redesign.css?v=27">
 <script src="humancheck.js?v=3"></script>
 
 <!-- Applied before first paint: without this the page flashes white before
@@ -66,6 +66,10 @@ document.write('<base href="' +
 </script>
 </head>
 <body>
+<video id="siteVideoBackground" class="site-video-background" autoplay muted loop playsinline webkit-playsinline preload="metadata" aria-hidden="true">
+  <source src="https://raw.githubusercontent.com/tatarhost/cheatlab/main/mb.mp4" type="video/mp4" media="(max-width: 900px)">
+  <source src="https://raw.githubusercontent.com/tatarhost/cheatlab/main/pc.mp4" type="video/mp4">
+</video>
 
 <svg class="sprite" aria-hidden="true" focusable="false">
   <symbol id="i-code" viewBox="0 0 24 24"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></symbol>
