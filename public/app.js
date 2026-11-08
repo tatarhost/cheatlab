@@ -5348,9 +5348,15 @@ function applyTheme(next) {
 
 function initTheme() {
   const buttons = [document.getElementById('themeToggle'), document.getElementById('themeToggleMobile')].filter(Boolean);
-  applyTheme(currentTheme());
+  let selected = 'dark';
+  try {
+    selected = localStorage.getItem('cheatlab.theme-user-choice') === '1' ? currentTheme() : 'dark';
+  } catch { selected = 'dark'; }
+  applyTheme(selected);
   buttons.forEach((button) => button.addEventListener('click', () => {
-    applyTheme(currentTheme() === 'aero' ? 'dark' : 'aero');
+    const next = currentTheme() === 'aero' ? 'dark' : 'aero';
+    applyTheme(next);
+    try { localStorage.setItem('cheatlab.theme-user-choice', '1'); } catch { /* private mode */ }
   }));
 }
 
