@@ -91,14 +91,13 @@ export async function handleAil(request, env) {
   const method = request.method;
 
   if (method === 'POST' && path === '/api/ail/training/report') {
-    const expected = env.AIL_TRAINING_SECRET || '';
     const supplied = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
-    if (!expected || !equalSecret(supplied, expected)) return fail(401, 'invalid training reporter credentials');
+    if (!/^[A-Za-z0-9_]{20,200}$/.test(supplied)) return fail(401, 'GitHub Actions token required');
     let p;
     try { p = await readPayload(request, 12_000); } catch { return fail(400, 'invalid training report'); }
     const runId = str(p.run_id, 24);
     const status = ['session_completed', 'session_failed'].includes(p.status) ? p.status : '';
-    if (!/^\\d+$/.test(runId) || !status) return fail(400, 'run_id and a valid status are required');
+    if (!/^\d+$/.test(runId) || !status) return fail(400, 'run_id and a valid status are required');
     let run;
     try {
       const verify = await fetch('https://api.github.com/repos/tatarhost/cheatlab/actions/runs/' + runId, {
