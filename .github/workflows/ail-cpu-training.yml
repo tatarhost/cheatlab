@@ -56,6 +56,9 @@ jobs:
         env:
           AIL_STEPS: ${{ github.event.inputs.steps || '300' }}
           AIL_RUN_ID: ${{ github.run_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AIL_WORKER_URL: https://cheatlab.tatarhost.workers.dev
+          GITHUB_SHA: ${{ github.sha }}
         run: python ai/ail-cpu/train.py
       - name: Save resumable checkpoint cache
         if: success()
