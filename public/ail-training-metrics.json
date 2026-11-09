@@ -2,14 +2,14 @@
   "name": "AIL AI from-scratch CPU prototype",
   "status": "session_completed",
   "parameters": 380160,
-  "total_steps": 600,
+  "total_steps": 1200,
   "session_steps": 300,
-  "train_loss": 2.99828,
-  "validation_loss": 5.03721,
-  "best_validation_loss": 4.9451,
-  "updated_at": 1794253704,
+  "train_loss": 2.94417,
+  "validation_loss": 4.38594,
+  "best_validation_loss": 4.38594,
+  "updated_at": 1794254301,
+  "compute": "GitHub Actions CPU",
   "initialized_from_random_weights": true,
   "pretrained_model_used": false,
-  "compute": "GitHub Actions CPU",
-  "note": "Experimental byte-level model; not a production assistant or 1B model."
+  "note": "Small experimental byte-level model; not a production assistant or 1B model."
 }
