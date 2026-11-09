@@ -1192,6 +1192,97 @@ route('POST', /^\/api\/auth\/keylogin$/, async (request, env) => {
   return json({ verificationRequired: true, challengeId: pending.id, email: pending.email, expiresAt: pending.expiresAt }, 202);
 });
 
+/* ------------------------------------------------------- launcher device sign-in
+ * The browser approves a short-lived device code, then the Worker issues a
+ * separate session bound to the Android install's client id. Browser tokens
+ * never leave the browser and Android tokens never pass through page storage.
+ */
+const APP_LOGIN_TTL_MS = 5 * 60 * 1000;
+
+route('POST', /^\/api\/app-auth\/init$/, async (request, env) => {
+  const client = clientOf(request);
+  if (!client) return fail(401, 'missing client id');
+  if (!(await env.STORE.throttle(\`app-init:\${client}\`, 'auth', { cap: 8, windowMs: 15 * 60 * 1000 }))) {
+    return fail(429, 'too many app login attempts, try later');
+  }
+  const deviceCode = newSecret();
+  const created = now();
+  const expiresAt = created + APP_LOGIN_TTL_MS;
+  await env.STORE.db.prepare(
+    "INSERT INTO app_login (id, device_code_hash, client_id, status, created_at, expires_at) VALUES (?, ?, ?, 'pending', ?, ?)"
+  ).bind(newId(12), await secretHash(deviceCode), client, created, expiresAt).run();
+  const verify = new URL('/app-authorize.html', 'https://cheatlab.fun');
+  verify.searchParams.set('device_code', deviceCode);
+  return json({ deviceCode, verificationUrl: verify.toString(), expiresInSec: APP_LOGIN_TTL_MS / 1000 });
+});
+
+route('POST', /^\/api\/app-auth\/approve$/, async (request, env) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'Сначала войдите в CHEATLAB в браузере.');
+  const banned = requireUnbanned(who);
+  if (banned) return banned;
+  const payload = await readJson(request, 4096).catch(() => ({}));
+  const deviceCode = str(payload.deviceCode, 160);
+  if (!deviceCode) return fail(400, 'Код устройства не указан.');
+  const hash = await secretHash(deviceCode);
+  const row = await env.STORE.db.prepare(
+    'SELECT id, status, expires_at FROM app_login WHERE device_code_hash = ?'
+  ).bind(hash).first();
+  if (!row || Number(row.expires_at) <= now()) {
+    if (row) await env.STORE.db.prepare("UPDATE app_login SET status = 'expired' WHERE id = ? AND status = 'pending'").bind(row.id).run();
+    return fail(410, 'Ссылка входа истекла. Создайте новую в приложении.');
+  }
+  if (row.status !== 'pending') return fail(409, 'Эта ссылка уже использована или отменена.');
+  const result = await env.STORE.db.prepare(
+    "UPDATE app_login SET status = 'approved', user_id = ?, approved_at = ? WHERE id = ? AND status = 'pending' AND expires_at > ?"
+  ).bind(who.user.id, now(), row.id, now()).run();
+  if (!(result.meta?.changes > 0)) return fail(409, 'Ссылка уже подтверждена. Вернитесь в приложение.');
+  return json({ ok: true, nick: who.user.nick });
+});
+
+route('POST', /^\/api\/app-auth\/poll$/, async (request, env) => {
+  const client = clientOf(request);
+  if (!client) return fail(401, 'missing client id');
+  if (!(await env.STORE.throttle(\`app-poll:\${client}\`, 'auth', { cap: 90, windowMs: 60 * 1000 }))) {
+    return fail(429, 'slow down');
+  }
+  const payload = await readJson(request, 4096).catch(() => ({}));
+  const deviceCode = str(payload.deviceCode, 160);
+  if (!deviceCode) return fail(400, 'device code required');
+  const hash = await secretHash(deviceCode);
+  const row = await env.STORE.db.prepare(
+    'SELECT id, status, user_id, expires_at FROM app_login WHERE device_code_hash = ? AND client_id = ?'
+  ).bind(hash, client).first();
+  if (!row) return fail(401, 'device authorization not found');
+  if (Number(row.expires_at) <= now() && row.status === 'pending') {
+    await env.STORE.db.prepare("UPDATE app_login SET status = 'expired' WHERE id = ? AND status = 'pending'").bind(row.id).run();
+    return json({ status: 'expired' });
+  }
+  if (row.status === 'pending') return json({ status: 'pending' });
+  if (row.status === 'denied' || row.status === 'expired') return json({ status: row.status });
+  if (row.status === 'consumed') return fail(410, 'device authorization already used');
+  if (row.status !== 'approved' || !row.user_id) return fail(409, 'device authorization is incomplete');
+
+  const user = await env.STORE.getUser(row.user_id);
+  if (!user || await env.STORE.activeBan(user.id)) return fail(403, 'account unavailable');
+  const consumed = await env.STORE.db.prepare(
+    "UPDATE app_login SET status = 'consumed', consumed_at = ? WHERE id = ? AND status = 'approved' AND expires_at > ?"
+  ).bind(now(), row.id, now()).run();
+  if (!(consumed.meta?.changes > 0)) return fail(409, 'device authorization already used or expired');
+  return issueAccountSession(request, env, user);
+});
+
+route('POST', /^\/api\/app-auth\/deny$/, async (request, env) => {
+  const who = await identity(request, env);
+  if (!who) return fail(401, 'login required');
+  const payload = await readJson(request, 4096).catch(() => ({}));
+  const hash = await secretHash(str(payload.deviceCode, 160));
+  const result = await env.STORE.db.prepare(
+    "UPDATE app_login SET status = 'denied' WHERE device_code_hash = ? AND status = 'pending' AND expires_at > ?"
+  ).bind(hash, now()).run();
+  return json({ ok: result.meta?.changes > 0 });
+});
+
 /** Who am I, and which tier am I on. The frontend calls this on boot. */
 route('GET', /^\/api\/auth\/me$/, async (request, env) => {
   const id = await identity(request, env);
