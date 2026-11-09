@@ -24,7 +24,8 @@ async function loadTrainingDashboard(){
   const runsData=await runsRes.json();const run=runsData.workflow_runs?.[0];
   let m=null;if(metricsRes.ok)m=await metricsRes.json();
   const active=run?.status==='in_progress';
-  statusEl.textContent=active?'СЕССИЯ РАБОТАЕТ':(run?.status==='queued'||run?.status==='pending'?'В ОЧЕРЕДИ':run?.conclusion==='success'?'СЕССИЯ ЗАВЕРШЕНА':run?.conclusion==='failure'?'ОШИБКА ОБУЧЕНИЯ':'ОЖИДАНИЕ СЕАНСА');
+  const queued=run?.status==='queued'||run?.status==='pending';
+  statusEl.textContent=active?'СЕССИЯ РАБОТАЕТ':queued?'В ОЧЕРЕДИ':m?.status==='session_completed'?'ОБУЧЕНИЕ УСПЕШНО':run?.conclusion==='failure'?'ОШИБКА ЗАДАЧИ':'ОЖИДАНИЕ СЕАНСА';
   if(m){
    $('ailTrainSteps').textContent=Number(m.total_steps||0).toLocaleString('ru-RU');
    $('ailTrainParams').textContent=Number(m.parameters||0).toLocaleString('ru-RU');
@@ -32,7 +33,7 @@ async function loadTrainingDashboard(){
    $('ailTrainUpdated').textContent='Обновлено '+new Date(m.updated_at*1000).toLocaleString('ru-RU');
    $('ailTrainNote').textContent='Модель создана с нуля; всего шагов обучения: '+m.total_steps+'. Последняя сессия выполнялась на CPU GitHub Actions. Это экспериментальный прототип, не модель 1B.';
   }
-  if(active){$('ailTrainNote').textContent='Сейчас выполняется сессия GitHub Actions. Метрики обновятся после сохранения контрольной точки.';}
+  if(active){$('ailTrainNote').textContent='Сейчас выполняется сессия GitHub Actions. Последние сохранённые метрики остаются видимыми.';} else if(run?.conclusion==='failure' && m?.status==='session_completed'){$('ailTrainNote').textContent='Обучение завершилось успешно; ошибка возникла на последующем этапе публикации метрик. Контрольная точка сохранена.';}
   if(run?.html_url){const a=document.querySelector('.run-link');if(a)a.href=run.html_url;}
   if(m?.validation_loss!==undefined) drawLoss(m);
  }catch(e){statusEl.textContent='СТАТУС НЕДОСТУПЕН';$('ailTrainNote').textContent='Не удалось получить публичный статус GitHub Actions.';}
