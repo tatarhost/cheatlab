@@ -92,7 +92,7 @@ export async function handleAil(request, env) {
 
   if (method === 'POST' && path === '/api/ail/training/report') {
     const supplied = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
-    if (!/^[A-Za-z0-9_]{20,200}$/.test(supplied)) return fail(401, 'GitHub Actions token required');
+    if (!/^[A-Za-z0-9_-]{20,200}$/.test(supplied)) return fail(401, 'GitHub Actions token required');
     let p;
     try { p = await readPayload(request, 12_000); } catch { return fail(400, 'invalid training report'); }
     const runId = str(p.run_id, 24);
