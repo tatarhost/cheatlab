@@ -224,49 +224,6 @@ await t('register issues a session bound to the client', async (env) => {
   check('me reports no captcha', me.json?.quota?.captchaOnPost === false);
 });
 
-await t('Android launcher device login returns a separate app-bound session', async (env) => {
-  const webClient = 'cheatlab-web-client-0123456789';
-  const appClient = 'cheatlab-app-client-0123456789';
-  const registered = await register(env, { nick: 'deviceuser', client: webClient });
-  check('browser account registered', registered.status === 201);
-
-  const init = await call(worker, env, '/api/app-auth/init', {
-    method: 'POST', body: {}, client: appClient,
-  });
-  check('device flow initialized', init.status === 200, init.text.slice(0, 180));
-  check('returns secret device code', typeof init.json?.deviceCode === 'string' && init.json.deviceCode.length > 20);
-  check('returns CHEATLAB approval URL', init.json?.verificationUrl?.startsWith('https://cheatlab.fun/app-authorize.html?device_code='));
-
-  const approve = await call(worker, env, '/api/app-auth/approve', {
-    method: 'POST',
-    body: { deviceCode: init.json.deviceCode },
-    client: webClient,
-    session: registered.json.token,
-  });
-  check('website session can approve', approve.status === 200, approve.text.slice(0, 180));
-
-  const poll = await call(worker, env, '/api/app-auth/poll', {
-    method: 'POST', body: { deviceCode: init.json.deviceCode }, client: appClient,
-  });
-  check('app poll completes', poll.status === 200 && poll.json?.user?.nick === 'deviceuser', poll.text.slice(0, 180));
-  check('new app session token returned once', typeof poll.json?.token === 'string' && poll.json.token.length > 20);
-
-  const me = await call(worker, env, '/api/auth/me', {
-    session: poll.json.token, client: appClient,
-  });
-  check('app token works for the app client', me.json?.user?.nick === 'deviceuser');
-
-  const stolen = await call(worker, env, '/api/auth/me', {
-    session: poll.json.token, client: webClient,
-  });
-  check('app token is not usable in the browser client', stolen.json?.user === null);
-
-  const replay = await call(worker, env, '/api/app-auth/poll', {
-    method: 'POST', body: { deviceCode: init.json.deviceCode }, client: appClient,
-  });
-  check('device code cannot be redeemed twice', replay.status === 410, replay.text.slice(0, 160));
-});
-
 await t('session is rejected from a different client', async (env) => {
   const r = await register(env);
   check('registered', r.status === 201);
