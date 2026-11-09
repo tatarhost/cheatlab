@@ -135,7 +135,7 @@ export async function handleAil(request, env) {
         total_steps=excluded.total_steps, session_steps=excluded.session_steps,
         train_loss=excluded.train_loss, validation_loss=excluded.validation_loss,
         best_validation_loss=excluded.best_validation_loss, elapsed_seconds=excluded.elapsed_seconds,
-        details_json=excluded.details_json`
+        created_at=excluded.created_at, details_json=excluded.details_json`
     ).bind(
       newId(12), runId, status, n(p.parameters), n(p.total_steps), n(p.session_steps),
       Number.isFinite(Number(p.train_loss)) ? n(p.train_loss) : null,
