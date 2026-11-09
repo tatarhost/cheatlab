@@ -108,9 +108,17 @@ export async function handleAil(request, env) {
     } catch { return fail(502, 'could not verify GitHub Actions run'); }
     // Pin verification to the repository's AIL workflow ID. The workflow-run
     // API may expose path differently across token/API versions.
+    const isAilWorkflow = Number(run?.workflow_id) === 412488269
+      || run?.path === '.github/workflows/ail-cpu-training.yml';
     if (Number(run?.id) !== Number(runId)
-      || Number(run?.workflow_id) !== 412488269
-      || run?.head_sha !== p.commit) return fail(403, 'run is not an authorized CHEATLAB AIL workflow');
+      || !isAilWorkflow
+      || run?.head_sha !== p.commit) {
+      console.warn('[ail] rejected training report', JSON.stringify({
+        runId: run?.id ?? null, workflowId: run?.workflow_id ?? null,
+        path: run?.path ?? null, shaMatches: run?.head_sha === p.commit,
+      }));
+      return fail(403, 'run is not an authorized CHEATLAB AIL workflow');
+    }
     const n = (v, max = 1e12) => Number.isFinite(Number(v)) ? Math.max(0, Math.min(max, Number(v))) : 0;
     const details = {
       workflow: str(p.workflow, 120), commit: str(p.commit, 80),
