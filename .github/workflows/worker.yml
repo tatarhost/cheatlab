@@ -21,6 +21,12 @@ jobs:
         with:
           node-version: 22
 
+      - name: Test account and device authorization
+        working-directory: worker
+        run: |
+          node --experimental-sqlite test/auth.test.mjs
+          node --experimental-sqlite test/loginkeys.test.mjs
+
       - name: Apply D1 migrations
         working-directory: worker
         env:
