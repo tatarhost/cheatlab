@@ -17,26 +17,26 @@ status();loadKeys();setInterval(status,15000);
 async function loadTrainingDashboard(){
  const statusEl=$('ailTrainStatus');if(!statusEl)return;
  try{
-  const [runsRes,metricsRes]=await Promise.all([
-   fetch('https://api.github.com/repos/tatarhost/cheatlab/actions/workflows/ail-cpu-training.yml/runs?per_page=1',{cache:'no-store'}),
-   fetch('https://raw.githubusercontent.com/tatarhost/cheatlab/main/public/ail-training-metrics.json?'+Date.now(),{cache:'no-store'})
-  ]);
-  const runsData=await runsRes.json();const run=runsData.workflow_runs?.[0];
-  let m=null;if(metricsRes.ok)m=await metricsRes.json();
-  const active=run?.status==='in_progress';
-  const queued=run?.status==='queued'||run?.status==='pending';
-  statusEl.textContent=active?'СЕССИЯ РАБОТАЕТ':queued?'В ОЧЕРЕДИ':m?.status==='session_completed'?'ОБУЧЕНИЕ УСПЕШНО':run?.conclusion==='failure'?'ОШИБКА ЗАДАЧИ':'ОЖИДАНИЕ СЕАНСА';
-  if(m){
-   $('ailTrainSteps').textContent=Number(m.total_steps||0).toLocaleString('ru-RU');
-   $('ailTrainParams').textContent=Number(m.parameters||0).toLocaleString('ru-RU');
-   $('ailTrainLoss').textContent=Number(m.validation_loss||0).toFixed(4);
-   $('ailTrainUpdated').textContent='Обновлено '+new Date(m.updated_at*1000).toLocaleString('ru-RU');
-   $('ailTrainNote').textContent='Модель создана с нуля; всего шагов обучения: '+m.total_steps+'. Последняя сессия выполнялась на CPU GitHub Actions. Это экспериментальный прототип, не модель 1B.';
-  }
-  if(active){$('ailTrainNote').textContent='Сейчас выполняется сессия GitHub Actions. Последние сохранённые метрики остаются видимыми.';} else if(run?.conclusion==='failure' && m?.status==='session_completed'){$('ailTrainNote').textContent='Обучение завершилось успешно; ошибка возникла на последующем этапе публикации метрик. Контрольная точка сохранена.';}
-  if(run?.html_url){const a=document.querySelector('.run-link');if(a)a.href=run.html_url;}
-  if(m?.validation_loss!==undefined) drawLoss(m);
- }catch(e){statusEl.textContent='СТАТУС НЕДОСТУПЕН';$('ailTrainNote').textContent='Не удалось получить публичный статус GitHub Actions.';}
+  const d=await api('/api/ail/status');
+  const t=d.training||{},m=t.latest;
+  statusEl.textContent=t.status==='session_completed'?'СЕССИЯ ЗАВЕРШЕНА':t.status==='session_failed'?'СЕССИЯ С ОШИБКОЙ':t.status==='not_started'?'ОЖИДАНИЕ':'СОСТОЯНИЕ ОБУЧЕНИЯ';
+  $('ailTrainSteps').textContent=Number(m?.totalSteps||t.step||0).toLocaleString('ru-RU');
+  $('ailTrainParams').textContent=Number(m?.parameters||0).toLocaleString('ru-RU');
+  $('ailTrainLoss').textContent=Number.isFinite(Number(m?.validationLoss))?Number(m.validationLoss).toFixed(4):'—';
+  $('ailTrainUpdated').textContent=m?.createdAt?'Cloudflare · '+new Date(m.createdAt).toLocaleString('ru-RU'):'Ожидание первой сессии';
+  $('ailTrainNote').textContent=t.message+' Checkpoint восстанавливается между отдельными сессиями GitHub Actions; цель 1 млрд параметров пока не достигнута.';
+  if(t.sessions?.length) drawLossHistory(t.sessions);
+  const a=document.querySelector('.run-link');if(a)a.href='https://github.com/tatarhost/cheatlab/actions/workflows/ail-cpu-training.yml';
+ }catch(e){statusEl.textContent='СТАТУС НЕДОСТУПЕН';$('ailTrainNote').textContent='Не удалось получить статистику из Cloudflare: '+e.message;}
+}
+function drawLossHistory(sessions){
+ const root=$('ailLossChart');if(!root)return;
+ const vals=sessions.slice().reverse().filter(x=>Number.isFinite(Number(x.validationLoss))).map(x=>Number(x.validationLoss));
+ if(!vals.length){root.innerHTML='<div class="chart-empty">История появится после регистрации первой сессии в Cloudflare</div>';return;}
+ const min=Math.min(...vals),max=Math.max(...vals),span=Math.max(.001,max-min);
+ const pts=vals.map((v,i)=>({x:4+(i/Math.max(1,vals.length-1))*92,y:92-((v-min)/span)*72}));
+ const path=pts.map((p,i)=>(i?'L':'M')+p.x+','+p.y).join(' ');
+ root.innerHTML='<svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="История validation loss"><path d="'+path+'" fill="none" stroke="#8ac5ff" stroke-width="2.5" vector-effect="non-scaling-stroke"/>'+pts.map(p=>'<circle cx="'+p.x+'" cy="'+p.y+'" r="1.8" fill="#7ee0b1"/>').join('')+'</svg>';
 }
 function drawLoss(m){
  const root=$('ailLossChart');if(!root)return;
