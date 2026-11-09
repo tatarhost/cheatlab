@@ -93,6 +93,12 @@ def report_progress(record, status="training"):
             method="POST")
         with urllib.request.urlopen(req, timeout=20) as response:
             print("LIVE_METRICS_REPORTED " + response.read().decode()[:500], flush=True)
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = exc.read().decode("utf-8", "replace")[:1200]
+        except Exception:
+            detail = ""
+        print(f"LIVE_METRICS_REPORT_WARNING: HTTP {exc.code}: {detail}", flush=True)
     except Exception as exc:
         print(f"LIVE_METRICS_REPORT_WARNING: {exc}", flush=True)
 
