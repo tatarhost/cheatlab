@@ -149,7 +149,7 @@ export async function handleAil(request, env) {
       inference: {
         available: !!env.AI,
         provider: env.AI ? 'Cloudflare Workers AI' : null,
-        model: env.AIL_INFERENCE_MODEL || '@cf/meta/llama-3.1-8b-instruct',
+        model: env.AIL_INFERENCE_MODEL || '@cf/meta/llama-3.1-8b-instruct-fast',
         isAilTrainedModel: false,
       },
       training,
@@ -176,7 +176,7 @@ export async function handleAil(request, env) {
         .map(x => ({ role: x.role, content: x.content.slice(0, 8000) })),
       { role: 'user', content: message },
     ];
-    const model = env.AIL_INFERENCE_MODEL || '@cf/meta/llama-3.1-8b-instruct';
+    const model = env.AIL_INFERENCE_MODEL || '@cf/meta/llama-3.1-8b-instruct-fast';
     try {
       const result = await env.AI.run(model, { messages, max_tokens: 1200, temperature: 0.35 });
       const answer = typeof result?.response === 'string' ? result.response
@@ -185,8 +185,15 @@ export async function handleAil(request, env) {
       if (!answer) return fail(502, 'Модель вернула пустой ответ.');
       return json({ answer, model, provider: 'Cloudflare Workers AI', isAilTrainedModel: false });
     } catch (error) {
-      console.error('[ail] inference failed', error?.stack || error);
-      return fail(502, 'Сервис ИИ временно недоступен.');
+      const detail = String(error?.message || error || 'unknown inference error').slice(0, 500);
+      console.error('[ail] inference failed', JSON.stringify({
+        model, name: error?.name || 'Error', message: detail,
+        status: error?.status || error?.statusCode || null,
+        code: error?.code || null,
+      }));
+      return fail(502, 'Cloudflare Workers AI не смог выполнить запрос.', {
+        model, reason: detail,
+      });
     }
   }
 
