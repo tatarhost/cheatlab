@@ -23,8 +23,8 @@ async function loadTrainingDashboard(){
   ]);
   const runsData=await runsRes.json();const run=runsData.workflow_runs?.[0];
   let m=null;if(metricsRes.ok)m=await metricsRes.json();
-  const active=run&&run.status!=='completed';
-  statusEl.textContent=active?'СЕССИЯ РАБОТАЕТ':(run?.conclusion==='success'?'СЕССИЯ ЗАВЕРШЕНА':run?.conclusion==='failure'?'ОШИБКА ОБУЧЕНИЯ':'ОЖИДАНИЕ СЕАНСА');
+  const active=run?.status==='in_progress';
+  statusEl.textContent=active?'СЕССИЯ РАБОТАЕТ':(run?.status==='queued'||run?.status==='pending'?'В ОЧЕРЕДИ':run?.conclusion==='success'?'СЕССИЯ ЗАВЕРШЕНА':run?.conclusion==='failure'?'ОШИБКА ОБУЧЕНИЯ':'ОЖИДАНИЕ СЕАНСА');
   if(m){
    $('ailTrainSteps').textContent=Number(m.total_steps||0).toLocaleString('ru-RU');
    $('ailTrainParams').textContent=Number(m.parameters||0).toLocaleString('ru-RU');
