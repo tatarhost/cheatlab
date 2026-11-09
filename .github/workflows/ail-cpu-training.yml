@@ -63,15 +63,9 @@ jobs:
         with:
           path: ai/ail-cpu/state
           key: ail-cpu-state-${{ runner.os }}-${{ github.run_id }}
-      - name: Publish metrics snapshot
-        if: success()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add public/ail-training-metrics.json
-          git commit -m "Publish AIL training metrics [skip ci]" || exit 0
-          git pull --rebase origin main
-          git push
+      # Metrics are reported directly to the Worker and stored in D1.
+      # Do not commit generated metrics to main: concurrent training runs can
+      # conflict with unrelated source commits during git rebase.
       - name: Send completed session to Cloudflare
         if: success()
         env:
