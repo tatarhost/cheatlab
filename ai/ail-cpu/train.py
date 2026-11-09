@@ -27,7 +27,6 @@ try:
     print(f"Corpus loaded: {len(wiki):,} chars", flush=True)
 except Exception as exc:
     print(f"WikiText unavailable: {exc}; using repository corpus", flush=True)
-    wiki = ""
 code_parts = []
 for folder in (ROOT/"worker", ROOT/"public", ROOT/"docs", ROOT/"ai"):
     if folder.exists():
@@ -62,11 +61,14 @@ opt=torch.optim.AdamW(model.parameters(),lr=LR,weight_decay=.1)
 resume=STATE/"latest.pt"; start_step=0; best=float("inf")
 if resume.exists():
     ck=torch.load(resume,map_location=DEVICE,weights_only=False)
+    if ck.get("config",{}).get("parameters",params)!=params:
+        raise RuntimeError("Checkpoint architecture mismatch; refusing unsafe resume")
     model.load_state_dict(ck["model"]); opt.load_state_dict(ck["optimizer"])
     start_step=int(ck["step"]); best=float(ck.get("best_loss",best))
-    print(f"Resumed from step {start_step}",flush=True)
+    print(f"Resumed model + optimizer from global step {start_step}",flush=True)
 else: print("Initialized AIL model from random weights (no pretrained model)",flush=True)
-metrics_path=OUT/"metrics.jsonl"; metrics_path.write_text("",encoding="utf-8")
+metrics_path=STATE/"metrics-history.jsonl"
+if not metrics_path.exists(): metrics_path.write_text("",encoding="utf-8")
 started=time.time(); final_step=start_step+STEPS
 for local in range(1,STEPS+1):
     model.train(); x,y=batch(train_data); _,loss=model(x,y)
@@ -81,10 +83,10 @@ for local in range(1,STEPS+1):
         if val<best:
             best=val
             torch.save({"model":model.state_dict(),"config":{"vocab_size":256,"seq_len":SEQ,"d_model":128,"layers":2,"heads":4,"parameters":params},"step":step,"best_loss":best},OUT/"checkpoint-best.pt")
-        torch.save({"model":model.state_dict(),"optimizer":opt.state_dict(),"step":step,"best_loss":best},resume)
-torch.save({"model":model.state_dict(),"step":final_step,"parameters":params},OUT/"checkpoint-final.pt")
+        torch.save({"model":model.state_dict(),"optimizer":opt.state_dict(),"config":{"parameters":params,"seq_len":SEQ,"d_model":128,"layers":2,"heads":4},"step":step,"best_loss":best},resume)
+torch.save({"model":model.state_dict(),"optimizer":opt.state_dict(),"config":{"parameters":params,"seq_len":SEQ,"d_model":128,"layers":2,"heads":4},"step":final_step,"best_loss":best},OUT/"checkpoint-final.pt")
 last=rec
-summary={"name":"AIL AI from-scratch CPU prototype","status":"session_completed","parameters":params,"total_steps":final_step,"session_steps":STEPS,"train_loss":last["train_loss"],"validation_loss":last["validation_loss"],"best_validation_loss":round(best,5),"updated_at":last["updated_at"],"compute":"GitHub Actions CPU","initialized_from_random_weights":True,"pretrained_model_used":False,"note":"Small experimental byte-level model; not a production assistant or 1B model."}
+summary={"name":"AIL AI from-scratch CPU prototype","status":"session_completed","parameters":params,"total_steps":final_step,"session_steps":STEPS,"train_loss":last["train_loss"],"validation_loss":last["validation_loss"],"best_validation_loss":round(best,5),"elapsed_seconds":round(time.time()-started,1),"updated_at":last["updated_at"],"compute":"GitHub Actions CPU","initialized_from_random_weights":True,"pretrained_model_used":False,"note":"Small experimental byte-level model; not a production assistant or 1B model."}
 (OUT/"model-card.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding="utf-8")
 Path("public/ail-training-metrics.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding="utf-8")
 print("TRAINING_SESSION_FINISHED "+json.dumps(summary),flush=True)
