@@ -96,9 +96,20 @@ export async function handleAil(request, env) {
     if (!expected || !equalSecret(supplied, expected)) return fail(401, 'invalid training reporter credentials');
     let p;
     try { p = await readPayload(request, 12_000); } catch { return fail(400, 'invalid training report'); }
-    const runId = str(p.run_id, 80);
+    const runId = str(p.run_id, 24);
     const status = ['session_completed', 'session_failed'].includes(p.status) ? p.status : '';
-    if (!runId || !status) return fail(400, 'run_id and a valid status are required');
+    if (!/^\\d+$/.test(runId) || !status) return fail(400, 'run_id and a valid status are required');
+    let run;
+    try {
+      const verify = await fetch('https://api.github.com/repos/tatarhost/cheatlab/actions/runs/' + runId, {
+        headers: { Authorization: 'Bearer ' + supplied, Accept: 'application/vnd.github+json', 'User-Agent': 'CHEATLAB-AIL-Training' },
+      });
+      if (!verify.ok) return fail(401, 'GitHub run verification failed');
+      run = await verify.json();
+    } catch { return fail(502, 'could not verify GitHub Actions run'); }
+    if (run?.repository?.full_name !== 'tatarhost/cheatlab'
+      || !String(run?.path || '').endsWith('.github/workflows/ail-cpu-training.yml')
+      || (p.commit && run.head_sha !== p.commit)) return fail(403, 'run is not an authorized CHEATLAB AIL workflow');
     const n = (v, max = 1e12) => Number.isFinite(Number(v)) ? Math.max(0, Math.min(max, Number(v))) : 0;
     const details = {
       workflow: str(p.workflow, 120), commit: str(p.commit, 80),
