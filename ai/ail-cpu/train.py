@@ -1,6 +1,7 @@
-import json, math, os, random, time, urllib.request
+import hashlib, json, math, os, random, time, urllib.request
 from pathlib import Path
 import torch
+import pyarrow.parquet as pq
 from torch import nn
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -16,13 +17,33 @@ BATCH = 16
 STEPS = int(os.getenv("AIL_STEPS", "300"))
 LR = 3e-4
 
-WIKI_URL = "https://raw.githubusercontent.com/salesforce/WikiText/master/wikitext-2/wiki.train.tokens"
-wiki_path = Path("wiki.train.tokens")
-if not wiki_path.exists():
-    print("Downloading WikiText-2 training split...")
-    urllib.request.urlretrieve(WIKI_URL, wiki_path)
-
-wiki = wiki_path.read_text(encoding="utf-8", errors="replace")
+# Pin the published WikiText-2 raw training parquet to a known dataset revision.
+# The former raw.githubusercontent.com URL no longer exists (HTTP 404).
+WIKI_URL = "https://huggingface.co/datasets/Salesforce/wikitext/resolve/6231e49f19a707241d6b84d9cff60a3a86b85a85/wikitext-2-raw-v1/train-00000-of-00001.parquet"
+wiki_path = Path("wiki-train.parquet")
+wiki = ""
+try:
+    if not wiki_path.exists():
+        print("Downloading WikiText-2 training split from Hugging Face...", flush=True)
+        request = urllib.request.Request(WIKI_URL, headers={"User-Agent": "AIL-AI-training/1.0"})
+        with urllib.request.urlopen(request, timeout=90) as response, wiki_path.open("wb") as output:
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                output.write(chunk)
+    if wiki_path.stat().st_size < 100_000:
+        raise RuntimeError("WikiText download is unexpectedly small")
+    table = pq.read_table(wiki_path, columns=["text"])
+    wiki = "\\n".join(value or "" for value in table.column("text").to_pylist())
+    if len(wiki) < 100_000:
+        raise RuntimeError("WikiText dataset contains too little text")
+    print(f"WikiText-2 loaded: {len(wiki):,} characters", flush=True)
+except Exception as exc:
+    print(f"WARNING: WikiText download/read failed ({exc}); continuing with CHEATLAB source corpus only.", flush=True)
+    wiki = ""
+    if wiki_path.exists():
+        wiki_path.unlink()
 code_parts = []
 for folder in (ROOT / "worker", ROOT / "public", ROOT / "docs"):
     if not folder.exists():
@@ -42,7 +63,7 @@ data = torch.tensor(list(corpus), dtype=torch.long)
 split = int(len(data) * 0.95)
 train_data, val_data = data[:split], data[split:]
 if len(train_data) < SEQ * 100:
-    raise RuntimeError("Training corpus is unexpectedly small")
+    raise RuntimeError(f"Training corpus is too small ({len(train_data)} bytes); refusing to train on an empty dataset")
 print(f"Corpus bytes: {len(data):,}; source files: {len(code_parts)}; steps: {STEPS}")
 
 def batch(source):
