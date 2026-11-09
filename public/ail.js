@@ -19,12 +19,12 @@ async function loadTrainingDashboard(){
  try{
   const d=await api('/api/ail/status');
   const t=d.training||{},m=t.latest;
-  statusEl.textContent=t.status==='session_completed'?'СЕССИЯ ЗАВЕРШЕНА':t.status==='session_failed'?'СЕССИЯ С ОШИБКОЙ':t.status==='not_started'?'ОЖИДАНИЕ':'СОСТОЯНИЕ ОБУЧЕНИЯ';
+  statusEl.textContent=t.status==='training'?'ИДЁТ ОБУЧЕНИЕ':t.status==='session_completed'?'СЕССИЯ ЗАВЕРШЕНА':t.status==='session_failed'?'СЕССИЯ С ОШИБКОЙ':t.status==='not_started'?'ОЖИДАНИЕ':'СОСТОЯНИЕ ОБУЧЕНИЯ';
   $('ailTrainSteps').textContent=Number(m?.totalSteps||t.step||0).toLocaleString('ru-RU');
   $('ailTrainParams').textContent=Number(m?.parameters||0).toLocaleString('ru-RU');
   $('ailTrainLoss').textContent=Number.isFinite(Number(m?.validationLoss))?Number(m.validationLoss).toFixed(4):'—';
-  $('ailTrainUpdated').textContent=m?.createdAt?'Cloudflare · '+new Date(m.createdAt).toLocaleString('ru-RU'):'Ожидание первой сессии';
-  $('ailTrainNote').textContent=t.message+' Checkpoint восстанавливается между отдельными сессиями GitHub Actions; цель 1 млрд параметров пока не достигнута.';
+  $('ailTrainUpdated').textContent=m?.createdAt?'Обновлено · '+new Date(m.createdAt).toLocaleTimeString('ru-RU'):'Ожидание первой сессии';
+  $('ailTrainNote').textContent=t.message+' Панель проверяет сервер каждые 5 секунд; шаги и loss обновляются по ходу обучения. Контрольная точка сохраняется между сессиями.';
   if(t.sessions?.length) drawLossHistory(t.sessions);
   const a=document.querySelector('.run-link');if(a)a.href='https://github.com/tatarhost/cheatlab/actions/workflows/ail-cpu-training.yml';
  }catch(e){statusEl.textContent='СТАТУС НЕДОСТУПЕН';$('ailTrainNote').textContent='Не удалось получить статистику из Cloudflare: '+e.message;}
@@ -47,4 +47,4 @@ function drawLoss(m){
  const path=pts.map((p,i)=>(i?'L':'M')+p.x+','+p.y).join(' ');
  root.innerHTML='<svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="Последние значения ошибки"><path d="'+path+'" fill="none" stroke="#8ac5ff" stroke-width="2.5" vector-effect="non-scaling-stroke"/>'+pts.map(p=>'<circle cx="'+p.x+'" cy="'+p.y+'" r="2.2" fill="#7ee0b1"/>').join('')+'</svg>';
 }
-loadTrainingDashboard();setInterval(loadTrainingDashboard,60000);
+loadTrainingDashboard();setInterval(loadTrainingDashboard,5000);
