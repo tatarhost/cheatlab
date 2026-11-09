@@ -89,7 +89,8 @@ def report_progress(record, status="training"):
     try:
         req = urllib.request.Request(endpoint.rstrip("/") + "/api/ail/training/report",
             data=json.dumps(payload).encode(),
-            headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+            headers={"Authorization": "Bearer " + token, "Content-Type": "application/json",
+                    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"},
             method="POST")
         with urllib.request.urlopen(req, timeout=20) as response:
             print("LIVE_METRICS_REPORTED " + response.read().decode()[:500], flush=True)
