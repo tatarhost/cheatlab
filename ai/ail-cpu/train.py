@@ -76,7 +76,7 @@ def report_progress(record, status="training"):
         return
     payload = {
         "run_id": run_id, "status": status, "commit": commit,
-        "parameters": params, "total_steps": record.get("step", start_step),
+        "parameters": params, "total_steps": record.get("total_steps", record.get("step", start_step)),
         "session_steps": STEPS, "train_loss": record.get("train_loss"),
         "validation_loss": record.get("validation_loss"),
         "best_validation_loss": best, "elapsed_seconds": record.get("elapsed_seconds", 0),
