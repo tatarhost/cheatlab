@@ -23,9 +23,13 @@ async function loadTrainingDashboard(){
   $('ailTrainSteps').textContent=Number(m?.totalSteps||t.step||0).toLocaleString('ru-RU');
   $('ailTrainParams').textContent=Number(m?.parameters||0).toLocaleString('ru-RU');
   $('ailTrainLoss').textContent=Number.isFinite(Number(m?.validationLoss))?Number(m.validationLoss).toFixed(4):'—';
+  $('ailTrainTrainLoss').textContent=Number.isFinite(Number(m?.trainLoss))?Number(m.trainLoss).toFixed(4):'—';
+  $('ailTrainBestLoss').textContent=Number.isFinite(Number(m?.bestValidationLoss))?Number(m.bestValidationLoss).toFixed(4):'—';
+  $('ailTrainSessionSteps').textContent=Number(m?.sessionSteps||0).toLocaleString('ru-RU');
+  $('ailTrainElapsed').textContent=m?.elapsedSeconds!=null?Number(m.elapsedSeconds).toFixed(1)+' сек':'—';
   $('ailTrainUpdated').textContent=m?.createdAt?'Обновлено · '+new Date(m.createdAt).toLocaleTimeString('ru-RU'):'Ожидание первой сессии';
-  $('ailTrainNote').textContent=t.message+' Панель проверяет сервер каждые 5 секунд; шаги и loss обновляются по ходу обучения. Контрольная точка сохраняется между сессиями.';
-  if(t.sessions?.length) drawLossHistory(t.sessions);
+  $('ailTrainNote').textContent=t.message+' Панель обновляется каждые 5 секунд. Метрики отправляются из обучающего процесса каждые 25 шагов; контрольная точка сохраняется между сессиями.';
+  if(t.sessions?.length){drawLossHistory(t.sessions);drawSessionHistory(t.sessions);}
   const a=document.querySelector('.run-link');if(a)a.href='https://github.com/tatarhost/cheatlab/actions/workflows/ail-cpu-training.yml';
  }catch(e){statusEl.textContent='СТАТУС НЕДОСТУПЕН';$('ailTrainNote').textContent='Не удалось получить статистику из Cloudflare: '+e.message;}
 }
@@ -37,6 +41,16 @@ function drawLossHistory(sessions){
  const pts=vals.map((v,i)=>({x:4+(i/Math.max(1,vals.length-1))*92,y:92-((v-min)/span)*72}));
  const path=pts.map((p,i)=>(i?'L':'M')+p.x+','+p.y).join(' ');
  root.innerHTML='<svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="История validation loss"><path d="'+path+'" fill="none" stroke="#8ac5ff" stroke-width="2.5" vector-effect="non-scaling-stroke"/>'+pts.map(p=>'<circle cx="'+p.x+'" cy="'+p.y+'" r="1.8" fill="#7ee0b1"/>').join('')+'</svg>';
+}
+function drawSessionHistory(sessions){
+ const root=$('ailSessionHistory');if(!root)return;
+ root.replaceChildren();
+ for(const s of sessions.slice(0,10)){
+  const row=document.createElement('div');row.className='session-row';
+  const name=document.createElement('strong');name.textContent='#'+String(s.runId||'').slice(-7)+' · '+(s.status==='training'?'Обучается':s.status==='session_completed'?'Завершена':s.status==='session_failed'?'Ошибка':s.status);
+  const stats=document.createElement('span');stats.textContent='Шаги: '+Number(s.totalSteps||0).toLocaleString('ru-RU')+' · val loss: '+(Number.isFinite(Number(s.validationLoss))?Number(s.validationLoss).toFixed(4):'—')+' · '+(s.createdAt?new Date(s.createdAt).toLocaleString('ru-RU'):'');
+  row.append(name,stats);root.append(row);
+ }
 }
 function drawLoss(m){
  const root=$('ailLossChart');if(!root)return;
