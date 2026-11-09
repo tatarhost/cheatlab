@@ -67,6 +67,8 @@ jobs:
       # Do not commit generated metrics to main: concurrent training runs can
       # conflict with unrelated source commits during git rebase.
       - name: Send completed session to Cloudflare
+        id: cloudflare_report
+        continue-on-error: true
         if: success()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
