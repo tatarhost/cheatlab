@@ -8,6 +8,7 @@ import {
   TOPIC_MAX as TOPIC_MAX_CHAT, TICKET_TTL_MS,
 } from './chats.js';
 import { PluginHost } from './plugins.js';
+import { handleAil } from './ail.js';
 import {
   newId, newSecret, secretHash, secretMatches, normaliseClientId, authorTag,
   str, tags, clamp, safeFilename, mimeOf, isTextExt, extOf, now, sha256,
@@ -3139,7 +3140,7 @@ route('GET', /^\/$/, async (_r, env) => json({
  * tests - the test harness calls the worker directly and never goes through a
  * preflight - it just fails in a real browser, as a CORS error with no explanation.
  */
-const ALLOWED_HEADERS = 'content-type, x-cheatlab-client, x-cheatlab-secret, x-cheatlab-session, x-cheatlab-pow, x-cheatlab-pow-nonce, x-cheatlab-key, x-filename';
+const ALLOWED_HEADERS = 'content-type, x-cheatlab-client, x-cheatlab-secret, x-cheatlab-session, x-cheatlab-pow, x-cheatlab-pow-nonce, x-cheatlab-key, x-filename, x-ail-api-key';
 const ALLOWED_METHODS = 'GET, HEAD, POST, PATCH, DELETE, OPTIONS';
 
 function withCors(response, origin, preflight) {
@@ -3173,8 +3174,15 @@ export default {
     };
     const origin = config(env).allowOrigin;
     const url = new URL(request.url);
+    if (url.pathname.startsWith('/api/ail/')) {
+      const ailResponse = await handleAil(request, env);
+      if (ailResponse) return withCors(ailResponse, origin);
+    }
 
     if (request.method === 'OPTIONS') {
+      // AIL AI endpoints share CHEATLAB sessions, D1 and the Workers AI binding.
+      // Keep the AI router isolated so the existing site API routes remain untouched.
+
       return withCors(new Response(null, { status: 204 }), origin, true);
     }
 

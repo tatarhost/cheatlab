@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#090d14">
+<meta name="cheatlab-api" content="https://cheatlab.tatarhost.workers.dev">
+<title>AIL AI — CHEATLAB</title>
+<link rel="stylesheet" href="ail.css?v=1">
+</head>
+<body>
+<header class="top"><a href="./" class="brand">CHEAT<span>LAB</span></a><nav><a href="./">На CHEATLAB</a><a href="#keys">API</a></nav></header>
+<main class="shell">
+<section class="hero"><div class="eyebrow"><i></i> CHEATLAB INTELLIGENCE</div><h1>AIL <span>AI</span></h1><p>Чат для программирования и обычных вопросов. Панель состояния модели и API.</p><div class="chips"><span>RU / EN</span><span>CODING</span><span>API ACCESS</span></div></section>
+<section class="status-grid" aria-live="polite">
+<article class="status-card"><small>ИНФЕРЕНС</small><strong id="inferenceState">Проверка…</strong><span id="modelName">Подключение к API</span></article>
+<article class="status-card"><small>ОБУЧЕНИЕ</small><strong id="trainingState">Проверка…</strong><span id="trainingDetail">Получение состояния сервера</span></article>
+<article class="status-card"><small>ЦЕЛЕВОЙ РАЗМЕР</small><strong>1B</strong><span>1 000 000 000 параметров · цель проекта</span></article>
+</section>
+<div class="notice" id="honestyNotice">Статус загружается…</div>
+<section class="workspace">
+<div class="chat-panel">
+<div class="panel-head"><div><small>AIL AI / PREVIEW</small><h2>Диалог</h2></div><button id="clearChat" class="quiet">Очистить</button></div>
+<div id="messages" class="messages"><div class="welcome"><b>AIL AI</b><p>Привет! Задай вопрос по коду или обычную тему.</p></div></div>
+<form id="chatForm" class="composer"><textarea id="prompt" rows="2" maxlength="12000" placeholder="Напиши сообщение…" required></textarea><button id="send" type="submit">Отправить <span>↗</span></button></form>
+<div class="fineprint">Для чата нужен вход в аккаунт CHEATLAB. Лимит: 30 запросов в минуту.</div>
+</div>
+<aside class="side-panel" id="keys">
+<div class="panel-head"><div><small>DEVELOPER</small><h2>API-ключи</h2></div></div>
+<p class="muted">Ключи CHEATLAB действуют 10 дней. Для администратора срок не ограничен. Полный ключ показывается только при создании.</p>
+<form id="keyForm" class="key-form"><input id="keyLabel" maxlength="40" placeholder="Название ключа"><button type="submit">Создать ключ</button></form>
+<div id="newKey" class="new-key" hidden></div>
+<div id="keyList" class="key-list"><p class="muted">Войдите в CHEATLAB, чтобы управлять ключами.</p></div>
+<div class="api-doc"><b>Запрос к API</b><pre>POST /api/ail/chat
+x-ail-api-key: ail_…
+content-type: application/json
+
+{"message":"Привет!"}</pre></div>
+</aside>
+</section>
+<footer>CHEATLAB · AIL AI Preview · Статус обучения отображается только по реальным данным сервера.</footer>
+</main>
+<script src="ail.js?v=1"></script>
+</body>
+</html>
