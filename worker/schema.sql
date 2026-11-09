@@ -367,3 +367,20 @@ CREATE TABLE IF NOT EXISTS mail_message (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mail_message_provider ON mail_message(provider_message_id) WHERE provider_message_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_mail_message_box ON mail_message(mailbox_id, direction, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_mail_message_starred ON mail_message(mailbox_id, is_starred, created_at DESC);
+
+-- Short-lived device authorizations for the unofficial Android launcher.
+CREATE TABLE IF NOT EXISTS app_login (
+  id TEXT PRIMARY KEY,
+  device_code_hash TEXT NOT NULL UNIQUE,
+  client_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'approved', 'consumed', 'expired', 'denied')),
+  user_id TEXT,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  approved_at INTEGER,
+  consumed_at INTEGER,
+  FOREIGN KEY(user_id) REFERENCES user(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS app_login_expiry_idx ON app_login(expires_at);
+CREATE INDEX IF NOT EXISTS app_login_client_idx ON app_login(client_id, created_at);
