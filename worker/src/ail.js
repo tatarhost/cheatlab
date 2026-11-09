@@ -75,7 +75,7 @@ async function trainingStatus(env) {
   return {
     status: latest?.status || 'not_started',
     connected: !!latest,
-    message: latest ? 'Последняя сессия обучения зарегистрирована в Cloudflare.' : 'Ожидание первой регистрации сессии обучения.',
+    message: latest ? (latest.status === 'training' ? 'Обучение идёт сейчас: метрики поступают из активной сессии.' : latest.status === 'session_failed' ? 'Последняя сессия завершилась с ошибкой.' : 'Последняя сессия обучения зарегистрирована в Cloudflare.') : 'Ожидание первой регистрации сессии обучения.',
     progress: null,
     step: Number(latest?.total_steps || 0),
     loss: latest?.validation_loss ?? null,
@@ -96,7 +96,7 @@ export async function handleAil(request, env) {
     let p;
     try { p = await readPayload(request, 12_000); } catch { return fail(400, 'invalid training report'); }
     const runId = str(p.run_id, 24);
-    const status = ['session_completed', 'session_failed'].includes(p.status) ? p.status : '';
+    const status = ['training', 'session_completed', 'session_failed'].includes(p.status) ? p.status : '';
     if (!/^\d+$/.test(runId) || !status) return fail(400, 'run_id and a valid status are required');
     let run;
     try {
