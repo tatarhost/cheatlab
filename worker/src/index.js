@@ -1208,6 +1208,10 @@ route('POST', /^\/api\/app-auth\/init$/, async (request, env) => {
   const deviceCode = newSecret();
   const created = now();
   const expiresAt = created + APP_LOGIN_TTL_MS;
+  // Keep only live/short-lived records; stale device codes are not reusable.
+  await env.STORE.db.prepare(
+    "DELETE FROM app_login WHERE expires_at <= ? OR (status IN ('consumed', 'denied', 'expired') AND created_at <= ?)"
+  ).bind(created, created - 24 * 60 * 60 * 1000).run();
   await env.STORE.db.prepare(
     "INSERT INTO app_login (id, device_code_hash, client_id, status, created_at, expires_at) VALUES (?, ?, ?, 'pending', ?, ?)"
   ).bind(newId(12), await secretHash(deviceCode), client, created, expiresAt).run();
