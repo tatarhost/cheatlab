@@ -96,7 +96,7 @@ jobs:
             "note":"Checkpoint resumes through GitHub Actions cache; Cloudflare stores session history and completion signal."
           }
           req=urllib.request.Request(os.environ["AIL_WORKER_URL"]+"/api/ail/training/report",
-            data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+os.environ["GH_TOKEN"],"Content-Type":"application/json"},method="POST")
+            data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+os.environ["GH_TOKEN"],"Content-Type":"application/json","User-Agent":"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"},method="POST")
           with urllib.request.urlopen(req,timeout=30) as response:
             print(response.read().decode())
           PY
