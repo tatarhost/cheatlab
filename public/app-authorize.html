@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#080b09">
+<meta name="referrer" content="no-referrer">
+<title>Подключить приложение — CHEATLAB</title>
+<style>
+:root{color-scheme:dark;font-family:Inter,system-ui,sans-serif;background:#080b09;color:#f3f7f4}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(ellipse at 50% 0,#183322 0,#080b09 58%)}
+main{width:min(100%,460px);padding:28px;border:1px solid #294333;background:#101713;box-shadow:0 24px 80px #0008}
+.logo{display:flex;align-items:center;gap:12px;margin-bottom:26px;font-weight:900;letter-spacing:.08em}.mark{display:grid;place-items:center;width:42px;height:42px;background:#8ee8a8;color:#07120b;font-size:24px;font-weight:950}
+h1{font-size:clamp(25px,7vw,34px);line-height:1.08;margin:0 0 10px;letter-spacing:-.04em}p{color:#b4c2b8;line-height:1.55;margin:0 0 18px}
+.status{min-height:54px;padding:15px;background:#0a100c;border:1px solid #2b4032;color:#c9d5cd;line-height:1.45;margin:18px 0}
+button,a.btn{display:flex;align-items:center;justify-content:center;width:100%;min-height:50px;padding:12px 16px;border:0;background:#8ee8a8;color:#07120b;font-size:15px;font-weight:850;text-decoration:none;cursor:pointer}
+a.secondary{background:#1b2920;color:#e8f3ec;border:1px solid #344b3b;margin-top:10px}
+small{display:block;color:#87958b;line-height:1.5;margin-top:18px}
+a.inline{display:inline;color:#9eeeb5;text-decoration:underline}
+#actions[hidden]{display:none}
+</style>
+</head>
+<body>
+<main>
+  <div class="logo"><span class="mark">C</span><span>CHEATLAB</span></div>
+  <h1>Подключить приложение</h1>
+  <p>Подтвердите вход в ваш аккаунт CHEATLAB. Пароль и браузерная сессия не передаются приложению.</p>
+  <div id="status" class="status" role="status" aria-live="polite">Проверяем вход в CHEATLAB…</div>
+  <div id="actions" hidden>
+    <a class="btn" href="/" target="_blank" rel="noopener noreferrer">Войти или зарегистрироваться</a>
+    <a class="btn secondary" href="/launcher-key.html">Создать ключ входа</a>
+  </div>
+  <small>После входа в сайт эта страница сама подтвердит подключение. Ссылка действует около пяти минут. Не пересылайте её другим людям.</small>
+</main>
+<script>
+(() => {
+  const API = 'https://cheatlab.tatarhost.workers.dev';
+  const statusEl = document.getElementById('status');
+  const actions = document.getElementById('actions');
+  const qs = new URLSearchParams(location.search);
+  let deviceCode = qs.get('device_code') || sessionStorage.getItem('cheatlab.app.device') || '';
+  let approved = false;
+  let busy = false;
+  let stopped = false;
+  if (!deviceCode || deviceCode.length > 160) {
+    statusEl.textContent = 'Ссылка входа повреждена. Создайте новую в приложении.';
+    stopped = true;
+    return;
+  }
+  sessionStorage.setItem('cheatlab.app.device', deviceCode);
+  history.replaceState(null, '', location.pathname);
+
+  function browserSession() {
+    try {
+      const session = JSON.parse(localStorage.getItem('cheatlab.session') || 'null');
+      const client = localStorage.getItem('cheatlab.client') || '';
+      if (!session || typeof session.token !== 'string' || session.token.length < 20) return null;
+      if (!/^[A-Za-z0-9_-]{16,64}$/.test(client)) return null;
+      return { token: session.token, client };
+    } catch { return null; }
+  }
+
+  async function check() {
+    if (stopped || approved || busy) return;
+    const auth = browserSession();
+    if (!auth) {
+      statusEl.textContent = 'Откройте CHEATLAB в этом же браузере, войдите или зарегистрируйтесь. Эта страница автоматически продолжит подключение после входа.';
+      actions.hidden = false;
+      return;
+    }
+    busy = true;
+    try {
+      const res = await fetch(API + '/api/app-auth/approve', {
+        method: 'POST',
+        cache: 'no-store',
+        headers: {
+          'content-type': 'application/json',
+          'x-cheatlab-client': auth.client,
+          'x-cheatlab-session': auth.token
+        },
+        body: JSON.stringify({ deviceCode })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 401) {
+          statusEl.textContent = 'Сессия сайта истекла. Войдите в CHEATLAB в этом браузере — страница попробует снова.';
+          actions.hidden = false;
+        } else if (res.status === 409 || res.status === 410) {
+          statusEl.textContent = data.error || 'Ссылка уже использована или истекла. Создайте новую в приложении.';
+          stopped = true;
+          sessionStorage.removeItem('cheatlab.app.device');
+        } else {
+          statusEl.textContent = data.error || 'Не удалось подтвердить вход. Повторяем проверку…';
+        }
+        return;
+      }
+      approved = true;
+      stopped = true;
+      sessionStorage.removeItem('cheatlab.app.device');
+      statusEl.textContent = 'Вход подтверждён. Возвращаемся в приложение…';
+      actions.hidden = true;
+      setTimeout(() => { location.href = 'tatarlauncher://auth/success'; }, 450);
+    } catch {
+      statusEl.textContent = 'Нет связи с CHEATLAB API. Проверьте интернет — подключение повторится автоматически.';
+    } finally {
+      busy = false;
+    }
+  }
+  check();
+  setInterval(check, 1200);
+})();
+</script>
+</body>
+</html>
