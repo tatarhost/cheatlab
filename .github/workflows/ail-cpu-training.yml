@@ -56,7 +56,7 @@ jobs:
         env:
           AIL_STEPS: ${{ github.event.inputs.steps || '300' }}
           AIL_RUN_ID: ${{ github.run_id }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           AIL_WORKER_URL: https://cheatlab.tatarhost.workers.dev
           GITHUB_SHA: ${{ github.sha }}
         run: python ai/ail-cpu/train.py
@@ -74,7 +74,7 @@ jobs:
         continue-on-error: true
         if: success()
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           AIL_WORKER_URL: https://cheatlab.tatarhost.workers.dev
           GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_SHA: ${{ github.sha }}
@@ -103,7 +103,7 @@ jobs:
       - name: Queue next training session
         if: success() && (github.event_name == 'repository_dispatch' || github.event_name == 'schedule' || github.event.inputs.continuous == 'true' || github.event_name == 'push')
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           GH_REPOSITORY: ${{ github.repository }}
         run: |
           curl --fail-with-body -X POST \
