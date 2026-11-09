@@ -24,6 +24,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: ail-ai-training
@@ -74,15 +75,11 @@ jobs:
       - name: Send completed session to Cloudflare
         if: success()
         env:
-          AIL_TRAINING_SECRET: ${{ secrets.AIL_TRAINING_SECRET }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AIL_WORKER_URL: https://cheatlab.tatarhost.workers.dev
           GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_SHA: ${{ github.sha }}
         run: |
-          if [ -z "$AIL_TRAINING_SECRET" ]; then
-            echo "::warning::AIL_TRAINING_SECRET is not configured; Cloudflare session reporting is skipped."
-            exit 0
-          fi
           python - <<'PY'
           import json, os, urllib.request
           with open("artifacts/ail-cpu/model-card.json", encoding="utf-8") as f:
@@ -97,10 +94,10 @@ jobs:
             "pretrained_model_used":m.get("pretrained_model_used",False),
             "workflow":"AIL AI continuous resumable training","commit":os.environ["GITHUB_SHA"],
             "checkpoint_saved":True,"next_session_requested":True,
-            "note":"Checkpoint is restored from GitHub Actions cache; Cloudflare stores session history and completion signal."
+            "note":"Checkpoint resumes through GitHub Actions cache; Cloudflare stores session history and completion signal."
           }
           req=urllib.request.Request(os.environ["AIL_WORKER_URL"]+"/api/ail/training/report",
-            data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+os.environ["AIL_TRAINING_SECRET"],"Content-Type":"application/json"},method="POST")
+            data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+os.environ["GH_TOKEN"],"Content-Type":"application/json"},method="POST")
           with urllib.request.urlopen(req,timeout=30) as response:
             print(response.read().decode())
           PY
