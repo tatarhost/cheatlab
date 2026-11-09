@@ -67,6 +67,35 @@ if resume.exists():
     start_step=int(ck["step"]); best=float(ck.get("best_loss",best))
     print(f"Resumed model + optimizer from global step {start_step}",flush=True)
 else: print("Initialized AIL model from random weights (no pretrained model)",flush=True)
+def report_progress(record, status="training"):
+    token = os.getenv("GH_TOKEN", "")
+    endpoint = os.getenv("AIL_WORKER_URL", "")
+    run_id = os.getenv("AIL_RUN_ID", "")
+    commit = os.getenv("GITHUB_SHA", "")
+    if not (token and endpoint and run_id and commit):
+        return
+    payload = {
+        "run_id": run_id, "status": status, "commit": commit,
+        "parameters": params, "total_steps": record.get("step", start_step),
+        "session_steps": STEPS, "train_loss": record.get("train_loss"),
+        "validation_loss": record.get("validation_loss"),
+        "best_validation_loss": best, "elapsed_seconds": record.get("elapsed_seconds", 0),
+        "compute": "GitHub Actions CPU", "initialized_from_random_weights": True,
+        "pretrained_model_used": False, "checkpoint_saved": True,
+        "next_session_requested": True,
+        "workflow": "AIL AI continuous resumable training",
+        "note": "Live checkpoint metrics from the active training session."
+    }
+    try:
+        req = urllib.request.Request(endpoint.rstrip("/") + "/api/ail/training/report",
+            data=json.dumps(payload).encode(),
+            headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+            method="POST")
+        with urllib.request.urlopen(req, timeout=20) as response:
+            print("LIVE_METRICS_REPORTED " + response.read().decode()[:500], flush=True)
+    except Exception as exc:
+        print(f"LIVE_METRICS_REPORT_WARNING: {exc}", flush=True)
+
 metrics_path=STATE/"metrics-history.jsonl"
 if not metrics_path.exists(): metrics_path.write_text("",encoding="utf-8")
 started=time.time(); final_step=start_step+STEPS
@@ -80,6 +109,7 @@ for local in range(1,STEPS+1):
         rec={"step":step,"session_steps":STEPS,"train_loss":round(loss.item(),5),"validation_loss":round(val,5),"parameters":params,"elapsed_seconds":round(time.time()-started,1),"updated_at":int(time.time())}
         with metrics_path.open("a",encoding="utf-8") as f: f.write(json.dumps(rec)+"\n")
         print(json.dumps(rec),flush=True)
+        report_progress(rec, "training")
         if val<best:
             best=val
             torch.save({"model":model.state_dict(),"config":{"vocab_size":256,"seq_len":SEQ,"d_model":128,"layers":2,"heads":4,"parameters":params},"step":step,"best_loss":best},OUT/"checkpoint-best.pt")
@@ -89,4 +119,5 @@ last=rec
 summary={"name":"AIL AI from-scratch CPU prototype","status":"session_completed","parameters":params,"total_steps":final_step,"session_steps":STEPS,"train_loss":last["train_loss"],"validation_loss":last["validation_loss"],"best_validation_loss":round(best,5),"elapsed_seconds":round(time.time()-started,1),"updated_at":last["updated_at"],"compute":"GitHub Actions CPU","initialized_from_random_weights":True,"pretrained_model_used":False,"note":"Small experimental byte-level model; not a production assistant or 1B model."}
 (OUT/"model-card.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding="utf-8")
 Path("public/ail-training-metrics.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding="utf-8")
+report_progress(summary, "session_completed")
 print("TRAINING_SESSION_FINISHED "+json.dumps(summary),flush=True)
