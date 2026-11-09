@@ -1,0 +1,10 @@
+{
+  "name": "AIL AI from-scratch CPU prototype",
+  "status": "waiting_for_first_scheduled_session",
+  "parameters": 0,
+  "total_steps": 0,
+  "updated_at": 0,
+  "initialized_from_random_weights": true,
+  "pretrained_model_used": false,
+  "note": "No training session has completed yet."
+}

@@ -18,6 +18,18 @@
 <article class="status-card"><small>ЦЕЛЕВОЙ РАЗМЕР</small><strong>1B</strong><span>1 000 000 000 параметров · цель проекта</span></article>
 </section>
 <div class="notice" id="honestyNotice">Статус загружается…</div>
+<section class="training-panel" id="training">
+<div class="training-head"><div><small>FROM-SCRATCH TRAINING</small><h2>Обучение AIL AI</h2><p>Собственная модель с нулевой инициализацией весов. Готовые языковые модели не используются для обучения.</p></div><a class="run-link" href="https://github.com/tatarhost/cheatlab/actions/workflows/ail-cpu-training.yml" target="_blank" rel="noreferrer">Журнал запусков ↗</a></div>
+<div class="training-stats">
+<div><span>СОСТОЯНИЕ</span><b id="ailTrainStatus">Загрузка…</b></div>
+<div><span>ШАГИ ВСЕГО</span><b id="ailTrainSteps">—</b></div>
+<div><span>ПАРАМЕТРЫ</span><b id="ailTrainParams">—</b></div>
+<div><span>VAL LOSS</span><b id="ailTrainLoss">—</b></div>
+</div>
+<div class="loss-wrap"><div class="loss-title"><b>История ошибки обучения</b><span id="ailTrainUpdated">Ожидание метрик</span></div><div id="ailLossChart" class="loss-chart"><div class="chart-empty">График появится после первой завершённой сессии</div></div></div>
+<p class="training-foot" id="ailTrainNote">Бесплатный CPU запускает отдельные сессии по расписанию; это не непрерывный GPU-сервер 24/7.</p>
+</section>
+
 <section class="workspace">
 <div class="chat-panel">
 <div class="panel-head"><div><small>AIL AI / PREVIEW</small><h2>Диалог</h2></div><button id="clearChat" class="quiet">Очистить</button></div>

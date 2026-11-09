@@ -13,3 +13,37 @@ async function status(){try{const d=await api('/api/ail/status');$('inferenceSta
 async function loadKeys(){if(!session?.token){$('keyList').textContent='Войдите в CHEATLAB, чтобы управлять ключами.';return}try{const d=await api('/api/ail/keys');$('keyList').replaceChildren();if(!d.keys.length){$('keyList').textContent='Ключей пока нет.';return}for(const k of d.keys){const row=document.createElement('div');row.className='key-row';const b=document.createElement('button');b.textContent='Отозвать';b.addEventListener('click',async()=>{if(!confirm('Отозвать этот API-ключ?'))return;try{await api('/api/ail/keys/'+k.id,{method:'DELETE'});loadKeys()}catch(e){alert(e.message)}});const strong=document.createElement('strong');strong.textContent=k.label+' · '+k.prefix+'…';const span=document.createElement('span');span.textContent=k.revoked?'Отозван':k.unlimited?'Без срока (администратор)':('До '+new Date(k.expiresAt).toLocaleString());row.append(b,strong,span);$('keyList').append(row)}}catch(e){$('keyList').textContent=e.message}}
 $('keyForm').addEventListener('submit',async e=>{e.preventDefault();if(!session?.token){location.href='./auth';return}try{const d=await api('/api/ail/keys',{method:'POST',body:JSON.stringify({label:$('keyLabel').value.trim()})});$('newKey').hidden=false;$('newKey').replaceChildren();const code=document.createElement('code');code.textContent=d.key;const note=document.createElement('p');note.textContent=d.item.unlimited?'Администраторский ключ без срока действия.':'Ключ действует 10 дней. Скопируйте его сейчас — повторно показать его нельзя.';const copy=document.createElement('button');copy.textContent='Копировать ключ';copy.addEventListener('click',()=>navigator.clipboard.writeText(d.key));$('newKey').append(code,note,copy);$('keyLabel').value='';loadKeys()}catch(e){alert(e.message)}});
 status();loadKeys();setInterval(status,15000);
+
+async function loadTrainingDashboard(){
+ const statusEl=$('ailTrainStatus');if(!statusEl)return;
+ try{
+  const [runsRes,metricsRes]=await Promise.all([
+   fetch('https://api.github.com/repos/tatarhost/cheatlab/actions/workflows/ail-cpu-training.yml/runs?per_page=1',{cache:'no-store'}),
+   fetch('https://raw.githubusercontent.com/tatarhost/cheatlab/main/public/ail-training-metrics.json?'+Date.now(),{cache:'no-store'})
+  ]);
+  const runsData=await runsRes.json();const run=runsData.workflow_runs?.[0];
+  let m=null;if(metricsRes.ok)m=await metricsRes.json();
+  const active=run&&run.status!=='completed';
+  statusEl.textContent=active?'СЕССИЯ РАБОТАЕТ':(run?.conclusion==='success'?'СЕССИЯ ЗАВЕРШЕНА':run?.conclusion==='failure'?'ОШИБКА ОБУЧЕНИЯ':'ОЖИДАНИЕ СЕАНСА');
+  if(m){
+   $('ailTrainSteps').textContent=Number(m.total_steps||0).toLocaleString('ru-RU');
+   $('ailTrainParams').textContent=Number(m.parameters||0).toLocaleString('ru-RU');
+   $('ailTrainLoss').textContent=Number(m.validation_loss||0).toFixed(4);
+   $('ailTrainUpdated').textContent='Обновлено '+new Date(m.updated_at*1000).toLocaleString('ru-RU');
+   $('ailTrainNote').textContent='Модель создана с нуля; всего шагов обучения: '+m.total_steps+'. Последняя сессия выполнялась на CPU GitHub Actions. Это экспериментальный прототип, не модель 1B.';
+  }
+  if(active){$('ailTrainNote').textContent='Сейчас выполняется сессия GitHub Actions. Метрики обновятся после сохранения контрольной точки.';}
+  if(run?.html_url){const a=document.querySelector('.run-link');if(a)a.href=run.html_url;}
+  if(m?.validation_loss!==undefined) drawLoss(m);
+ }catch(e){statusEl.textContent='СТАТУС НЕДОСТУПЕН';$('ailTrainNote').textContent='Не удалось получить публичный статус GitHub Actions.';}
+}
+function drawLoss(m){
+ const root=$('ailLossChart');if(!root)return;
+ const vals=[Number(m.train_loss),Number(m.validation_loss),Number(m.best_validation_loss)].filter(Number.isFinite);
+ if(!vals.length)return;
+ const min=Math.min(...vals),max=Math.max(...vals),span=Math.max(.001,max-min);
+ const pts=vals.map((v,i)=>({x:8+i*42,y:92-((v-min)/span)*72}));
+ const path=pts.map((p,i)=>(i?'L':'M')+p.x+','+p.y).join(' ');
+ root.innerHTML='<svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="Последние значения ошибки"><path d="'+path+'" fill="none" stroke="#8ac5ff" stroke-width="2.5" vector-effect="non-scaling-stroke"/>'+pts.map(p=>'<circle cx="'+p.x+'" cy="'+p.y+'" r="2.2" fill="#7ee0b1"/>').join('')+'</svg>';
+}
+loadTrainingDashboard();setInterval(loadTrainingDashboard,60000);
