@@ -7,7 +7,7 @@ on:
       - "ai/ail-cpu/**"
       - ".github/workflows/ail-cpu-training.yml"
   schedule:
-    - cron: "17 */6 * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
       steps:
