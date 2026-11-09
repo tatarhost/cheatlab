@@ -91,8 +91,13 @@ export async function handleAil(request, env) {
   const method = request.method;
 
   if (method === 'POST' && path === '/api/ail/training/report') {
-    const supplied = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
-    if (supplied.length < 20 || supplied.length > 200 || /[\r\n\s]/.test(supplied)) return fail(401, 'GitHub Actions token required');
+    const authorization = request.headers.get('authorization') || '';
+    const supplied = authorization.replace(/^Bearer\s+/i, '').trim();
+    // Do not assume a fixed GitHub token length; GitHub API verification below is authoritative.
+    if (!supplied || /[\r\n\s]/.test(supplied)) {
+      console.warn('[ail] missing Actions authorization header', JSON.stringify({ headerPresent: !!authorization, tokenLength: supplied.length }));
+      return fail(401, 'GitHub Actions token required', { headerPresent: !!authorization, tokenLength: supplied.length });
+    }
     let p;
     try { p = await readPayload(request, 12_000); } catch { return fail(400, 'invalid training report'); }
     const runId = str(p.run_id, 24);
