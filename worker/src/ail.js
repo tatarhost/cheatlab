@@ -117,7 +117,15 @@ export async function handleAil(request, env) {
         runId: run?.id ?? null, workflowId: run?.workflow_id ?? null,
         path: run?.path ?? null, shaMatches: run?.head_sha === p.commit,
       }));
-      return fail(403, 'run is not an authorized CHEATLAB AIL workflow');
+      return fail(403, 'run is not an authorized CHEATLAB AIL workflow', {
+        verification: {
+          requestedRunId: runId,
+          verifiedRunId: run?.id ?? null,
+          workflowId: run?.workflow_id ?? null,
+          workflowPath: run?.path ?? null,
+          commitMatches: run?.head_sha === p.commit,
+        },
+      });
     }
     const n = (v, max = 1e12) => Number.isFinite(Number(v)) ? Math.max(0, Math.min(max, Number(v))) : 0;
     const details = {
