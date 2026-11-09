@@ -6,7 +6,7 @@ from torch import nn
 ROOT = Path(__file__).resolve().parents[2]
 OUT = Path("artifacts/ail-cpu")
 OUT.mkdir(parents=True, exist_ok=True)
-SEED = 42
+SEED = 42  # reproducible first AIL CPU experiment
 random.seed(SEED)
 torch.manual_seed(SEED)
 torch.set_num_threads(2)
