@@ -5304,6 +5304,33 @@ async function viewDownloads() {
   await checkLatestRelease();
 }
 
+// AIL AI stays inside the CHEATLAB single-page shell. The embedded document
+// supplies its existing chat/API UI without navigating the browser away.
+async function viewAil() {
+  const frame = h('iframe', {
+    class: 'ail-embedded-frame',
+    title: 'AIL AI — обучение и чат',
+    src: './ail.html?embed=1',
+    loading: 'eager',
+    referrerpolicy: 'same-origin',
+  });
+  $view.replaceChildren(h('section', { class: 'ail-route-view' },
+    h('div', { class: 'view-head' }, h('div', {}, h('h1', { text: 'AIL AI' }), h('p', { class: 'hint', text: 'Обучение собственной модели, чат и API CHEATLAB' }))),
+    frame
+  ));
+  frame.addEventListener('load', () => {
+    try {
+      const doc = frame.contentDocument;
+      const resize = () => {
+        const height = Math.max(980, doc.documentElement.scrollHeight, doc.body.scrollHeight);
+        frame.style.height = Math.min(height + 20, 6000) + 'px';
+      };
+      resize();
+      new ResizeObserver(resize).observe(doc.body);
+    } catch {}
+  }, { once: true });
+}
+
 // ---------------------------------------------------------------- router
 
 let renderToken = 0;
@@ -5328,6 +5355,8 @@ async function route() {
       await viewNew(url);
     } else if (path === '/me') {
       await viewMe();
+    } else if (path === '/ail') {
+      await viewAil();
     } else if (path === '/mail') {
       await viewMail(url);
     } else if (path === '/chat' || path.startsWith('/chat/')) {
