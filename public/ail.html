@@ -26,7 +26,14 @@
 <div><span>ПАРАМЕТРЫ</span><b id="ailTrainParams">—</b></div>
 <div><span>VAL LOSS</span><b id="ailTrainLoss">—</b></div>
 </div>
+<div class="training-stats training-stats-extra">
+<div><span>TRAIN LOSS</span><b id="ailTrainTrainLoss">—</b></div>
+<div><span>ЛУЧШИЙ VAL LOSS</span><b id="ailTrainBestLoss">—</b></div>
+<div><span>ШАГИ СЕССИИ</span><b id="ailTrainSessionSteps">—</b></div>
+<div><span>ВРЕМЯ СЕССИИ</span><b id="ailTrainElapsed">—</b></div>
+</div>
 <div class="loss-wrap"><div class="loss-title"><b>История ошибки обучения</b><span id="ailTrainUpdated">Ожидание метрик</span></div><div id="ailLossChart" class="loss-chart"><div class="chart-empty">График появится после первой завершённой сессии</div></div></div>
+<div class="loss-wrap"><div class="loss-title"><b>Последние сессии</b><span>Cloudflare D1</span></div><div id="ailSessionHistory" class="session-history">История появится после первого отчёта</div></div>
 <p class="training-foot" id="ailTrainNote">Бесплатный CPU запускает отдельные сессии по расписанию; это не непрерывный GPU-сервер 24/7.</p>
 </section>
 
