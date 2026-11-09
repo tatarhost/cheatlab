@@ -50,15 +50,89 @@ async function readPayload(request, limit = 24_000) {
   return raw.byteLength ? JSON.parse(new TextDecoder().decode(raw)) : {};
 }
 
+function equalSecret(a, b) {
+  const x = new TextEncoder().encode(String(a || ''));
+  const y = new TextEncoder().encode(String(b || ''));
+  if (!x.length || x.length !== y.length) return false;
+  let diff = 0;
+  for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
+  return diff === 0;
+}
+
+async function trainingStatus(env) {
+  const latest = await env.DB.prepare(
+    'SELECT * FROM ail_training_sessions ORDER BY created_at DESC LIMIT 1'
+  ).first().catch(() => null);
+  const recent = await env.DB.prepare(
+    'SELECT id, run_id, status, parameters, total_steps, session_steps, train_loss, validation_loss, best_validation_loss, elapsed_seconds, compute, created_at FROM ail_training_sessions ORDER BY created_at DESC LIMIT 30'
+  ).all().catch(() => ({ results: [] }));
+  const sessions = (recent.results || []).map(x => ({
+    id: x.id, runId: x.run_id, status: x.status, parameters: x.parameters,
+    totalSteps: x.total_steps, sessionSteps: x.session_steps, trainLoss: x.train_loss,
+    validationLoss: x.validation_loss, bestValidationLoss: x.best_validation_loss,
+    elapsedSeconds: x.elapsed_seconds, compute: x.compute, createdAt: x.created_at,
+  }));
+  return {
+    status: latest?.status || 'not_started',
+    connected: !!latest,
+    message: latest ? 'Последняя сессия обучения зарегистрирована в Cloudflare.' : 'Ожидание первой регистрации сессии обучения.',
+    progress: null,
+    step: Number(latest?.total_steps || 0),
+    loss: latest?.validation_loss ?? null,
+    latest: sessions[0] || null,
+    sessions,
+    targetParameters: 1_000_000_000,
+  };
+}
+
 export async function handleAil(request, env) {
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method;
 
+  if (method === 'POST' && path === '/api/ail/training/report') {
+    const expected = env.AIL_TRAINING_SECRET || '';
+    const supplied = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+    if (!expected || !equalSecret(supplied, expected)) return fail(401, 'invalid training reporter credentials');
+    let p;
+    try { p = await readPayload(request, 12_000); } catch { return fail(400, 'invalid training report'); }
+    const runId = str(p.run_id, 80);
+    const status = ['session_completed', 'session_failed'].includes(p.status) ? p.status : '';
+    if (!runId || !status) return fail(400, 'run_id and a valid status are required');
+    const n = (v, max = 1e12) => Number.isFinite(Number(v)) ? Math.max(0, Math.min(max, Number(v))) : 0;
+    const details = {
+      workflow: str(p.workflow, 120), commit: str(p.commit, 80),
+      note: str(p.note, 500), checkpoint_saved: p.checkpoint_saved === true,
+      next_session_requested: p.next_session_requested === true,
+    };
+    await env.DB.prepare(
+      `INSERT INTO ail_training_sessions
+       (id, run_id, status, parameters, total_steps, session_steps, train_loss, validation_loss,
+        best_validation_loss, elapsed_seconds, compute, initialized_from_random_weights,
+        pretrained_model_used, created_at, details_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(run_id) DO UPDATE SET status=excluded.status, parameters=excluded.parameters,
+        total_steps=excluded.total_steps, session_steps=excluded.session_steps,
+        train_loss=excluded.train_loss, validation_loss=excluded.validation_loss,
+        best_validation_loss=excluded.best_validation_loss, elapsed_seconds=excluded.elapsed_seconds,
+        details_json=excluded.details_json`
+    ).bind(
+      newId(12), runId, status, n(p.parameters), n(p.total_steps), n(p.session_steps),
+      Number.isFinite(Number(p.train_loss)) ? n(p.train_loss) : null,
+      Number.isFinite(Number(p.validation_loss)) ? n(p.validation_loss) : null,
+      Number.isFinite(Number(p.best_validation_loss)) ? n(p.best_validation_loss) : null,
+      n(p.elapsed_seconds), str(p.compute || 'GitHub Actions CPU', 80),
+      p.initialized_from_random_weights === true ? 1 : 0,
+      p.pretrained_model_used === true ? 1 : 0, now(), JSON.stringify(details),
+    ).run();
+    return json({ ok: true, recorded: true, runId, training: await trainingStatus(env) }, 201);
+  }
+
   if (method === 'GET' && path === '/api/ail/status') {
+    const training = await trainingStatus(env);
     return json({
       service: 'AIL AI',
-      version: 'preview',
+      version: 'continuous-training-preview',
       targetParameters: 1_000_000_000,
       inference: {
         available: !!env.AI,
@@ -66,16 +140,7 @@ export async function handleAil(request, env) {
         model: env.AIL_INFERENCE_MODEL || '@cf/meta/llama-3.1-8b-instruct',
         isAilTrainedModel: false,
       },
-      training: {
-        status: env.AIL_TRAINING_URL ? 'endpoint_configured' : 'not_connected',
-        connected: false,
-        message: env.AIL_TRAINING_URL
-          ? 'Адрес сервера задан; проверка соединения ещё не настроена.'
-          : 'GPU-сервер обучения не подключён. Обучение не запущено.',
-        progress: null,
-        step: null,
-        loss: null,
-      },
+      training,
       updatedAt: now(),
     });
   }
