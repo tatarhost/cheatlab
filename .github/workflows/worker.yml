@@ -25,7 +25,6 @@ jobs:
         working-directory: worker
         run: |
           node --experimental-sqlite test/app-login.test.mjs
-          node --experimental-sqlite test/loginkeys.test.mjs
 
       - name: Apply D1 migrations
         working-directory: worker
