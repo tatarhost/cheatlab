@@ -935,6 +935,9 @@ document.addEventListener('click', (event) => {
   let destination;
   try { destination = new URL(anchor.href, document.baseURI); } catch { return; }
   if (destination.origin !== location.origin || !isAppLink(destination.pathname)) return;
+  // Standalone HTML pages (for example /ail.html) must load as real documents,
+  // not be swallowed by the single-page app router as an unknown app route.
+  if (/\.html?$/i.test(destination.pathname)) return;
 
   event.preventDefault();
   navigate(destination.pathname + destination.search + destination.hash);
