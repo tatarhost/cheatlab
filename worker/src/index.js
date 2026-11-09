@@ -1202,7 +1202,7 @@ const APP_LOGIN_TTL_MS = 5 * 60 * 1000;
 route('POST', /^\/api\/app-auth\/init$/, async (request, env) => {
   const client = clientOf(request);
   if (!client) return fail(401, 'missing client id');
-  if (!(await env.STORE.throttle(\`app-init:\${client}\`, 'auth', { cap: 8, windowMs: 15 * 60 * 1000 }))) {
+  if (!(await env.STORE.throttle(`app-init:${client}`, 'auth', { cap: 8, windowMs: 15 * 60 * 1000 }))) {
     return fail(429, 'too many app login attempts, try later');
   }
   const deviceCode = newSecret();
@@ -1243,7 +1243,7 @@ route('POST', /^\/api\/app-auth\/approve$/, async (request, env) => {
 route('POST', /^\/api\/app-auth\/poll$/, async (request, env) => {
   const client = clientOf(request);
   if (!client) return fail(401, 'missing client id');
-  if (!(await env.STORE.throttle(\`app-poll:\${client}\`, 'auth', { cap: 90, windowMs: 60 * 1000 }))) {
+  if (!(await env.STORE.throttle(`app-poll:${client}`, 'auth', { cap: 90, windowMs: 60 * 1000 }))) {
     return fail(429, 'slow down');
   }
   const payload = await readJson(request, 4096).catch(() => ({}));
