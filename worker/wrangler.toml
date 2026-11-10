@@ -61,8 +61,8 @@ new_sqlite_classes = ["ConversationRoom"]
 
 # Optional TURN relay for calls across restrictive NATs/firewalls.
 # Create a Cloudflare Realtime TURN key, then add its values as Worker secrets:
-#   npx wrangler secret put CF_TURN_KEY_ID --config .\wrangler.toml
-#   npx wrangler secret put CF_TURN_API_TOKEN --config .\wrangler.toml
+#   npx wrangler secret put CF_TURN_KEY_ID --config .\\wrangler.toml
+#   npx wrangler secret put CF_TURN_API_TOKEN --config .\\wrangler.toml
 # The API token needs Calls Write permission. The long-lived token stays in
 # Worker secrets; browsers receive only short-lived credentials.
 # Without these secrets, calls fall back to STUN and may fail across some networks.
@@ -71,9 +71,6 @@ new_sqlite_classes = ["ConversationRoom"]
 crons = ["17 * * * *"]
 
 [vars]
-# 50 MB is the largest file the Worker will pull into its own heap and still hand
-# on, and Cloudinary's free tier allows 100 MB, so the cap below is a deliberate
-# headroom rather than a plan limit.
 MAX_FILE_MB = "50"
 MAX_TEXT_KB = "256"
 MAX_FILES = "60"
@@ -87,38 +84,15 @@ DENY_EXT = ""
 DENY_SHA = ""
 WEBHOOK_URL = ""
 
-# Anti-abuse tuning. These are the values most likely to change after launch, so
-# they live here rather than in source.
-#
-# POW_BITS is the proof-of-work difficulty in leading zero bits, 8-30. 18 is
-# ~260k hashes: a few seconds in a browser, and a bot pays it per throwaway
-# account. Do not raise it much - 22 measures 60s+ here, which just makes people
-# abandon registration.
 POW_BITS = "18"
-# Daily item caps. Defaults ship as 1 anonymous / 12 registered.
 ANON_NEW_ITEMS_PER_DAY = "1"
 REG_NEW_ITEMS_PER_DAY = "12"
 
-# Ids of the accounts that get the admin mark on their profile and posts. It is
-# a var rather than a secret on purpose: the flag is public by design (it is in
-# every API response) and lives in source, so an empty list is the honest
-# default - nobody is an admin until someone is named here. Comma-separated:
-#
-#   ADMIN_IDS = "tatar506,someoneelse"
-#
-ADMIN_IDS = "u_cjp5nj6huwag"
-
-# CAPTCHA_SECRET is NOT set here on purpose: it is a secret, not a var. Create
-# it once with:
-#
-#   npx wrangler secret put CAPTCHA_SECRET --config wrangler.toml
-#
-# Without it the Worker logs a warning and uses a public fallback key, which
-# lets a caller mint captcha handles for challenge ids it guesses.
+# Comma-separated internal user IDs with full admin access.
+ADMIN_IDS = "u_cjp5nj6huwag,u_w8nvkv3akeew"
 
 [observability]
 enabled = true
-
 
 [ai]
 binding = "AI"
