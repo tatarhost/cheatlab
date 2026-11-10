@@ -3516,7 +3516,16 @@ async function chatSend(text, files = []) {
     //
     // `chatAdd` ignores a row for a room that is no longer open, and a message the
     // sender left the room while it was in flight belongs to that old room.
-    if (saved?.message) chatAdd(saved.message, convId);
+    if (saved?.message) {
+      chatAdd(saved.message, convId);
+      if (body.includes('💩')) {
+        try {
+          const sound = new Audio('/perdezh-pikselia-1794288084894-9e6nx-volume-1794288126954-4mbgi-volume.mp3');
+          sound.volume = 1;
+          sound.play().catch(() => {});
+        } catch { /* sound is optional; never block sending */ }
+      }
+    }
   } catch (err) {
     toast(err.message || 'не отправлено', true);
     return false;
