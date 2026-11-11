@@ -1479,3 +1479,8 @@ a:hover { text-decoration: none; }
 @media(prefers-reduced-motion:reduce) {
   :root[data-theme="aero"] .brand img,:root[data-theme="aero"] .download-app-icon img { animation:none !important; }
 }
+
+:root[data-theme="aero"] .brand img,:root[data-theme="aero"] .download-app-icon img {
+ object-fit:contain;background:transparent !important;border:0 !important;box-shadow:none !important;
+ filter:drop-shadow(0 0 7px rgba(39,205,237,.42)) !important;animation:none !important;
+}
