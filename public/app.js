@@ -5412,7 +5412,7 @@ async function route() {
 
 const THEME_KEY = 'cheatlab.theme';
 
-/** Classic black-and-white is the default; the choice is remembered per browser. */
+/** Frutiger Aero is the default; an explicit theme choice is remembered per browser. */
 function currentTheme() {
   return document.documentElement.dataset.theme === 'aero' ? 'aero' : 'dark';
 }
@@ -5435,8 +5435,8 @@ function initTheme() {
   const buttons = [document.getElementById('themeToggle'), document.getElementById('themeToggleMobile')].filter(Boolean);
   let selected = 'dark';
   try {
-    selected = localStorage.getItem('cheatlab.theme-user-choice') === '1' ? currentTheme() : 'dark';
-  } catch { selected = 'dark'; }
+    selected = localStorage.getItem('cheatlab.theme-user-choice') === '1' ? currentTheme() : 'aero';
+  } catch { selected = 'aero'; }
   applyTheme(selected);
   buttons.forEach((button) => button.addEventListener('click', () => {
     const next = currentTheme() === 'aero' ? 'dark' : 'aero';
