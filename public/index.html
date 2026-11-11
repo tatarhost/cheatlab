@@ -51,9 +51,10 @@ document.write('<base href="' +
      app.js gets a chance to set the stored preference. -->
 <script>
   try {
-    // One-time migration: make classic black-and-white the default for everyone.
-    if (localStorage.getItem('cheatlab.theme-user-choice') !== '1') {
+    // One-time migration: make Frutiger Aero the default for every existing browser.
+    if (localStorage.getItem('cheatlab.theme-default-aero-v1') !== '1') {
       localStorage.setItem('cheatlab.theme', 'aero');
+      localStorage.setItem('cheatlab.theme-default-aero-v1', '1');
     }
     var t = localStorage.getItem('cheatlab.theme');
     if (t !== 'dark' && t !== 'aero') t = 'aero';
