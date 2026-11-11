@@ -5435,8 +5435,8 @@ function initTheme() {
   const buttons = [document.getElementById('themeToggle'), document.getElementById('themeToggleMobile')].filter(Boolean);
   let selected = 'dark';
   try {
-    selected = localStorage.getItem('cheatlab.theme-user-choice') === '1' ? currentTheme() : 'aero';
-  } catch { selected = 'aero'; }
+    selected = localStorage.getItem('cheatlab.theme-user-choice') === '1' ? currentTheme() : 'dark';
+  } catch { selected = 'dark'; }
   applyTheme(selected);
   buttons.forEach((button) => button.addEventListener('click', () => {
     const next = currentTheme() === 'aero' ? 'dark' : 'aero';
