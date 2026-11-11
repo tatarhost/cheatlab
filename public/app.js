@@ -5219,7 +5219,7 @@ async function viewDownloads() {
   const card = h('section', { class: 'download-page' },
     h('div', { class: 'download-hero' },
       h('div', { class: 'download-kicker', text: 'CHEATLAB · ANDROID · UPDATE CHANNEL' }),
-      h('div', { class: 'download-app-icon' }, h('img', { src: 'assets/logo.png', alt: 'CHEATLAB' })),
+      h('div', { class: 'download-app-icon' }, h('img', { src: currentTheme() === 'aero' ? 'https://raw.githubusercontent.com/tatarhost/cheatlab/main/190e4da86a7db43fe5ef27266e539296c78ad000968d946257e82f9e57bc6781.gif' : 'assets/logo.png', alt: 'CHEATLAB' })),
       h('h1', { text: 'CHEATLAB для Android' }),
       h('p', { class: 'download-lead', text: 'Здесь отображается последняя опубликованная версия приложения. Страница проверяет GitHub Releases и показывает доступный APK.' }),
       h('div', { class: 'download-meta' },
@@ -5412,7 +5412,7 @@ async function route() {
 
 const THEME_KEY = 'cheatlab.theme';
 
-/** Frutiger Aero is the default; an explicit theme choice is remembered per browser. */
+/** Classic black-and-white is the default; Aero uses the published animated GIF logo. */
 function currentTheme() {
   return document.documentElement.dataset.theme === 'aero' ? 'aero' : 'dark';
 }
@@ -5428,7 +5428,14 @@ function applyTheme(next) {
   if (label) label.textContent = next === 'dark' ? 'Frutiger Aero' : 'Тёмная тема';
   if (mobileBtn) mobileBtn.title = next === 'dark' ? 'Включить Frutiger Aero' : 'Включить тёмную тему';
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', next === 'aero' ? '#b9edff' : '#071522');
+  if (meta) meta.setAttribute('content', next === 'aero' ? '#b9edff' : '#0b0b0b');
+  document.querySelectorAll('img[data-classic-logo][data-aero-logo]').forEach((img) => {
+    img.src = next === 'aero' ? img.dataset.aeroLogo : img.dataset.classicLogo;
+  });
+  const favicon = document.querySelector('link[rel="icon"]');
+  if (favicon) favicon.href = next === 'aero'
+    ? 'https://raw.githubusercontent.com/tatarhost/cheatlab/main/190e4da86a7db43fe5ef27266e539296c78ad000968d946257e82f9e57bc6781.gif'
+    : 'assets/logo.png';
 }
 
 function initTheme() {
