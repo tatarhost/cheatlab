@@ -39,25 +39,25 @@ document.write('<base href="' +
 <meta property="og:image:height" content="640">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="theme-color" content="#0b0b0b">
-<link rel="icon" href="assets/logo.png">
+<link rel="icon" href="assets/logo-aero.svg">
 <!-- v=3 on both assets: GitHub Pages serves stale copies to returning
      browsers otherwise, and every deploy since can leave old code doing the
      work. Bump the query when the site (not the Worker) changes. -->
 <link rel="stylesheet" href="style.css?v=18">
-<link rel="stylesheet" href="redesign.css?v=34">
+<link rel="stylesheet" href="redesign.css?v=35">
 <script src="humancheck.js?v=3"></script>
 
 <!-- Applied before first paint: without this the page flashes white before
      app.js gets a chance to set the stored preference. -->
 <script>
   try {
-    // One-time migration: make Frutiger Aero the default for every existing browser.
-    if (localStorage.getItem('cheatlab.theme-default-aero-v1') !== '1') {
-      localStorage.setItem('cheatlab.theme', 'aero');
-      localStorage.setItem('cheatlab.theme-default-aero-v1', '1');
+    // Restore the classic black-and-white site theme as the default.
+    if (localStorage.getItem('cheatlab.theme-default-classic-v1') !== '1') {
+      localStorage.setItem('cheatlab.theme', 'dark');
+      localStorage.setItem('cheatlab.theme-default-classic-v1', '1');
     }
     var t = localStorage.getItem('cheatlab.theme');
-    if (t !== 'dark' && t !== 'aero') t = 'aero';
+    if (t !== 'dark' && t !== 'aero') t = 'dark';
     document.documentElement.dataset.theme = t;
     var m = document.querySelector('meta[name="theme-color"]');
     if (m) m.setAttribute('content', t === 'aero' ? '#b9edff' : '#071522');
@@ -178,7 +178,7 @@ document.write('<base href="' +
 
   <aside class="rail">
     <a class="brand" href="./">
-      <img src="assets/logo.png" alt="" width="40" height="40">
+      <img src="assets/logo-aero.svg" alt="" width="40" height="40">
       <span class="brand-name">CHEAT<b>LAB</b></span>
     </a>
 
@@ -284,6 +284,6 @@ document.write('<base href="' +
 
   <script src="studio.js?v=6"></script>
   <script src="app.js?v=47" type="module"></script>
-  <script src="release.js?v=3"></script>
+  <script src="release.js?v=4"></script>
 </body>
 </html>
