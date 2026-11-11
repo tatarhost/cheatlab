@@ -1452,3 +1452,30 @@ a:hover { text-decoration: none; }
     will-change:auto;
   }
 }
+
+
+/* CHEATLAB Frutiger Aero mascot logo */
+:root[data-theme="aero"] .brand { display:inline-flex; align-items:center; gap:10px; }
+:root[data-theme="aero"] .brand img,
+:root[data-theme="aero"] .download-app-icon img {
+  width:44px !important; height:44px !important; object-fit:contain;
+  padding:0 !important; border:0 !important; border-radius:12px !important;
+  background:transparent !important; box-shadow:none !important;
+  filter:drop-shadow(0 2px 3px rgba(0,91,145,.32)) drop-shadow(0 0 8px rgba(28,211,239,.38));
+  animation:cl-aero-logo-flow 7s linear infinite,cl-aero-logo-float 3.4s ease-in-out infinite;
+  transform-origin:50% 55%;
+}
+@keyframes cl-aero-logo-flow {
+  from { filter:hue-rotate(0deg) saturate(1.15) drop-shadow(0 2px 3px rgba(0,91,145,.32)) drop-shadow(0 0 8px rgba(28,211,239,.38)); }
+  to { filter:hue-rotate(55deg) saturate(1.35) drop-shadow(0 2px 3px rgba(0,91,145,.32)) drop-shadow(0 0 11px rgba(28,211,239,.48)); }
+}
+@keyframes cl-aero-logo-float {
+  0%,100% { transform:translateY(0) rotate(0deg); }
+  50% { transform:translateY(-2px) rotate(-1deg); }
+}
+:root[data-theme="aero"] .brand-name {
+  color:#075477; text-shadow:0 1px 0 rgba(255,255,255,.95),0 2px 8px rgba(54,178,207,.2);
+}
+@media(prefers-reduced-motion:reduce) {
+  :root[data-theme="aero"] .brand img,:root[data-theme="aero"] .download-app-icon img { animation:none !important; }
+}
