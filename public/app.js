@@ -1190,6 +1190,63 @@ const FEED_PATH = {
   file: '/files',
 };
 
+let newYearClockInterval = null;
+
+function newYearWidget() {
+  const widget = h('section', { class: 'new-year-widget', 'aria-label': 'Обратный отсчёт до Нового года' },
+    h('div', { class: 'new-year-widget-top' },
+      h('span', { class: 'new-year-eyebrow', text: 'CHEATLAB · ПРАЗДНИЧНЫЙ ОТСЧЁТ' }),
+      h('span', { class: 'new-year-sparkle', 'aria-hidden': 'true', text: '✦ ✧ ✦' }),
+    ),
+    h('h2', { class: 'new-year-title', id: 'newYearTitle', text: 'До Нового года осталось' }),
+    h('div', { class: 'new-year-digits', id: 'newYearDigits', role: 'timer', 'aria-live': 'off' },
+      ...[['days','дней'],['hours','часов'],['minutes','минут'],['seconds','секунд']].map(([key,label]) =>
+        h('div', { class: 'new-year-unit' },
+          h('strong', { id: 'newYear-' + key, text: key === 'days' ? '00' : '00' }),
+          h('span', { text: label }),
+        ),
+      ),
+    ),
+    h('p', { class: 'new-year-caption', id: 'newYearCaption', text: 'Время до полуночи по местному времени' }),
+  );
+  const update = () => {
+    const now = new Date();
+    const yearStart = new Date(now.getFullYear(), 0, 1, 0, 0, 0);
+    const nextDay = new Date(now.getFullYear(), 0, 2, 0, 0, 0);
+    const celebrating = now >= yearStart && now < nextDay;
+    document.documentElement.dataset.newYearCelebration = celebrating ? 'true' : 'false';
+    const title = widget.querySelector('#newYearTitle');
+    const digits = widget.querySelector('#newYearDigits');
+    const caption = widget.querySelector('#newYearCaption');
+    if (celebrating) {
+      title.textContent = 'С Новым годом!';
+      digits.hidden = true;
+      caption.textContent = 'Пусть новый год принесёт много радости, удачи и крутых открытий! 🎉';
+      widget.classList.add('is-celebrating');
+      return;
+    }
+    widget.classList.remove('is-celebrating');
+    digits.hidden = false;
+    title.textContent = 'До Нового года осталось';
+    caption.textContent = 'До 1 января ' + (now.getFullYear() + 1) + ' · по местному времени';
+    const target = new Date(now.getFullYear() + 1, 0, 1, 0, 0, 0);
+    let left = Math.max(0, Math.floor((target.getTime() - now.getTime()) / 1000));
+    const values = {
+      days: Math.floor(left / 86400),
+      hours: Math.floor((left % 86400) / 3600),
+      minutes: Math.floor((left % 3600) / 60),
+      seconds: left % 60,
+    };
+    Object.entries(values).forEach(([key,value]) => {
+      const node = widget.querySelector('#newYear-' + key);
+      if (node) node.textContent = key === 'days' ? String(value) : String(value).padStart(2, '0');
+    });
+  };
+  update();
+  newYearClockInterval = window.setInterval(update, 1000);
+  return widget;
+}
+
 async function viewFeed(path, url) {
   const type = FEED_TYPE[path] || '';
   const q = url.searchParams.get('q') || '';
@@ -1216,6 +1273,8 @@ async function viewFeed(path, url) {
         : (type ? FEED_PATH[type] : '/')),
     ),
   );
+
+  if (path === '/' && !q && !tag && !game) $view.append(newYearWidget());
 
   const params = new URLSearchParams();
   if (type) params.set('type', type);
@@ -5345,6 +5404,8 @@ async function viewAil() {
 let renderToken = 0;
 async function route() {
   const token = ++renderToken;
+  if (newYearClockInterval) { clearInterval(newYearClockInterval); newYearClockInterval = null; }
+  delete document.documentElement.dataset.newYearCelebration;
   const rawPath = stripBase(location.pathname);
   const path = rawPath.length > 1 ? rawPath.replace(/\/+$/, '') : rawPath;
   const url = new URL(location.href);
