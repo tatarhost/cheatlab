@@ -1484,3 +1484,70 @@ a:hover { text-decoration: none; }
  object-fit:contain;background:transparent !important;border:0 !important;box-shadow:none !important;
  filter:drop-shadow(0 0 7px rgba(39,205,237,.42)) !important;animation:none !important;
 }
+
+/* CHEATLAB New Year countdown and midnight celebration */
+.new-year-widget {
+  position:relative; isolation:isolate; overflow:hidden;
+  margin: 0 0 22px; padding: clamp(18px,3vw,28px);
+  border:1px solid rgba(255,255,255,.16); border-radius:22px;
+  color:#fff;
+  background:
+    radial-gradient(ellipse at 12% 0%,rgba(255,255,255,.18),transparent 42%),
+    linear-gradient(120deg,#101820,#142d32 55%,#10241f);
+  box-shadow:0 14px 34px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.22);
+}
+.new-year-widget::before {
+  content:""; position:absolute; inset:-45%;
+  z-index:-1; pointer-events:none;
+  background:linear-gradient(115deg,transparent 38%,rgba(255,255,255,.10) 48%,transparent 58%);
+  transform:translateX(-35%); animation:new-year-shimmer 8s ease-in-out infinite;
+}
+.new-year-widget-top { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.new-year-eyebrow { font-size:11px; font-weight:800; letter-spacing:.14em; opacity:.72; }
+.new-year-sparkle { color:#ffe8a3; letter-spacing:.4em; }
+.new-year-title { margin:15px 0 17px; color:#fff; font-size:clamp(22px,4vw,32px); letter-spacing:-.035em; }
+.new-year-digits { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; max-width:620px; }
+.new-year-unit {
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px;
+  min-height:86px; padding:12px 6px; border:1px solid rgba(255,255,255,.2); border-radius:15px;
+  background:linear-gradient(155deg,rgba(255,255,255,.18),rgba(255,255,255,.055));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.22),0 6px 16px rgba(0,0,0,.12);
+  backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+}
+.new-year-unit strong { font-size:clamp(25px,5vw,39px); line-height:1; font-variant-numeric:tabular-nums; }
+.new-year-unit span { font-size:12px; opacity:.78; }
+.new-year-caption { margin:16px 0 0; font-size:13px; line-height:1.5; color:rgba(255,255,255,.78); }
+.new-year-widget.is-celebrating {
+  text-align:center; padding-block:clamp(30px,6vw,54px);
+  background:
+    radial-gradient(circle at 18% 15%,rgba(255,223,135,.32),transparent 30%),
+    radial-gradient(circle at 85% 80%,rgba(74,235,180,.22),transparent 35%),
+    linear-gradient(125deg,#123b31,#17644e 48%,#123c52);
+  border-color:rgba(255,230,160,.55);
+  box-shadow:0 0 0 1px rgba(255,220,140,.12),0 18px 48px rgba(5,50,38,.3),inset 0 1px 0 rgba(255,255,255,.35);
+  animation:new-year-celebrate 3s ease-in-out infinite;
+}
+.new-year-widget.is-celebrating .new-year-title {
+  margin:22px 0 12px; font-size:clamp(34px,7vw,58px);
+  color:#fff2c4; text-shadow:0 3px 20px rgba(255,216,116,.4);
+}
+.new-year-widget.is-celebrating .new-year-caption { max-width:520px; margin-inline:auto; font-size:16px; color:#effff7; }
+html[data-new-year-celebration="true"] body {
+  background-color:#09251e;
+  background-image:radial-gradient(ellipse at 50% 0%,rgba(32,145,104,.18),transparent 55%);
+}
+html[data-new-year-celebration="true"] .rail {
+  border-color:rgba(221,190,112,.28);
+  box-shadow:0 8px 35px rgba(0,35,24,.24);
+}
+@keyframes new-year-shimmer { 0%,100%{transform:translateX(-35%)} 50%{transform:translateX(35%)} }
+@keyframes new-year-celebrate { 0%,100%{filter:saturate(1)} 50%{filter:saturate(1.18) brightness(1.06)} }
+@media(max-width:600px) {
+ .new-year-widget { border-radius:18px; padding:18px 14px; }
+ .new-year-digits { gap:6px; }
+ .new-year-unit { min-height:72px; border-radius:12px; }
+ .new-year-unit span { font-size:10px; }
+}
+@media(prefers-reduced-motion:reduce) {
+ .new-year-widget::before,.new-year-widget.is-celebrating { animation:none !important; }
+}
