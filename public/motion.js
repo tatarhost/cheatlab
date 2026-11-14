@@ -1,11 +1,26 @@
-/* CHEATLAB motion controller: one route-level entrance, no animated card cascade. */
+/* CHEATLAB motion + SPA route accessibility.
+   One page-level entrance per route; no repeated card choreography. */
 (() => {
   const view = document.getElementById('view');
   if (!view) return;
 
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   let lastSurface = null;
+  let hasRenderedInitialRoute = false;
   let clearTimer = 0;
+
+  function syncRouteContext(surface, moveFocus) {
+    const heading = surface.querySelector('h1');
+    if (!heading) return;
+
+    const label = heading.textContent.trim().replace(/\s+/g, ' ');
+    if (label) document.title = label + ' — CHEATLAB';
+
+    if (moveFocus) {
+      heading.setAttribute('tabindex', '-1');
+      heading.focus({ preventScroll: true });
+    }
+  }
 
   function enterCurrentSurface() {
     const surface = view.firstElementChild;
@@ -15,12 +30,16 @@
       return;
     }
 
-    // The router intentionally paints a temporary loading line before the page.
-    // Wait for a real first surface so users do not see two consecutive entrances.
+    // Ignore the router's temporary loading state; animate and announce only
+    // the fully rendered view.
     if (surface.matches('.hint') && surface.textContent.trim() === 'Загрузка...') return;
     if (surface === lastSurface) return;
 
+    const moveFocus = hasRenderedInitialRoute;
+    hasRenderedInitialRoute = true;
     lastSurface = surface;
+    syncRouteContext(surface, moveFocus);
+
     window.clearTimeout(clearTimer);
     view.classList.remove('cl-view-enter');
     if (reduceMotion.matches) return;
