@@ -1,0 +1,179 @@
+/*
+ * CHEATLAB motion layer
+ * Built on the existing DESIGN.md tokens: --ease, --ease-move,
+ * --duration-fast, --duration-ui and --duration-panel.
+ * One entrance per surface; no cascading card or row choreography.
+ */
+
+/* Keep existing component transitions on the same motion curve. */
+:where(.btn, .icon-btn, .theme-toggle-mobile, .rail-stat, .tab, .nav-link,
+       .mail-folder, .chat-attach, .chat-send, .cl-release-close) {
+  transition-timing-function: var(--ease);
+}
+
+/* Controls that previously had only color feedback also get a short press response. */
+.tab,
+.mail-folder,
+.theme-toggle-mobile,
+.rail-stat,
+.chat-attach,
+.chat-send {
+  transition:
+    transform var(--duration-fast) var(--ease),
+    color var(--duration-ui) var(--ease),
+    background-color var(--duration-ui) var(--ease),
+    border-color var(--duration-ui) var(--ease),
+    opacity var(--duration-ui) var(--ease);
+}
+
+.btn:not(:disabled):active,
+.icon-btn:not(:disabled):active,
+.theme-toggle-mobile:not(:disabled):active,
+.rail-stat:active,
+.tab:active,
+.nav-link:active,
+.mail-folder:active,
+.chat-attach:not(:disabled):active,
+.chat-send:not(:disabled):active,
+.cl-release-close:not(:disabled):active {
+  transform: scale(.97);
+}
+
+/* Hover is for a real mouse/trackpad, never for a touchscreen tap. */
+@media (hover: hover) and (pointer: fine) {
+  .btn:not(:disabled):hover,
+  .icon-btn:not(:disabled):hover,
+  .theme-toggle-mobile:not(:disabled):hover,
+  .tab:hover,
+  .mail-folder:hover {
+    transform: translateY(-1px);
+  }
+
+  .nav-link:hover { transform: translateX(2px); }
+  .row:hover .row-thumb img { transform: scale(1.035); }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .nav-link:hover { transform: none; }
+  .row:hover .row-thumb img { transform: none; }
+}
+
+/* One coordinated entrance for each overlay, not for its children. */
+.modal-backdrop,
+.st-back,
+.cl-release-backdrop {
+  animation: cl-motion-backdrop-in var(--duration-ui) var(--ease) both;
+}
+
+.modal-backdrop .auth-card,
+.st-back .st,
+.cl-release-backdrop .cl-release-dialog {
+  animation: cl-motion-dialog-in var(--duration-panel) var(--ease) both !important;
+}
+
+@keyframes cl-motion-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes cl-motion-dialog-in {
+  from { opacity: 0; transform: translateY(6px) scale(.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* The messenger drawer and its scrim enter together. */
+.messenger-drawer {
+  animation: cl-motion-drawer-in var(--duration-panel) var(--ease) both;
+}
+
+.messenger-drawer::before {
+  animation: cl-motion-scrim-in var(--duration-ui) var(--ease) both;
+}
+
+@keyframes cl-motion-drawer-in {
+  from { opacity: .86; transform: translateX(-16px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes cl-motion-scrim-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* A small arrival cue for feedback and the mobile navigation rail. */
+.toast:not([hidden]) {
+  animation: cl-motion-toast-in 160ms var(--ease) both !important;
+}
+
+@keyframes cl-motion-toast-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 900px) {
+  #view.cl-view-enter > :first-child {
+    animation: cl-motion-route-mobile 200ms var(--ease) both !important;
+  }
+
+  body > .nav.mobile-floating-nav {
+    animation: cl-motion-mobile-nav-in 190ms var(--ease) both !important;
+  }
+
+  .modal-backdrop .auth-card,
+  .st-back .st,
+  .cl-release-backdrop .cl-release-dialog {
+    animation-duration: 210ms !important;
+  }
+
+  .messenger-drawer {
+    animation-duration: 210ms;
+  }
+}
+
+@keyframes cl-motion-route-mobile {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes cl-motion-mobile-nav-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Reduced motion keeps a brief state cue but removes spatial movement. */
+@keyframes cl-motion-fade-only {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn:not(:disabled):active,
+  .icon-btn:not(:disabled):active,
+  .theme-toggle-mobile:not(:disabled):active,
+  .rail-stat:active,
+  .tab:active,
+  .nav-link:active,
+  .mail-folder:active,
+  .chat-attach:not(:disabled):active,
+  .chat-send:not(:disabled):active,
+  .cl-release-close:not(:disabled):active {
+    transform: none !important;
+  }
+
+  #view.cl-view-enter > :first-child,
+  .modal-backdrop,
+  .st-back,
+  .cl-release-backdrop,
+  .modal-backdrop .auth-card,
+  .st-back .st,
+  .cl-release-backdrop .cl-release-dialog,
+  .messenger-drawer,
+  .toast:not([hidden]),
+  body > .nav.mobile-floating-nav {
+    animation: cl-motion-fade-only 100ms linear both !important;
+  }
+
+  .messenger-drawer::before { animation: none !important; }
+  .nav-link:hover,
+  .row:hover .row-thumb img { transform: none !important; }
+}
