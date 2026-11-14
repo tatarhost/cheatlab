@@ -26,7 +26,7 @@
   --duration-panel: 260ms;
   --shell-width: 1500px;
 }
-:root:not([data-theme="aero"])[data-theme="light] {
+:root:not([data-theme="aero"])[data-theme="light"] {
   color-scheme: light;
   --paper: #f5f7fa;
   --fog: #ffffff;
