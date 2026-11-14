@@ -907,7 +907,18 @@ input::selection, textarea::selection { background: var(--ink); color: var(--pap
     min-height: 40px;
     padding-inline: 11px;
   }
-  body > header.topbar.mobile-fixed-search .topbar-actions { display: none !important; }
+  body > header.topbar.mobile-fixed-search .topbar-actions {
+    display: flex !important;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 6px;
+  }
+  body > header.topbar.mobile-fixed-search .topbar-actions .btn-primary { display: none !important; }
+  body > header.topbar.mobile-fixed-search .theme-toggle-mobile {
+    display: grid !important;
+    width: 40px;
+    height: 40px;
+  }
   .view {
     width: 100% !important;
     max-width: 100% !important;
