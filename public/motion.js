@@ -5,13 +5,17 @@
   if (!view) return;
 
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  document.querySelectorAll('svg.i').forEach((node) => node.setAttribute('aria-hidden', 'true'));
   let lastSurface = null;
   let hasRenderedInitialRoute = false;
   let clearTimer = 0;
 
   function syncRouteContext(surface, moveFocus) {
     const heading = surface.querySelector('h1');
-    if (!heading) return;
+    if (!heading) {
+      document.title = 'CHEATLAB';
+      return;
+    }
 
     const label = heading.textContent.trim().replace(/\s+/g, ' ');
     if (label) document.title = label + ' — CHEATLAB';
