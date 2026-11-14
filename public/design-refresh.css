@@ -89,7 +89,9 @@ button, .btn, .nav-link { touch-action: manipulation; }
 #main-content:focus { outline: none; }
 .background-motion-toggle { cursor: pointer; }
 :root:not([data-theme="aero"]) .background-motion-toggle { display: none !important; }
-@media (prefers-reduced-motion: reduce) { .site-video-background { display: none !important; } }
+@media (prefers-reduced-motion: reduce) {
+  .site-video-background, .background-motion-toggle { display: none !important; }
+}
 
 /* App shell */
 .app {
