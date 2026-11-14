@@ -47,6 +47,7 @@
 html {
   background: var(--paper);
   scroll-behavior: smooth;
+  scroll-padding-block-start: 76px;
   scrollbar-color: var(--line) var(--paper);
 }
 body {
@@ -62,6 +63,7 @@ body {
 a { text-decoration-thickness: 1px; text-underline-offset: 3px; }
 a:hover { text-decoration: none; }
 button, input, select, textarea { font: inherit; }
+:where(button, a, input, select, textarea) { -webkit-tap-highlight-color: transparent; }
 button, .btn, .nav-link { touch-action: manipulation; }
 :focus-visible {
   outline: 2px solid var(--ink);
@@ -69,6 +71,25 @@ button, .btn, .nav-link { touch-action: manipulation; }
   border-radius: 6px;
 }
 :where(input, textarea, select) { color-scheme: inherit; }
+
+.cl-skip-link {
+  position: fixed;
+  z-index: 50000;
+  top: 10px;
+  left: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--fog);
+  color: var(--ink);
+  transform: translateY(-160%);
+  transition: transform var(--duration-ui) var(--ease);
+}
+.cl-skip-link:focus { transform: translateY(0); }
+#main-content:focus { outline: none; }
+.background-motion-toggle { cursor: pointer; }
+:root:not([data-theme="aero"]) .background-motion-toggle { display: none !important; }
+@media (prefers-reduced-motion: reduce) { .site-video-background { display: none !important; } }
 
 /* App shell */
 .app {
@@ -782,8 +803,8 @@ button, .btn, .nav-link { touch-action: manipulation; }
   animation: cl-route-enter 240ms cubic-bezier(.23, 1, .32, 1) both !important;
 }
 @keyframes cl-route-enter {
-  from { opacity: 0; transform: translateY(9px); filter: blur(2px); }
-  to { opacity: 1; transform: translateY(0); filter: blur(0); }
+  from { opacity: 0; transform: translateY(9px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* Publish action remains easy to reach but loses the inflated pill treatment. */
@@ -923,6 +944,9 @@ input::selection, textarea::selection { background: var(--ink); color: var(--pap
     width: 100% !important;
     max-width: 100% !important;
     padding: 24px 16px calc(112px + env(safe-area-inset-bottom)) !important;
+  }
+  input, select, textarea, .input, .select, .textarea, .chat-input, .chat-kind {
+    font-size: 16px !important;
   }
   .page-head { align-items: flex-start; flex-wrap: wrap; gap: 12px; padding-bottom: 16px; margin-bottom: 20px; }
   .page-head h1, .view h1 { font-size: clamp(26px, 7vw, 34px); }
