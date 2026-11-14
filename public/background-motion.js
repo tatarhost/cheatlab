@@ -25,6 +25,7 @@
 
     for (const button of controls) {
       button.setAttribute('aria-pressed', String(shouldPlay));
+      button.setAttribute('aria-label', 'Анимация фонового видео');
       button.title = shouldPlay ? 'Остановить фоновую анимацию' : 'Включить фоновую анимацию';
       const label = button.querySelector('span');
       if (label) label.textContent = shouldPlay ? 'Фон: движется' : 'Фон: остановлен';
