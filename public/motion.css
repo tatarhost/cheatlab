@@ -168,7 +168,6 @@
   .st-back .st,
   .cl-release-backdrop .cl-release-dialog,
   .messenger-drawer,
-  .toast:not([hidden]),
   body > .nav.mobile-floating-nav {
     animation: cl-motion-fade-only 100ms linear both !important;
   }
