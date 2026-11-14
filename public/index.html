@@ -87,7 +87,9 @@ document.write('<base href="' +
         source.setAttribute('src', url);
         video.load();
       }
-      video.play().catch(() => {});
+      // The background-motion controller owns playback. Do not autoplay
+      // before it has checked the selected theme and reduced-motion preference.
+      video.pause();
     };
     setVideo();
     if (mobile.addEventListener) mobile.addEventListener('change', setVideo);
@@ -213,7 +215,7 @@ document.write('<base href="' +
         <svg class="i" aria-hidden="true"><use href="#i-sun" id="themeIcon"/></svg>
         <span id="themeLabel">Тёмная тема</span>
       </button>
-      <button class="rail-stat theme-toggle background-motion-toggle" id="motionToggleDesktop" type="button" aria-label="Остановить анимированный фон" aria-pressed="true">
+      <button class="rail-stat theme-toggle background-motion-toggle" id="motionToggleDesktop" type="button" aria-label="Анимация фонового видео" aria-pressed="true">
         <svg class="i" aria-hidden="true"><use href="#i-video"/></svg>
         <span>Остановить фон</span>
       </button>
@@ -230,7 +232,7 @@ document.write('<base href="' +
       </form>
       <div class="topbar-actions">
         <button class="theme-toggle-mobile" id="themeToggleMobile" type="button" aria-label="Сменить тему" title="Сменить тему"><svg class="i"><use href="#i-palette"/></svg></button>
-        <button class="theme-toggle-mobile background-motion-toggle" id="motionToggleMobile" type="button" aria-label="Остановить анимированный фон" aria-pressed="true" title="Остановить анимированный фон"><svg class="i"><use href="#i-video"/></svg></button>
+        <button class="theme-toggle-mobile background-motion-toggle" id="motionToggleMobile" type="button" aria-label="Анимация фонового видео" aria-pressed="true" title="Остановить фоновую анимацию"><svg class="i"><use href="#i-video"/></svg></button>
         <a class="btn btn-primary" href="./new"><svg class="i"><use href="#i-plus"/></svg>Опубликовать</a>
       </div>
     </header>
