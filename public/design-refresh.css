@@ -86,7 +86,7 @@ button, .btn, .nav-link { touch-action: manipulation; }
   transition: transform var(--duration-ui) var(--ease);
 }
 .cl-skip-link:focus { transform: translateY(0); }
-#main-content:focus { outline: none; }
+
 .background-motion-toggle { cursor: pointer; }
 :root:not([data-theme="aero"]) .background-motion-toggle { display: none !important; }
 @media (prefers-reduced-motion: reduce) {
@@ -233,6 +233,7 @@ button, .btn, .nav-link { touch-action: manipulation; }
 }
 .search input::placeholder { color: var(--mute); opacity: .85; }
 .topbar-actions { align-items: center; gap: 8px; }
+@media (min-width: 901px) { .theme-toggle-mobile { display: none !important; } }
 .theme-toggle-mobile {
   display: grid;
   place-items: center;
@@ -269,6 +270,7 @@ button, .btn, .nav-link { touch-action: manipulation; }
   line-height: 1.08;
   letter-spacing: -.052em;
   text-wrap: balance;
+  scroll-margin-block-start: 84px;
 }
 .page-sub {
   max-width: 66ch;
