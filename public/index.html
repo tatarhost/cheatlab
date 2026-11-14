@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 
 <!-- GitHub Pages serves this project from https://user.github.io/cheatlab/, so
      the app root is a subpath. <base> makes relative assets resolve correctly
@@ -69,6 +69,7 @@ document.write('<base href="' +
 </script>
 </head>
 <body>
+<a class="cl-skip-link" href="#main-content">Перейти к содержимому</a>
 <video id="siteVideoBackground" class="site-video-background" autoplay muted loop playsinline webkit-playsinline preload="metadata" aria-hidden="true">
   <source id="siteVideoSource" src="https://raw.githubusercontent.com/tatarhost/cheatlab/main/pc.mp4" type="video/mp4">
 </video>
@@ -212,12 +213,16 @@ document.write('<base href="' +
         <svg class="i" aria-hidden="true"><use href="#i-sun" id="themeIcon"/></svg>
         <span id="themeLabel">Тёмная тема</span>
       </button>
+      <button class="rail-stat theme-toggle background-motion-toggle" id="motionToggleDesktop" type="button" aria-label="Остановить анимированный фон" aria-pressed="true">
+        <svg class="i" aria-hidden="true"><use href="#i-video"/></svg>
+        <span>Остановить фон</span>
+      </button>
       <p class="rail-note" id="railNote">Анонимно доступна одна публикация в сутки. С аккаунтом — четыре, без проверки.</p>
       <a class="rail-stat" href="./stats"><span id="statItems">0</span> публикаций</a>
     </div>
   </aside>
 
-  <main class="main">
+  <main class="main" id="main-content" tabindex="-1">
     <header class="topbar">
       <form class="search" id="searchForm" role="search">
         <svg class="i"><use href="#i-search"/></svg>
@@ -225,6 +230,7 @@ document.write('<base href="' +
       </form>
       <div class="topbar-actions">
         <button class="theme-toggle-mobile" id="themeToggleMobile" type="button" aria-label="Сменить тему" title="Сменить тему"><svg class="i"><use href="#i-palette"/></svg></button>
+        <button class="theme-toggle-mobile background-motion-toggle" id="motionToggleMobile" type="button" aria-label="Остановить анимированный фон" aria-pressed="true" title="Остановить анимированный фон"><svg class="i"><use href="#i-video"/></svg></button>
         <a class="btn btn-primary" href="./new"><svg class="i"><use href="#i-plus"/></svg>Опубликовать</a>
       </div>
     </header>
@@ -289,6 +295,7 @@ document.write('<base href="' +
   <script src="studio.js?v=6"></script>
   <script src="app.js?v=49" type="module"></script>
   <script src="motion.js?v=1"></script>
+  <script src="background-motion.js?v=1"></script>
   <script src="release.js?v=7"></script>
 </body>
 </html>
