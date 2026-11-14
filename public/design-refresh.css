@@ -1111,3 +1111,21 @@ input::selection, textarea::selection { background: var(--ink); color: var(--pap
     border: 1px solid ButtonText !important;
   }
 }
+
+/* Keep white labels readable on the optional Frutiger Aero aqua controls. */
+:root[data-theme="aero"] .btn-primary,
+:root[data-theme="aero"] .chat-send,
+:root[data-theme="aero"] .cl-release-close,
+:root[data-theme="aero"] .cl-publish-global {
+  border-color: rgba(255,255,255,.72) !important;
+  background: linear-gradient(180deg,#0b759e,#056b96) !important;
+  color: #ffffff !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.34),0 5px 16px rgba(0,76,108,.2) !important;
+}
+:root[data-theme="aero"] .btn-primary:hover,
+:root[data-theme="aero"] .chat-send:hover,
+:root[data-theme="aero"] .cl-release-close:hover,
+:root[data-theme="aero"] .cl-publish-global:hover {
+  background: linear-gradient(180deg,#0a6f97,#045e86) !important;
+  color: #ffffff !important;
+}
