@@ -1,0 +1,1523 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f1efe9">
+  <meta name="description" content="Интерактивная лаборатория физики интерфейса CHEATLAB.">
+  <title>Лаборатория движения — CHEATLAB</title>
+  <style>
+    /*
+     * Самодостаточная лаборатория движения CHEATLAB.
+     * Здесь нет внешних шрифтов, библиотек, изображений или запросов к сети.
+     */
+    :root {
+      --paper: #f1efe9;
+      --card: #fbfaf7;
+      --graphite: #1c1c20;
+      --graphite-soft: #34343a;
+      --ink-muted: #68686d;
+      --line: rgba(25, 25, 28, .12);
+      --line-strong: rgba(25, 25, 28, .25);
+      --accent: #1d57e8;
+      --accent-dark: #123ba7;
+      --accent-soft: #e4ebff;
+      --warning: #b36a14;
+      --success: #2b704d;
+      --noise-url: none;
+      --ease: cubic-bezier(.22, .8, .24, 1);
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--graphite);
+      background: var(--paper);
+    }
+
+    * { box-sizing: border-box; }
+    html { min-width: 320px; background: var(--paper); }
+    body {
+      min-width: 320px;
+      margin: 0;
+      background-color: var(--paper);
+      color: var(--graphite);
+      font-size: 15px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    body::before,
+    .surface::after,
+    .window::after,
+    .control-card::after,
+    .readout::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background-image: var(--noise-url);
+      background-repeat: repeat;
+      mix-blend-mode: multiply;
+      opacity: .12;
+    }
+    body::before { position: fixed; z-index: 80; opacity: .055; }
+    button, input { font: inherit; }
+    button { color: inherit; }
+    a { color: inherit; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    ::selection { background: var(--accent); color: white; }
+    .sr-only {
+      position: absolute !important;
+      width: 1px !important;
+      height: 1px !important;
+      padding: 0 !important;
+      margin: -1px !important;
+      overflow: hidden !important;
+      clip: rect(0, 0, 0, 0) !important;
+      white-space: nowrap !important;
+      border: 0 !important;
+    }
+    .noise-canvas { display: none; }
+
+    .site-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 22px clamp(18px, 4vw, 52px) 16px;
+      border-bottom: 1px solid var(--line-strong);
+    }
+    .brand-lockup { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      flex: none;
+      border: 1px solid var(--graphite);
+      border-radius: 8px;
+      background: var(--graphite);
+      color: var(--paper);
+      font: 700 13px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: -.08em;
+    }
+    .brand-copy { display: grid; gap: 1px; }
+    .brand-name {
+      font: 700 14px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: .08em;
+    }
+    .brand-section {
+      color: var(--ink-muted);
+      font-size: 12px;
+      letter-spacing: .02em;
+    }
+    .header-tools { display: flex; align-items: center; gap: 12px; }
+    .header-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--ink-muted);
+      font: 11px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+      white-space: nowrap;
+    }
+    .header-status::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 0 3px rgba(43, 112, 77, .13);
+    }
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--graphite);
+      font-size: 12px;
+      text-decoration: none;
+    }
+    .back-link:hover { color: var(--accent); }
+    .back-link svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+
+    .page {
+      position: relative;
+      z-index: 1;
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 0 clamp(18px, 4vw, 52px) 64px;
+    }
+    .intro {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 28px;
+      align-items: end;
+      padding: 46px 0 30px;
+      border-bottom: 1px solid var(--line);
+    }
+    .eyebrow {
+      margin: 0 0 13px;
+      color: var(--accent-dark);
+      font: 600 11px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: .11em;
+      text-transform: uppercase;
+    }
+    h1, h2, h3, p { margin: 0; }
+    h1 {
+      max-width: 800px;
+      font-size: clamp(32px, 5vw, 66px);
+      line-height: .98;
+      letter-spacing: -.065em;
+      font-weight: 650;
+    }
+    .intro-copy {
+      max-width: 620px;
+      margin-top: 17px;
+      color: var(--ink-muted);
+      font-size: 16px;
+      line-height: 1.55;
+    }
+    .intro-readout {
+      position: relative;
+      min-width: 208px;
+      padding: 16px 17px;
+      border: 1px solid var(--line-strong);
+      background: var(--card);
+      overflow: hidden;
+    }
+    .readout-label {
+      display: block;
+      margin-bottom: 10px;
+      color: var(--ink-muted);
+      font: 10px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+    .readout-value {
+      display: block;
+      font: 600 30px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: -.08em;
+    }
+    .readout-note {
+      display: block;
+      margin-top: 8px;
+      color: var(--ink-muted);
+      font-size: 11px;
+    }
+
+    .section-heading {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 18px;
+      margin: 36px 0 13px;
+    }
+    .section-heading h2 {
+      font-size: 17px;
+      font-weight: 650;
+      letter-spacing: -.025em;
+    }
+    .section-heading p {
+      color: var(--ink-muted);
+      font-size: 12px;
+    }
+
+    .surface {
+      position: relative;
+      border: 1px solid var(--line-strong);
+      background: var(--card);
+      overflow: hidden;
+    }
+    .surface-head,
+    .control-head {
+      position: relative;
+      z-index: 4;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 42px;
+      padding: 0 15px;
+      border-bottom: 1px solid var(--line-strong);
+      background-color: var(--card);
+      background-image: repeating-linear-gradient(0deg, rgba(28,28,32,.075) 0 1px, transparent 1px 4px);
+    }
+    .surface-head strong,
+    .control-head strong {
+      font: 600 11px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: .075em;
+      text-transform: uppercase;
+    }
+    .surface-head span,
+    .control-head span {
+      color: var(--ink-muted);
+      font: 10px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+    .stage-scroll { overflow-x: auto; overscroll-behavior-inline: contain; }
+    .stage {
+      position: relative;
+      width: 1000px;
+      height: 620px;
+      isolation: isolate;
+      background-color: #f5f3ee;
+      background-image:
+        linear-gradient(rgba(28,28,32,.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(28,28,32,.045) 1px, transparent 1px);
+      background-size: 20px 20px;
+    }
+    .stage::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: 8;
+      pointer-events: none;
+      border-top: 1px solid rgba(255,255,255,.7);
+    }
+    .physics-layer {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+      pointer-events: none;
+    }
+    .bezier-path {
+      fill: none;
+      stroke: var(--accent);
+      stroke-width: 2;
+      stroke-dasharray: 3 7;
+      stroke-linecap: round;
+      opacity: .42;
+    }
+    .bezier-core {
+      fill: none;
+      stroke: var(--accent);
+      stroke-width: 1;
+      stroke-linecap: round;
+      opacity: .28;
+    }
+    .dock-zone {
+      position: absolute;
+      z-index: 2;
+      left: 418px;
+      top: 224px;
+      width: 170px;
+      height: 112px;
+      display: grid;
+      place-items: center;
+      border: 1px dashed rgba(29,87,232,.38);
+      background-color: rgba(29,87,232,.035);
+      background-image: repeating-linear-gradient(135deg, transparent 0 8px, rgba(29,87,232,.095) 8px 9px, transparent 9px 17px);
+      color: var(--accent-dark);
+      transition: border-color 120ms linear, background-color 120ms linear;
+    }
+    .dock-zone span {
+      padding: 4px 7px;
+      background: rgba(251,250,247,.88);
+      font: 10px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+    }
+    .dock-zone.is-near {
+      border-color: var(--accent);
+      background-color: rgba(29,87,232,.11);
+    }
+    .stage-label {
+      position: absolute;
+      z-index: 2;
+      color: var(--ink-muted);
+      font: 10px/1.3 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: .04em;
+    }
+    .stage-label.top-left { left: 24px; top: 20px; }
+    .stage-label.bottom-right { right: 22px; bottom: 20px; text-align: right; }
+    .stage-crosshair {
+      position: absolute;
+      z-index: 2;
+      width: 13px;
+      height: 13px;
+      color: rgba(29,87,232,.5);
+    }
+    .stage-crosshair::before,
+    .stage-crosshair::after { content: ""; position: absolute; background: currentColor; }
+    .stage-crosshair::before { left: 6px; top: 0; width: 1px; height: 13px; }
+    .stage-crosshair::after { left: 0; top: 6px; width: 13px; height: 1px; }
+    .crosshair-one { left: 405px; top: 207px; }
+    .crosshair-two { left: 596px; top: 350px; }
+
+    .window {
+      position: absolute;
+      z-index: 4;
+      display: flex;
+      flex-direction: column;
+      min-width: 220px;
+      min-height: 170px;
+      border: 1px solid var(--graphite);
+      background: var(--card);
+      box-shadow: 5px 7px 0 rgba(28,28,32,.08), 0 12px 22px rgba(28,28,32,.06);
+      overflow: hidden;
+      touch-action: none;
+      user-select: none;
+      transition: border-radius 120ms linear, box-shadow 120ms linear;
+    }
+    .window::after { z-index: 6; opacity: .075; }
+    .window.is-merged { box-shadow: 4px 7px 0 rgba(28,28,32,.1), 0 14px 24px rgba(28,28,32,.08); }
+    .window.is-merged[data-panel="left"] { border-right-color: transparent; border-radius: 10px 0 0 10px; }
+    .window.is-merged[data-panel="right"] { border-left-color: transparent; border-radius: 0 10px 10px 0; }
+    .window-chrome {
+      position: relative;
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 34px;
+      padding: 0 8px 0 10px;
+      border-bottom: 1px solid var(--line-strong);
+      background-color: #e9e6df;
+      background-image: repeating-linear-gradient(0deg, rgba(28,28,32,.12) 0 1px, transparent 1px 4px);
+      cursor: grab;
+      touch-action: none;
+    }
+    .window-chrome:active { cursor: grabbing; }
+    .window-dots { display: flex; gap: 4px; }
+    .window-dots i { width: 7px; height: 7px; border: 1px solid var(--graphite); border-radius: 50%; background: var(--card); }
+    .window-title { color: var(--graphite-soft); font: 600 10px/1 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .04em; }
+    .window-chrome .spacer { flex: 1; }
+    .window-action {
+      display: inline-grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      background: transparent;
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1;
+    }
+    .window-action:hover { border-color: var(--line-strong); background: rgba(251,250,247,.72); }
+    .window-body {
+      position: relative;
+      z-index: 5;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 10px;
+      min-height: 0;
+      height: 100%;
+      padding: 15px 16px 13px;
+      background: rgba(251,250,247,.92);
+    }
+    .window-kicker { color: var(--accent-dark); font: 10px/1 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .1em; text-transform: uppercase; }
+    .window-copy {
+      min-height: 54px;
+      color: var(--graphite);
+      font-size: 14px;
+      line-height: 1.47;
+      outline: none;
+      user-select: text;
+      cursor: text;
+    }
+    .window-copy:focus { box-shadow: inset 0 -2px 0 var(--accent); }
+    .window-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--ink-muted); font: 10px/1.3 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .window-status { display: inline-flex; align-items: center; gap: 5px; }
+    .window-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+    .merge-button {
+      display: none;
+      border: 0;
+      padding: 2px 0;
+      background: transparent;
+      color: var(--accent-dark);
+      font: 600 10px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+      cursor: pointer;
+    }
+    .window.is-merged .merge-button { display: inline; }
+    .window.is-merged .window-copy { cursor: text; }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 15px;
+      align-items: center;
+      padding: 12px 15px;
+      border-top: 1px solid var(--line);
+      color: var(--ink-muted);
+      font-size: 11px;
+    }
+    .legend-item { display: inline-flex; align-items: center; gap: 7px; }
+    .legend-line { width: 25px; border-top: 2px dashed var(--accent); opacity: .7; }
+    .legend-patch { width: 17px; height: 11px; border: 1px dashed rgba(29,87,232,.6); background: rgba(29,87,232,.08); }
+    .legend-key { margin-left: auto; font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
+
+    .control-grid {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 12px;
+      align-items: start;
+    }
+    .control-card {
+      position: relative;
+      min-height: 232px;
+      border: 1px solid var(--line-strong);
+      background: var(--card);
+      overflow: hidden;
+    }
+    .control-card::after { z-index: 1; opacity: .07; }
+    .control-card > * { position: relative; z-index: 2; }
+    .control-card.morph-card { grid-column: span 4; }
+    .control-card.action-card { grid-column: span 4; }
+    .control-card.material-card { grid-column: span 4; }
+    .control-card.slider-card { grid-column: span 5; }
+    .control-card.cluster-card { grid-column: span 7; }
+    .control-body { padding: 21px 18px 18px; }
+    .control-note { max-width: 35ch; margin-bottom: 18px; color: var(--ink-muted); font-size: 12px; line-height: 1.45; }
+    .control-tag {
+      display: inline-flex;
+      margin-bottom: 12px;
+      padding: 4px 6px;
+      border: 1px solid var(--line-strong);
+      color: var(--ink-muted);
+      font: 10px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+
+    .morph-wrap { display: grid; place-items: center; min-height: 108px; }
+    .morph-control {
+      position: relative;
+      display: grid;
+      place-items: center;
+      width: 186px;
+      height: 48px;
+      padding: 0;
+      border: 1px solid var(--graphite);
+      border-radius: 11px;
+      background: var(--graphite);
+      color: var(--paper);
+      box-shadow: 4px 5px 0 rgba(28,28,32,.1);
+      cursor: pointer;
+      overflow: hidden;
+      transition: box-shadow 120ms linear, background-color 120ms linear;
+    }
+    .morph-control:hover { box-shadow: 5px 7px 0 rgba(28,28,32,.13); }
+    .morph-control:active { box-shadow: 1px 2px 0 rgba(28,28,32,.1); }
+    .morph-face,
+    .morph-window-face {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 12px;
+      text-align: left;
+    }
+    .morph-face { font-size: 13px; }
+    .morph-window-face { align-items: flex-start; flex-direction: column; justify-content: flex-start; padding: 12px 14px; color: var(--graphite); background: var(--card); }
+    .morph-window-face strong { font-size: 12px; }
+    .morph-window-face small { color: var(--ink-muted); font-size: 11px; }
+    .morph-face svg, .morph-window-face svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+
+    .action-demo { position: relative; display: grid; place-items: center; min-height: 108px; }
+    .action-svg { position: absolute; width: 340px; height: 58px; max-width: 100%; overflow: visible; pointer-events: none; }
+    .action-options { position: relative; display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 58px; }
+    .action-pill,
+    .action-choice {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 43px;
+      border: 1px solid var(--graphite);
+      border-radius: 22px;
+      cursor: pointer;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .action-pill { width: 174px; background: var(--graphite); color: var(--paper); }
+    .action-choice { width: 106px; background: var(--card); color: var(--graphite); }
+    .action-choice.confirm { background: var(--accent); border-color: var(--accent); color: white; }
+    .action-choice:hover { border-color: var(--accent); }
+    .action-options.is-split .action-pill { display: none; }
+    .action-options:not(.is-split) .action-choice { opacity: 0; pointer-events: none; transform: scale(.6); }
+    .action-caption { margin-top: 13px; color: var(--ink-muted); font: 10px/1.3 ui-monospace, SFMono-Regular, Consolas, monospace; text-align: center; }
+
+    .material-tabs {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      min-height: 42px;
+      border-bottom: 1px solid var(--line-strong);
+    }
+    .material-tab {
+      position: relative;
+      z-index: 2;
+      min-width: 0;
+      padding: 10px 5px;
+      border: 0;
+      background: transparent;
+      color: var(--ink-muted);
+      cursor: pointer;
+      font-size: 11px;
+    }
+    .material-tab:hover { color: var(--graphite); }
+    .material-tab[aria-selected="true"] { color: var(--graphite); font-weight: 650; }
+    .tab-indicator {
+      position: absolute;
+      z-index: 1;
+      left: 0;
+      bottom: -1px;
+      width: 33.3333%;
+      height: 3px;
+      background: var(--accent);
+      transform-origin: left center;
+    }
+    .material-swatch { display: grid; place-items: center; min-height: 104px; padding: 18px; }
+    .swatch-surface { width: 100%; min-height: 54px; border: 1px solid var(--line-strong); background: var(--paper); }
+    .swatch-surface.paper { background-color: #f1efe9; background-image: var(--noise-url); }
+    .swatch-surface.metal { background-color: #c6c5c0; background-image: repeating-linear-gradient(0deg, rgba(28,28,32,.16) 0 1px, transparent 1px 3px); }
+    .swatch-surface.plastic { background-color: #d9dee8; box-shadow: inset 0 2px 0 rgba(255,255,255,.8), inset 0 -2px 0 rgba(28,28,32,.12); }
+    .material-readout { display: flex; justify-content: space-between; margin-top: 12px; color: var(--ink-muted); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
+
+    .slider-area { padding-top: 8px; }
+    .slider-scale {
+      position: relative;
+      height: 22px;
+      margin: 25px 16px 0;
+      border-bottom: 1px solid var(--line-strong);
+      background-image: repeating-linear-gradient(90deg, transparent 0 9px, rgba(28,28,32,.2) 9px 10px), repeating-linear-gradient(90deg, transparent 0 49px, rgba(28,28,32,.48) 49px 50px);
+    }
+    .slider-track {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 10px;
+      height: 5px;
+      border: 1px solid var(--graphite);
+      border-radius: 3px;
+      background-color: var(--paper);
+      background-image: repeating-linear-gradient(90deg, transparent 0 9px, rgba(28,28,32,.12) 9px 10px);
+    }
+    .slider-fill { position: absolute; inset: 0 auto 0 0; width: 56%; border-radius: 2px; background: var(--accent); }
+    .slider-thumb { position: absolute; top: 50%; width: 19px; height: 19px; border: 2px solid var(--graphite); border-radius: 50%; background: var(--card); transform: translate(-50%, -50%); box-shadow: 2px 3px 0 rgba(28,28,32,.15); pointer-events: none; }
+    .slider-input { position: absolute; inset: 0; width: 100%; height: 22px; opacity: 0; cursor: ew-resize; }
+    .slider-droplet {
+      position: absolute;
+      z-index: 3;
+      top: -6px;
+      left: 56%;
+      display: grid;
+      place-items: center;
+      width: 48px;
+      height: 48px;
+      border: 1px solid var(--accent-dark);
+      border-radius: 60% 60% 60% 5px;
+      background: var(--accent);
+      color: white;
+      transform: translate(-50%, -100%) rotate(-45deg);
+      transform-origin: 50% 88%;
+      box-shadow: 3px 4px 0 rgba(28,28,32,.11);
+      pointer-events: none;
+    }
+    .slider-droplet span { transform: rotate(45deg); font: 600 11px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .slider-values { display: flex; justify-content: space-between; margin: 5px 16px 0; color: var(--ink-muted); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .slider-caption { margin-top: 18px; color: var(--ink-muted); font-size: 11px; }
+
+    .cluster-space { position: relative; height: 150px; margin-top: 2px; overflow: hidden; background-color: #f5f3ee; background-image: linear-gradient(rgba(28,28,32,.04) 1px, transparent 1px), linear-gradient(90deg, rgba(28,28,32,.04) 1px, transparent 1px); background-size: 20px 20px; }
+    .cluster-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+    .cluster-hub {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      display: grid;
+      place-items: center;
+      width: 54px;
+      height: 54px;
+      border: 1px solid var(--graphite);
+      border-radius: 50%;
+      background: var(--graphite);
+      color: var(--paper);
+      transform: translate(-50%, -50%);
+      cursor: pointer;
+      font-size: 24px;
+      line-height: 1;
+      box-shadow: 3px 4px 0 rgba(28,28,32,.13);
+      z-index: 4;
+    }
+    .cluster-hub:hover { background: var(--accent); border-color: var(--accent); }
+    .cluster-hub:active { transform: translate(-50%, -50%) scale(.94); }
+    .tool-pill {
+      position: absolute;
+      z-index: 5;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 76px;
+      height: 31px;
+      padding: 0 10px;
+      border: 1px solid var(--graphite);
+      border-radius: 16px;
+      background: var(--card);
+      color: var(--graphite);
+      box-shadow: 2px 3px 0 rgba(28,28,32,.1);
+      cursor: grab;
+      touch-action: none;
+      user-select: none;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .tool-pill:active { cursor: grabbing; }
+    .tool-pill.is-clustered { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-dark); }
+    .cluster-hint { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; color: var(--ink-muted); font: 10px/1.3 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .cluster-count { color: var(--accent-dark); }
+
+    .footer-note {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 15px;
+      margin-top: 34px;
+      padding-top: 15px;
+      border-top: 1px solid var(--line-strong);
+      color: var(--ink-muted);
+      font-size: 11px;
+    }
+    .footer-note code { color: var(--graphite); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .reset-button {
+      border: 0;
+      padding: 0;
+      background: transparent;
+      color: var(--accent-dark);
+      cursor: pointer;
+      font: 600 11px ui-monospace, SFMono-Regular, Consolas, monospace;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+    .reset-button:hover { color: var(--accent); }
+
+    @media (max-width: 850px) {
+      .intro { grid-template-columns: 1fr; }
+      .intro-readout { width: min(100%, 260px); }
+      .control-card.morph-card,
+      .control-card.action-card,
+      .control-card.material-card,
+      .control-card.slider-card,
+      .control-card.cluster-card { grid-column: span 6; }
+    }
+    @media (max-width: 590px) {
+      .site-header { align-items: flex-start; padding-top: 15px; }
+      .header-status { display: none; }
+      .header-tools { gap: 8px; }
+      .intro { padding-top: 32px; }
+      h1 { font-size: 38px; }
+      .intro-copy { font-size: 14px; }
+      .control-card.morph-card,
+      .control-card.action-card,
+      .control-card.material-card,
+      .control-card.slider-card,
+      .control-card.cluster-card { grid-column: 1 / -1; }
+      .section-heading { align-items: flex-start; flex-direction: column; gap: 4px; }
+      .legend-key { margin-left: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: .01ms !important;
+      }
+      .morph-control:hover { box-shadow: 4px 5px 0 rgba(28,28,32,.1); }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="noiseCanvas" class="noise-canvas" width="96" height="96" aria-hidden="true"></canvas>
+
+  <header class="site-header">
+    <a class="brand-lockup" href="./" aria-label="Вернуться в CHEATLAB">
+      <span class="brand-mark" aria-hidden="true">CL</span>
+      <span class="brand-copy">
+        <span class="brand-name">CHEATLAB</span>
+        <span class="brand-section">Лаборатория движения</span>
+      </span>
+    </a>
+    <div class="header-tools">
+      <span class="header-status" id="physicsStatus">физика активна</span>
+      <a class="back-link" href="./">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5m7 7-7-7 7-7"/></svg>
+        К публикациям
+      </a>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="intro" aria-labelledby="pageTitle">
+      <div>
+        <p class="eyebrow">01 / тактильный интерфейс</p>
+        <h1 id="pageTitle">Движение, которое держит форму.</h1>
+        <p class="intro-copy">Небольшой рабочий стол CHEATLAB: окна стыкуются магнитом, кнопки меняют назначение, а инструменты собираются в группу. Тяните элементы — каждый переход считается пружиной, а не таймером.</p>
+      </div>
+      <aside class="intro-readout readout" aria-label="Состояние физического движка">
+        <span class="readout-label">частота расчёта</span>
+        <strong class="readout-value">60 Гц</strong>
+        <span class="readout-note" id="readoutNote">фиксированный шаг · 60 кадров</span>
+      </aside>
+    </section>
+
+    <section aria-labelledby="windowsHeading">
+      <div class="section-heading">
+        <h2 id="windowsHeading">Оконный стол</h2>
+        <p>Перетащите панели друг к другу. Текст внутри можно редактировать.</p>
+      </div>
+      <div class="surface">
+        <div class="surface-head">
+          <strong>стыковка / 02</strong>
+          <span id="dockReadout">раздельно · магнит выключен</span>
+        </div>
+        <div class="stage-scroll">
+          <div class="stage" id="stage" aria-label="Поле для перетаскивания окон">
+            <svg class="physics-layer" id="physicsSvg" viewBox="0 0 1000 620" preserveAspectRatio="none" aria-hidden="true">
+              <defs>
+                <filter id="gooey" x="-25%" y="-35%" width="150%" height="180%" color-interpolation-filters="sRGB">
+                  <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="soft"/>
+                  <feColorMatrix in="soft" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -9" result="goo"/>
+                  <feGaussianBlur in="SourceAlpha" stdDeviation="5" result="shadowBlur"/>
+                  <feOffset in="shadowBlur" dy="5" result="shadowOffset"/>
+                  <feFlood flood-color="#1c1c20" flood-opacity=".16" result="shadowColor"/>
+                  <feComposite in="shadowColor" in2="shadowOffset" operator="in" result="contactShadow"/>
+                  <feOffset in="SourceAlpha" dx="0" dy="-1.5" result="bevelOffset"/>
+                  <feComposite in="bevelOffset" in2="SourceAlpha" operator="out" result="topBevel"/>
+                  <feFlood flood-color="#ffffff" flood-opacity=".78" result="bevelColor"/>
+                  <feComposite in="bevelColor" in2="topBevel" operator="in" result="bevel"/>
+                  <feMerge>
+                    <feMergeNode in="contactShadow"/>
+                    <feMergeNode in="goo"/>
+                    <feMergeNode in="bevel"/>
+                  </feMerge>
+                </filter>
+                <filter id="contactOnly" x="-30%" y="-30%" width="160%" height="180%" color-interpolation-filters="sRGB">
+                  <feGaussianBlur in="SourceAlpha" stdDeviation="4" result="blur"/>
+                  <feOffset in="blur" dy="4" result="offset"/>
+                  <feFlood flood-color="#1c1c20" flood-opacity=".2" result="ink"/>
+                  <feComposite in="ink" in2="offset" operator="in"/>
+                </filter>
+              </defs>
+              <g id="mergeBlobs" filter="url(#gooey)" opacity=".18">
+                <rect id="mergeBlobLeft" x="80" y="108" width="324" height="224" rx="13" fill="#fbfaf7"/>
+                <rect id="mergeBlobRight" x="605" y="274" width="324" height="224" rx="13" fill="#fbfaf7"/>
+              </g>
+              <path id="bezierShadow" class="bezier-path" filter="url(#contactOnly)" d="M404 220 C500 220 510 350 605 385"/>
+              <path id="bezierPath" class="bezier-path" d="M404 220 C500 220 510 350 605 385"/>
+              <path id="bezierCore" class="bezier-core" d="M404 220 C500 220 510 350 605 385"/>
+            </svg>
+
+            <div class="stage-label top-left">поле 1000 × 620 · координаты ограничены</div>
+            <div class="stage-label bottom-right">пружина: жёсткость 220 · затухание 25</div>
+            <div class="stage-crosshair crosshair-one" aria-hidden="true"></div>
+            <div class="stage-crosshair crosshair-two" aria-hidden="true"></div>
+            <div class="dock-zone" id="dockZone"><span>зона стыковки</span></div>
+
+            <article class="window" id="windowLeft" data-panel="left" aria-label="Окно с заметкой о задаче">
+              <header class="window-chrome" data-drag-handle>
+                <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                <span class="window-title">ЗАМЕТКА / 01</span>
+                <span class="spacer"></span>
+                <button class="window-action" type="button" data-no-drag aria-label="Окно заметки">—</button>
+              </header>
+              <div class="window-body">
+                <span class="window-kicker">рабочий текст</span>
+                <p class="window-copy" contenteditable="true" spellcheck="true" aria-label="Редактируемый текст заметки">Собери две панели в один спокойный рабочий стол. Текст остаётся резким даже тогда, когда формы под ним сливаются.</p>
+                <div class="window-foot"><span class="window-status">готово к правке</span><span>текст живой</span></div>
+              </div>
+            </article>
+
+            <article class="window" id="windowRight" data-panel="right" aria-label="Окно с параметрами публикации">
+              <header class="window-chrome" data-drag-handle>
+                <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                <span class="window-title">ПАРАМЕТРЫ / 02</span>
+                <span class="spacer"></span>
+                <button class="merge-button" id="detachButton" type="button" data-no-drag>Открепить</button>
+                <button class="window-action" type="button" data-no-drag aria-label="Окно параметров">—</button>
+              </header>
+              <div class="window-body">
+                <span class="window-kicker">состояние публикации</span>
+                <p class="window-copy" contenteditable="true" spellcheck="true" aria-label="Редактируемый текст параметров">Акцент — один. Остальное работает тише: граница, зерно, тень контакта и понятная реакция на руку.</p>
+                <div class="window-foot"><span class="window-status">связь живая</span><span>02 / 02</span></div>
+              </div>
+            </article>
+          </div>
+        </div>
+        <div class="legend">
+          <span class="legend-item"><i class="legend-line"></i> живая кривая Безье</span>
+          <span class="legend-item"><i class="legend-patch"></i> магнитная зона</span>
+          <span class="legend-item">зажмите рифлёную шапку</span>
+          <span class="legend-key">Esc — открепить</span>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="controlsHeading">
+      <div class="section-heading">
+        <h2 id="controlsHeading">Материалы и жесты</h2>
+        <p>Малые механики, собранные на тех же пружинах.</p>
+      </div>
+      <div class="control-grid">
+        <article class="control-card morph-card">
+          <div class="control-head"><strong>морфинг / 03</strong><span>кнопка ↔ окно</span></div>
+          <div class="control-body">
+            <span class="control-tag">переключатель</span>
+            <p class="control-note">Нажмите один раз: действие превращается в короткую заметку. Нажмите снова, чтобы вернуть кнопку.</p>
+            <div class="morph-wrap">
+              <button class="morph-control" id="morphControl" type="button" aria-expanded="false" aria-label="Открыть окно действия">
+                <span class="morph-face" id="morphFace">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                  <span>Новое действие</span>
+                </span>
+                <span class="morph-window-face" id="morphWindowFace" aria-hidden="true">
+                  <strong>Окно открыто</strong>
+                  <small>Контекст сохранён, можно вернуться.</small>
+                </span>
+              </button>
+            </div>
+          </div>
+        </article>
+
+        <article class="control-card action-card">
+          <div class="control-head"><strong>слияние / 04</strong><span>один → два</span></div>
+          <div class="control-body">
+            <span class="control-tag">подтверждение</span>
+            <p class="control-note">Сначала здесь одна команда. Нажмите её, чтобы мягко разделить намерение на отмену и подтверждение.</p>
+            <div class="action-demo">
+              <svg class="action-svg" viewBox="0 0 340 58" preserveAspectRatio="none" aria-hidden="true">
+                <g filter="url(#gooey)"><rect id="actionBlob" x="83" y="8" width="174" height="43" rx="22" fill="#1c1c20"/></g>
+              </svg>
+              <div class="action-options" id="actionOptions">
+                <button class="action-pill" id="actionPill" type="button">Сохранить черновик</button>
+                <button class="action-choice cancel" id="cancelAction" type="button">Отмена</button>
+                <button class="action-choice confirm" id="confirmAction" type="button">Подтвердить</button>
+              </div>
+            </div>
+            <p class="action-caption" id="actionCaption">пилюля ждёт решения</p>
+          </div>
+        </article>
+
+        <article class="control-card material-card">
+          <div class="control-head"><strong>материал / 05</strong><span>вязкий индикатор</span></div>
+          <div class="control-body">
+            <span class="control-tag">скорость краёв</span>
+            <p class="control-note">Передний край индикатора догоняет быстрее заднего — так вкладка ощущается как тонкий лист материала.</p>
+            <div class="material-tabs" id="materialTabs" role="tablist" aria-label="Выбор материала">
+              <button class="material-tab" type="button" role="tab" aria-selected="true" data-tab="paper">Бумага</button>
+              <button class="material-tab" type="button" role="tab" aria-selected="false" data-tab="metal">Металл</button>
+              <button class="material-tab" type="button" role="tab" aria-selected="false" data-tab="plastic">Пластик</button>
+              <span class="tab-indicator" id="tabIndicator" aria-hidden="true"></span>
+            </div>
+            <div class="material-swatch"><div class="swatch-surface paper" id="materialSwatch"></div></div>
+            <div class="material-readout"><span id="materialLabel">матовая бумага</span><span id="materialIndex">01 / 03</span></div>
+          </div>
+        </article>
+
+        <article class="control-card slider-card">
+          <div class="control-head"><strong>контроль / 06</strong><span>капля значения</span></div>
+          <div class="control-body">
+            <span class="control-tag">шкала плотности</span>
+            <p class="control-note">Перетащите бегунок. Из его движения вытягивается капля с точным значением.</p>
+            <div class="slider-area">
+              <div class="slider-scale" id="sliderScale">
+                <div class="slider-track"><span class="slider-fill" id="sliderFill"></span><span class="slider-thumb" id="sliderThumb"></span></div>
+                <div class="slider-droplet" id="sliderDroplet"><span id="sliderValue">56</span></div>
+                <input class="slider-input" id="densityRange" type="range" min="0" max="100" value="56" aria-label="Плотность материала">
+              </div>
+              <div class="slider-values"><span>0 / лёгкий</span><span>100 / плотный</span></div>
+            </div>
+            <p class="slider-caption" id="sliderCaption">плотность поверхности: 56%</p>
+          </div>
+        </article>
+
+        <article class="control-card cluster-card">
+          <div class="control-head"><strong>кластер / 07</strong><span>вылет инструментов</span></div>
+          <div class="control-body">
+            <span class="control-tag">перетаскиваемая группа</span>
+            <p class="control-note">Нажимайте «+», чтобы по очереди выпустить инструменты. Подведите капсулы к центру — они соберутся в общую группу.</p>
+            <div class="cluster-space" id="clusterSpace" aria-label="Поле инструментов">
+              <svg class="cluster-svg" id="clusterSvg" viewBox="0 0 620 150" preserveAspectRatio="none" aria-hidden="true">
+                <g id="clusterBlobs" filter="url(#gooey)" opacity=".42"></g>
+              </svg>
+              <button class="cluster-hub" id="clusterAdd" type="button" aria-label="Добавить инструмент">+</button>
+            </div>
+            <div class="cluster-hint"><span>близость к центру = слияние</span><span class="cluster-count" id="clusterCount">0 / 3 инструментов</span></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <footer class="footer-note">
+      <span>Интерфейс считает движение отдельным слоем: <code>stiffness</code>, <code>damping</code>, фиксированный шаг 60 Гц.</span>
+      <button class="reset-button" id="resetButton" type="button">Сбросить сцену</button>
+    </footer>
+  </main>
+
+  <script>
+    (() => {
+      'use strict';
+
+      const $ = (selector, root = document) => root.querySelector(selector);
+      const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+      const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+      const lerp = (a, b, t) => a + (b - a) * t;
+      const reduceQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+      let reduceMotion = reduceQuery.matches;
+
+      /* Зерно создаётся один раз на скрытом canvas и дальше живёт в dataURL. */
+      function buildNoise() {
+        const canvas = $('#noiseCanvas');
+        const context = canvas.getContext('2d', { alpha: true });
+        const image = context.createImageData(96, 96);
+        let seed = 0x6d2b79f5;
+        const random = () => {
+          seed |= 0;
+          seed = seed + 0x6D2B79F5 | 0;
+          let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+          t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+          return ((t ^ t >>> 14) >>> 0) / 4294967296;
+        };
+        for (let i = 0; i < image.data.length; i += 4) {
+          const shade = Math.floor(100 + random() * 110);
+          image.data[i] = shade;
+          image.data[i + 1] = shade;
+          image.data[i + 2] = shade;
+          image.data[i + 3] = Math.floor(13 + random() * 25);
+        }
+        context.putImageData(image, 0, 0);
+        document.documentElement.style.setProperty('--noise-url', `url("${canvas.toDataURL('image/png')}")`);
+      }
+
+      class Spring {
+        constructor(value, stiffness = 220, damping = 25) {
+          this.value = value;
+          this.target = value;
+          this.velocity = 0;
+          this.stiffness = stiffness;
+          this.damping = damping;
+        }
+        setTarget(value) { this.target = value; }
+        setNow(value, velocity = 0) {
+          this.value = value;
+          this.target = value;
+          this.velocity = velocity;
+        }
+        kick(amount) { this.velocity += amount; }
+        step(dt) {
+          if (reduceMotion) {
+            this.value = this.target;
+            this.velocity = 0;
+            return;
+          }
+          const acceleration = (this.target - this.value) * this.stiffness - this.velocity * this.damping;
+          this.velocity += acceleration * dt;
+          this.value += this.velocity * dt;
+          if (Math.abs(this.target - this.value) < .001 && Math.abs(this.velocity) < .001) {
+            this.value = this.target;
+            this.velocity = 0;
+          }
+        }
+      }
+
+      const springs = [];
+      const spring = (value, stiffness, damping) => {
+        const item = new Spring(value, stiffness, damping);
+        springs.push(item);
+        return item;
+      };
+
+      /* Все пружины проходят через один фиксированный физический такт 1/60 с. */
+      const STEP = 1 / 60;
+      let accumulator = 0;
+      let lastFrame = performance.now();
+      let paused = false;
+      function physicsFrame(now) {
+        const elapsed = Math.min(.1, Math.max(0, (now - lastFrame) / 1000));
+        lastFrame = now;
+        accumulator += elapsed;
+        while (accumulator >= STEP) {
+          if (!paused) springs.forEach((item) => item.step(STEP));
+          accumulator -= STEP;
+        }
+        render();
+        requestAnimationFrame(physicsFrame);
+      }
+
+      const stage = $('#stage');
+      const dockZone = $('#dockZone');
+      const dockReadout = $('#dockReadout');
+      const physicsStatus = $('#physicsStatus');
+      const readoutNote = $('#readoutNote');
+      const mergeBlobs = $('#mergeBlobs');
+      const mergeBlobLeft = $('#mergeBlobLeft');
+      const mergeBlobRight = $('#mergeBlobRight');
+      const bezierPath = $('#bezierPath');
+      const bezierCore = $('#bezierCore');
+      const bezierShadow = $('#bezierShadow');
+
+      const panelState = {
+        left: { el: $('#windowLeft'), x: spring(82, 220, 25), y: spring(110, 220, 25), w: 324, h: 224 },
+        right: { el: $('#windowRight'), x: spring(605, 220, 25), y: spring(274, 220, 25), w: 324, h: 224 },
+      };
+      const mergeProgress = spring(0, 290, 29);
+      let merged = false;
+      let dockNear = false;
+      let drag = null;
+
+      function stagePoint(event) {
+        const rect = stage.getBoundingClientRect();
+        return {
+          x: clamp((event.clientX - rect.left) * (1000 / rect.width), 0, 1000),
+          y: clamp((event.clientY - rect.top) * (620 / rect.height), 0, 620),
+        };
+      }
+      function setPanelTarget(panel, x, y) {
+        panel.x.setTarget(clamp(x, 12, 1000 - panel.w - 12));
+        panel.y.setTarget(clamp(y, 58, 620 - panel.h - 12));
+      }
+      function panelBounds(panel) {
+        return { x: panel.x.value, y: panel.y.value, right: panel.x.value + panel.w, bottom: panel.y.value + panel.h };
+      }
+      function magneticDistance() {
+        const left = panelBounds(panelState.left);
+        const right = panelBounds(panelState.right);
+        const horizontal = Math.abs(right.x - left.right);
+        const vertical = Math.abs((right.y + right.bottom) / 2 - (left.y + left.bottom) / 2);
+        return { horizontal, vertical, near: horizontal < 112 && vertical < 92 };
+      }
+      function updateMergeTargets() {
+        const left = panelState.left;
+        const right = panelState.right;
+        const seam = left.x.value + left.w - 5;
+        if (merged) {
+          setPanelTarget(left, left.x.value, left.y.value);
+          setPanelTarget(right, seam, left.y.target);
+        }
+      }
+      function mergePanels() {
+        if (merged) return;
+        merged = true;
+        const left = panelState.left;
+        const right = panelState.right;
+        const y = clamp((left.y.value + right.y.value) / 2, 58, 620 - left.h - 12);
+        left.y.setTarget(y);
+        right.x.setTarget(clamp(left.x.value + left.w - 5, 12, 1000 - right.w - 12));
+        right.y.setTarget(y);
+        mergeProgress.setTarget(1);
+        dockReadout.textContent = 'единое окно · физика удерживает шов';
+        dockZone.classList.add('is-near');
+        panelState.left.el.classList.add('is-merged');
+        panelState.right.el.classList.add('is-merged');
+        announce('Панели соединились. Нажмите «Открепить», чтобы разделить их.');
+      }
+      function separatePanels() {
+        if (!merged) return;
+        merged = false;
+        mergeProgress.setTarget(0);
+        const left = panelState.left;
+        const right = panelState.right;
+        left.el.classList.remove('is-merged');
+        right.el.classList.remove('is-merged');
+        right.x.setTarget(clamp(left.x.value + left.w + 176, 12, 1000 - right.w - 12));
+        right.y.setTarget(clamp(left.y.value + 62, 58, 620 - right.h - 12));
+        dockReadout.textContent = 'раздельно · живая кривая Безье';
+        dockZone.classList.remove('is-near');
+        announce('Панели откреплены. Кривая Безье снова показывает связь.');
+      }
+      function announce(message) {
+        const note = $('#readoutNote');
+        note.textContent = message;
+        window.clearTimeout(announce.timer);
+        announce.timer = window.setTimeout(() => { note.textContent = 'фиксированный шаг · 60 кадров'; }, 2800);
+      }
+
+      function beginPanelDrag(event) {
+        if (event.button !== undefined && event.button !== 0) return;
+        if (event.target.closest('[data-no-drag]')) return;
+        const handle = event.currentTarget;
+        const panel = handle.closest('.window');
+        const key = panel.dataset.panel;
+        const point = stagePoint(event);
+        const state = panelState[key];
+        const groupStart = {
+          left: { x: panelState.left.x.value, y: panelState.left.y.value },
+          right: { x: panelState.right.x.value, y: panelState.right.y.value },
+        };
+        drag = { pointerId: event.pointerId, key, start: point, last: point, state, groupStart };
+        handle.setPointerCapture?.(event.pointerId);
+        panel.classList.add('is-dragging');
+        event.preventDefault();
+      }
+      function movePanel(event) {
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        const point = stagePoint(event);
+        const dx = point.x - drag.start.x;
+        const dy = point.y - drag.start.y;
+        const vx = (point.x - drag.last.x) * 60;
+        const vy = (point.y - drag.last.y) * 60;
+        drag.last = point;
+        if (merged) {
+          const left = panelState.left;
+          const right = panelState.right;
+          left.x.setNow(clamp(drag.groupStart.left.x + dx, 12, 1000 - left.w - 12), vx);
+          left.y.setNow(clamp(drag.groupStart.left.y + dy, 58, 620 - left.h - 12), vy);
+          right.x.setNow(clamp(left.x.value + left.w - 5, 12, 1000 - right.w - 12), vx);
+          right.y.setNow(clamp(left.y.value, 58, 620 - right.h - 12), vy);
+          return;
+        }
+        const state = drag.state;
+        state.x.setNow(clamp(drag.groupStart[drag.key].x + dx, 12, 1000 - state.w - 12), vx);
+        state.y.setNow(clamp(drag.groupStart[drag.key].y + dy, 58, 620 - state.h - 12), vy);
+        const near = magneticDistance();
+        dockNear = near.near;
+        dockZone.classList.toggle('is-near', dockNear);
+        if (dockNear) {
+          mergePanels();
+        } else {
+          dockReadout.textContent = 'магнит приближается · ' + Math.round(near.horizontal) + ' px';
+        }
+      }
+      function endPanelDrag(event) {
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        const handle = event.currentTarget;
+        handle.releasePointerCapture?.(event.pointerId);
+        drag.state.el.classList.remove('is-dragging');
+        const near = magneticDistance();
+        if (!merged && near.near) mergePanels();
+        if (!merged) {
+          panelState.left.x.setTarget(clamp(panelState.left.x.value, 12, 1000 - panelState.left.w - 12));
+          panelState.left.y.setTarget(clamp(panelState.left.y.value, 58, 620 - panelState.left.h - 12));
+          panelState.right.x.setTarget(clamp(panelState.right.x.value, 12, 1000 - panelState.right.w - 12));
+          panelState.right.y.setTarget(clamp(panelState.right.y.value, 58, 620 - panelState.right.h - 12));
+          dockReadout.textContent = 'раздельно · живая кривая Безье';
+        }
+        drag = null;
+      }
+      function cancelPanelDrag(event) {
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        drag.state.el.classList.remove('is-dragging');
+        drag = null;
+      }
+
+      $$('.window [data-drag-handle]').forEach((handle) => {
+        handle.addEventListener('pointerdown', beginPanelDrag);
+        handle.addEventListener('pointermove', movePanel);
+        handle.addEventListener('pointerup', endPanelDrag);
+        handle.addEventListener('pointercancel', cancelPanelDrag);
+      });
+      $('#detachButton').addEventListener('click', (event) => { event.stopPropagation(); separatePanels(); });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && merged) separatePanels();
+      });
+
+      /* Кнопка превращается в окно через независимую пружину масштаба. */
+      const morphSpring = spring(0, 210, 24);
+      let morphed = false;
+      $('#morphControl').addEventListener('click', () => {
+        morphed = !morphed;
+        morphSpring.setTarget(morphed ? 1 : 0);
+        $('#morphControl').setAttribute('aria-expanded', String(morphed));
+        $('#morphControl').setAttribute('aria-label', morphed ? 'Свернуть окно действия' : 'Открыть окно действия');
+      });
+
+      /* Пилюля подтверждения получает физический разрез, а не мгновенный swap. */
+      const actionSpring = spring(0, 260, 27);
+      let actionSplit = false;
+      function collapseAction() {
+        actionSplit = false;
+        actionSpring.setTarget(0);
+        $('#actionOptions').classList.remove('is-split');
+        $('#actionCaption').textContent = 'пилюля ждёт решения';
+      }
+      $('#actionPill').addEventListener('click', () => {
+        actionSplit = true;
+        actionSpring.setTarget(1);
+        $('#actionOptions').classList.add('is-split');
+        $('#actionCaption').textContent = 'выберите продолжение';
+      });
+      $('#cancelAction').addEventListener('click', () => { announce('Изменения не сохранены.'); collapseAction(); });
+      $('#confirmAction').addEventListener('click', () => { announce('Черновик подтверждён.'); collapseAction(); });
+
+      /* Разные скорости левого и правого края дают индикатору вязкость. */
+      const tabLeft = spring(0, 310, 28);
+      const tabRight = spring(33.3333, 155, 24);
+      const materialData = [
+        { key: 'paper', label: 'матовая бумага' },
+        { key: 'metal', label: 'сатинированный металл' },
+        { key: 'plastic', label: 'матовый пластик' },
+      ];
+      let selectedTab = 0;
+      $$('.material-tab').forEach((tab, index) => tab.addEventListener('click', () => {
+        selectedTab = index;
+        tabLeft.setTarget(index * 33.3333);
+        tabRight.setTarget((index + 1) * 33.3333);
+        $$('.material-tab').forEach((item, itemIndex) => item.setAttribute('aria-selected', String(itemIndex === index)));
+        $('#materialSwatch').className = 'swatch-surface ' + materialData[index].key;
+        $('#materialLabel').textContent = materialData[index].label;
+        $('#materialIndex').textContent = String(index + 1).padStart(2, '0') + ' / 03';
+      }));
+
+      /* Ползунок тянет вверх отдельную пружинную каплю. */
+      const sliderValue = spring(56, 250, 26);
+      $('#densityRange').addEventListener('input', (event) => sliderValue.setTarget(Number(event.target.value)));
+
+      /* Метабольный кластер: капсулы появляются из одной точки и остаются draggable. */
+      const clusterSpace = $('#clusterSpace');
+      const clusterSvg = $('#clusterSvg');
+      const clusterBlobs = $('#clusterBlobs');
+      const clusterAdd = $('#clusterAdd');
+      const toolNames = ['Проверка', 'Снимок', 'Публикация'];
+      const toolData = [];
+      let nextTool = 0;
+      let toolDrag = null;
+      function clusterPoint(event) {
+        const rect = clusterSpace.getBoundingClientRect();
+        return { x: clamp((event.clientX - rect.left) * (620 / rect.width), 22, 598), y: clamp((event.clientY - rect.top) * (150 / rect.height), 18, 132) };
+      }
+      function spawnTool() {
+        if (nextTool >= toolNames.length) {
+          announce('Все три инструмента уже на поле.');
+          return;
+        }
+        const center = { x: 310, y: 75 };
+        const targets = [{ x: 120, y: 36 }, { x: 500, y: 40 }, { x: 505, y: 113 }];
+        const el = document.createElement('button');
+        el.className = 'tool-pill';
+        el.type = 'button';
+        el.textContent = toolNames[nextTool];
+        el.setAttribute('aria-label', 'Перетащить инструмент ' + toolNames[nextTool]);
+        clusterSpace.append(el);
+        const item = { index: nextTool, el, x: spring(center.x, 250, 25), y: spring(center.y, 250, 25), target: targets[nextTool], merged: false, w: 92, h: 31 };
+        item.x.setTarget(item.target.x);
+        item.y.setTarget(item.target.y);
+        toolData.push(item);
+        nextTool += 1;
+        el.addEventListener('pointerdown', (event) => beginToolDrag(event, item));
+        $('#clusterCount').textContent = toolData.length + ' / 3 инструментов';
+        if (nextTool === toolNames.length) clusterAdd.setAttribute('aria-label', 'Все инструменты добавлены');
+      }
+      function beginToolDrag(event, item) {
+        if (event.button !== undefined && event.button !== 0) return;
+        const point = clusterPoint(event);
+        toolDrag = { pointerId: event.pointerId, item, start: point, startItem: { x: item.x.value, y: item.y.value }, last: point };
+        item.el.setPointerCapture?.(event.pointerId);
+        event.preventDefault();
+      }
+      function moveToolDrag(event) {
+        if (!toolDrag || event.pointerId !== toolDrag.pointerId) return;
+        const point = clusterPoint(event);
+        const dx = point.x - toolDrag.start.x;
+        const dy = point.y - toolDrag.start.y;
+        const vx = (point.x - toolDrag.last.x) * 60;
+        const vy = (point.y - toolDrag.last.y) * 60;
+        toolDrag.last = point;
+        const item = toolDrag.item;
+        item.x.setNow(clamp(toolDrag.startItem.x + dx, 20, 620 - item.w - 20), vx);
+        item.y.setNow(clamp(toolDrag.startItem.y + dy, 16, 150 - item.h - 16), vy);
+        item.merged = Math.hypot(item.x.value - 310, item.y.value - 75) < 74;
+        item.el.classList.toggle('is-clustered', item.merged);
+      }
+      function endToolDrag(event) {
+        if (!toolDrag || event.pointerId !== toolDrag.pointerId) return;
+        const item = toolDrag.item;
+        item.el.releasePointerCapture?.(event.pointerId);
+        const near = Math.hypot(item.x.value - 310, item.y.value - 75) < 88;
+        if (near) {
+          item.merged = true;
+          item.x.setTarget(310);
+          item.y.setTarget(75);
+          item.el.classList.add('is-clustered');
+          announce(item.el.textContent + ' присоединён к кластеру.');
+        } else {
+          item.merged = false;
+          item.el.classList.remove('is-clustered');
+          item.x.setTarget(clamp(item.x.value, 20, 620 - item.w - 20));
+          item.y.setTarget(clamp(item.y.value, 16, 150 - item.h - 16));
+        }
+        toolDrag = null;
+      }
+      function cancelToolDrag(event) {
+        if (!toolDrag || event.pointerId !== toolDrag.pointerId) return;
+        toolDrag = null;
+      }
+      clusterAdd.addEventListener('click', spawnTool);
+      function resetCluster() {
+        toolData.forEach((item) => item.el.remove());
+        toolData.length = 0;
+        nextTool = 0;
+        $('#clusterCount').textContent = '0 / 3 инструментов';
+        clusterAdd.setAttribute('aria-label', 'Добавить инструмент');
+      }
+
+      function renderPanel(item) {
+        const el = item.el;
+        el.style.left = (item.x.value / 10) + '%';
+        el.style.top = (item.y.value / 6.2) + '%';
+        el.style.width = (item.w / 10) + '%';
+        el.style.height = (item.h / 6.2) + '%';
+      }
+      function setRect(rect, x, y, width, height, radius) {
+        rect.setAttribute('x', x.toFixed(2));
+        rect.setAttribute('y', y.toFixed(2));
+        rect.setAttribute('width', width.toFixed(2));
+        rect.setAttribute('height', height.toFixed(2));
+        rect.setAttribute('rx', radius.toFixed(2));
+      }
+      function renderWindowPhysics() {
+        const left = panelState.left;
+        const right = panelState.right;
+        renderPanel(left);
+        renderPanel(right);
+        const p = mergeProgress.value;
+        const pad = lerp(2, 17, p);
+        setRect(mergeBlobLeft, left.x.value - pad, left.y.value - pad, left.w + pad * 2, left.h + pad * 2, lerp(13, 22, p));
+        setRect(mergeBlobRight, right.x.value - pad, right.y.value - pad, right.w + pad * 2, right.h + pad * 2, lerp(13, 22, p));
+        mergeBlobs.style.opacity = String(lerp(.12, .95, p));
+        const leftX = left.x.value + left.w;
+        const leftY = left.y.value + 80;
+        const rightX = right.x.value;
+        const rightY = right.y.value + 80;
+        const dx = rightX - leftX;
+        const bend = clamp(Math.abs(dx) * .45, 45, 160);
+        const path = merged
+          ? `M ${leftX.toFixed(1)} ${leftY.toFixed(1)} C ${(leftX + 44).toFixed(1)} ${leftY.toFixed(1)} ${(rightX - 44).toFixed(1)} ${rightY.toFixed(1)} ${rightX.toFixed(1)} ${rightY.toFixed(1)}`
+          : `M ${leftX.toFixed(1)} ${leftY.toFixed(1)} C ${(leftX + bend).toFixed(1)} ${leftY.toFixed(1)} ${(rightX - bend).toFixed(1)} ${rightY.toFixed(1)} ${rightX.toFixed(1)} ${rightY.toFixed(1)}`;
+        [bezierPath, bezierCore, bezierShadow].forEach((node) => node.setAttribute('d', path));
+        const separatedOpacity = merged ? lerp(.42, 0, p) : 1;
+        bezierPath.style.opacity = String(separatedOpacity * .42);
+        bezierCore.style.opacity = String(separatedOpacity * .28);
+        bezierShadow.style.opacity = String(separatedOpacity * .16);
+        if (!merged) {
+          const near = magneticDistance();
+          if (!drag) {
+            dockZone.classList.toggle('is-near', near.near);
+            dockReadout.textContent = near.near ? 'магнит готов · отпустите для слияния' : 'раздельно · живая кривая Безье';
+          }
+        }
+      }
+      function renderMorph() {
+        const p = morphSpring.value;
+        const button = $('#morphControl');
+        button.style.width = lerp(186, 278, p) + 'px';
+        button.style.height = lerp(48, 112, p) + 'px';
+        button.style.borderRadius = lerp(11, 15, p) + 'px';
+        button.style.backgroundColor = p > .55 ? '#fbfaf7' : '#1c1c20';
+        button.style.color = p > .55 ? '#1c1c20' : '#f1efe9';
+        $('#morphFace').style.opacity = String(1 - p);
+        $('#morphFace').style.transform = `scale(${lerp(1, .72, p)})`;
+        $('#morphWindowFace').style.opacity = String(p);
+        $('#morphWindowFace').style.transform = `translateY(${lerp(9, 0, p)}px)`;
+        $('#morphWindowFace').setAttribute('aria-hidden', String(p < .5));
+      }
+      function renderAction() {
+        const p = actionSpring.value;
+        const blob = $('#actionBlob');
+        const width = lerp(174, 312, p);
+        const x = lerp(83, 14, p);
+        blob.setAttribute('x', x.toFixed(1));
+        blob.setAttribute('width', width.toFixed(1));
+        blob.setAttribute('rx', lerp(22, 25, p).toFixed(1));
+        const choices = $$('.action-choice');
+        choices.forEach((choice, index) => {
+          choice.style.opacity = String(p);
+          choice.style.transform = `translateX(${lerp(index === 0 ? 45 : -45, 0, p)}px) scale(${lerp(.6, 1, p)})`;
+          choice.style.pointerEvents = p > .82 ? 'auto' : 'none';
+        });
+        $('#actionPill').style.opacity = String(1 - p);
+        $('#actionPill').style.pointerEvents = p < .18 ? 'auto' : 'none';
+      }
+      function renderTabs() {
+        const indicator = $('#tabIndicator');
+        indicator.style.left = tabLeft.value + '%';
+        indicator.style.width = Math.max(4, tabRight.value - tabLeft.value) + '%';
+      }
+      function renderSlider() {
+        const value = sliderValue.value;
+        const percent = value;
+        $('#sliderFill').style.width = percent + '%';
+        $('#sliderThumb').style.left = percent + '%';
+        $('#sliderDroplet').style.left = percent + '%';
+        $('#sliderDroplet').style.transform = `translate(-50%, -${lerp(88, 100, value / 100)}%) rotate(-45deg) scale(${lerp(.76, 1, value / 100)})`;
+        $('#sliderValue').textContent = String(Math.round(value));
+        $('#sliderCaption').textContent = 'плотность поверхности: ' + Math.round(value) + '%';
+      }
+      function renderCluster() {
+        clusterBlobs.replaceChildren();
+        toolData.forEach((item) => {
+          item.el.style.left = ((item.x.value - item.w / 2) / 620 * 100) + '%';
+          item.el.style.top = ((item.y.value - item.h / 2) / 150 * 100) + '%';
+          item.el.style.transform = 'translate(-50%, -50%)';
+          const shape = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+          shape.setAttribute('x', (item.x.value - item.w / 2 - 7).toFixed(2));
+          shape.setAttribute('y', (item.y.value - item.h / 2 - 5).toFixed(2));
+          shape.setAttribute('width', (item.w + 14).toFixed(2));
+          shape.setAttribute('height', (item.h + 10).toFixed(2));
+          shape.setAttribute('rx', '22');
+          shape.setAttribute('fill', item.merged ? '#e4ebff' : '#fbfaf7');
+          clusterBlobs.append(shape);
+        });
+      }
+      function render() {
+        renderWindowPhysics();
+        renderMorph();
+        renderAction();
+        renderTabs();
+        renderSlider();
+        renderCluster();
+      }
+
+      [$('#morphControl'), $('#actionPill'), $('#cancelAction'), $('#confirmAction'), ...$$('.material-tab'), $('#densityRange'), clusterAdd].forEach((item) => item?.addEventListener('keydown', (event) => {
+        if (event.key === ' ') event.stopPropagation();
+      }));
+
+      const pauseButton = document.createElement('button');
+      pauseButton.type = 'button';
+      pauseButton.className = 'reset-button';
+      pauseButton.textContent = 'Приостановить физику';
+      pauseButton.addEventListener('click', () => {
+        paused = !paused;
+        pauseButton.textContent = paused ? 'Возобновить физику' : 'Приостановить физику';
+        physicsStatus.textContent = paused ? 'физика приостановлена' : 'физика активна';
+      });
+      $('.footer-note').append(pauseButton);
+
+      function resetScene() {
+        merged = false;
+        drag = null;
+        dockNear = false;
+        panelState.left.x.setNow(82); panelState.left.y.setNow(110);
+        panelState.right.x.setNow(605); panelState.right.y.setNow(274);
+        mergeProgress.setNow(0);
+        panelState.left.el.classList.remove('is-merged');
+        panelState.right.el.classList.remove('is-merged');
+        dockZone.classList.remove('is-near');
+        dockReadout.textContent = 'раздельно · магнит выключен';
+        morphed = false; morphSpring.setNow(0);
+        actionSplit = false; actionSpring.setNow(0); $('#actionOptions').classList.remove('is-split');
+        tabLeft.setNow(0); tabRight.setNow(33.3333);
+        selectedTab = 0;
+        $$('.material-tab').forEach((tab, index) => tab.setAttribute('aria-selected', String(index === 0)));
+        $('#materialSwatch').className = 'swatch-surface paper';
+        $('#materialLabel').textContent = 'матовая бумага';
+        $('#materialIndex').textContent = '01 / 03';
+        sliderValue.setNow(56); $('#densityRange').value = '56';
+        resetCluster();
+        announce('Сцена сброшена.');
+      }
+      $('#resetButton').addEventListener('click', resetScene);
+
+      reduceQuery.addEventListener?.('change', (event) => {
+        reduceMotion = event.matches;
+        physicsStatus.textContent = reduceMotion ? 'движение ограничено' : (paused ? 'физика приостановлена' : 'физика активна');
+        if (reduceMotion) render();
+      });
+
+      buildNoise();
+      render();
+      requestAnimationFrame(physicsFrame);
+    })();
+  </script>
+</body>
+</html>
