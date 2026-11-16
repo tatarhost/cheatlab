@@ -42,9 +42,8 @@ Motion is part of the interface system and is calculated as an interruptible phy
 - Verify desktop and narrow mobile layouts before claiming visual QA.
 
 ## Files
-- `public/style.css`: foundational styles.
-- `public/redesign.css` and `public/design-refresh.css`: existing shared redesign layers.
-- `public/professional.css`: legacy professional visual layer kept as a fallback.
-- `public/industrial.css`: final material-paper visual layer for the default theme.
+- `public/style.css`: foundational styles and structural fallbacks.
+- `public/redesign.css` and `public/design-refresh.css`: shared legacy layers kept for route-specific fallbacks.
+- `public/professional.css`: final material-paper visual layer for the default theme.
 - `public/motion.css`: responsive motion refinements.
 - `public/motion.js`: route accessibility, noise generation and the shared spring interaction engine.
