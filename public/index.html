@@ -38,7 +38,7 @@ document.write('<base href="' +
 <meta property="og:image:width" content="1280">
 <meta property="og:image:height" content="640">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="theme-color" content="#090a0b">
+<meta name="theme-color" content="#f1efe9">
 <link rel="icon" href="assets/logo.png">
 <!-- v=3 on both assets: GitHub Pages serves stale copies to returning
      browsers otherwise, and every deploy since can leave old code doing the
@@ -49,15 +49,16 @@ document.write('<base href="' +
 <link rel="stylesheet" href="style.css?v=18">
 <link rel="stylesheet" href="redesign.css?v=37">
 <link rel="stylesheet" href="design-refresh.css?v=5">
-<link rel="stylesheet" href="motion.css?v=1">
+<link rel="stylesheet" href="motion.css?v=2">
 <link rel="stylesheet" href="professional.css?v=1">
+<link rel="stylesheet" href="industrial.css?v=1">
 <script src="humancheck.js?v=3"></script>
 
 <!-- Applied before first paint: without this the page flashes white before
      app.js gets a chance to set the stored preference. -->
 <script>
   try {
-    // Restore the classic black-and-white site theme as the default.
+    // Restore the material paper theme as the default.
     if (localStorage.getItem('cheatlab.theme-default-classic-v1') !== '1') {
       localStorage.setItem('cheatlab.theme', 'dark');
       localStorage.setItem('cheatlab.theme-default-classic-v1', '1');
@@ -66,7 +67,7 @@ document.write('<base href="' +
     if (t !== 'dark' && t !== 'aero') t = 'dark';
     document.documentElement.dataset.theme = t;
     var m = document.querySelector('meta[name="theme-color"]');
-    if (m) m.setAttribute('content', t === 'aero' ? '#b9edff' : '#090a0b');
+    if (m) m.setAttribute('content', t === 'aero' ? '#b9edff' : '#f1efe9');
   } catch (e) {}
 </script>
 </head>
@@ -216,7 +217,7 @@ document.write('<base href="' +
     <div class="rail-foot">
       <button class="rail-stat theme-toggle" id="themeToggle" type="button" aria-label="Сменить тему">
         <svg class="i" aria-hidden="true"><use href="#i-sun" id="themeIcon"/></svg>
-        <span id="themeLabel">Тёмная тема</span>
+        <span id="themeLabel">Аэро-тема</span>
       </button>
       <button class="rail-stat theme-toggle background-motion-toggle" id="motionToggleDesktop" type="button" aria-label="Анимация фонового видео" aria-pressed="true">
         <svg class="i" aria-hidden="true"><use href="#i-video"/></svg>

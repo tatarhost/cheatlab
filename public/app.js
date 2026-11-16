@@ -2564,7 +2564,7 @@ async function viewProfile(id) {
   });
   const bg = h('input', {
     class: 'input', name: 'bg', maxlength: 120, spellcheck: false,
-    value: u.bg || '', placeholder: 'linear-gradient(120deg, #17141f, #0b0b0b)',
+    value: u.bg || '', placeholder: 'например, цвет фона #f1efe9',
   });
   const followBtn = h('button', {
     class: 'btn', type: 'button', disabled: isMe,
@@ -5486,10 +5486,10 @@ function applyTheme(next) {
   const label = document.getElementById('themeLabel');
   const mobileBtn = document.getElementById('themeToggleMobile');
   if (icon) icon.setAttribute('href', next === 'dark' ? '#i-sun' : '#i-moon');
-  if (label) label.textContent = next === 'dark' ? 'Frutiger Aero' : 'Тёмная тема';
-  if (mobileBtn) mobileBtn.title = next === 'dark' ? 'Включить Frutiger Aero' : 'Включить тёмную тему';
+  if (label) label.textContent = next === 'dark' ? 'Аэро-тема' : 'Материальная тема';
+  if (mobileBtn) mobileBtn.title = next === 'dark' ? 'Включить Frutiger Aero' : 'Включить материальную тему';
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', next === 'aero' ? '#b9edff' : '#0b0b0b');
+  if (meta) meta.setAttribute('content', next === 'aero' ? '#b9edff' : '#f1efe9');
   document.querySelectorAll('img[data-classic-logo][data-aero-logo]').forEach((img) => {
     img.src = next === 'aero' ? img.dataset.aeroLogo : img.dataset.classicLogo;
   });

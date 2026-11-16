@@ -1,0 +1,883 @@
+/*
+ * CHEATLAB / MATERIAL MOTION
+ * Финальный слой общего интерфейса: тёплая бумага, матовые поверхности,
+ * графитовая типографика и один функциональный синий. Состояние приложения,
+ * маршруты и API остаются без изменений.
+ */
+
+:root:not([data-theme="aero"]) {
+  color-scheme: light;
+  --paper: #f1efe9;
+  --fog: #fbfaf7;
+  --fog-2: #e8e5de;
+  --ink: #1c1c20;
+  --mute: #6f6c66;
+  --line: rgba(25, 25, 28, .12);
+  --line-strong: rgba(25, 25, 28, .25);
+  --accent: #1d57e8;
+  --accent-dark: #123ba7;
+  --accent-soft: #e4ebff;
+  --accent-ink: #ffffff;
+  --danger: #a0443c;
+  --success: #2b704d;
+  --shadow-sm: 0 3px 0 rgba(28, 28, 32, .06), 0 10px 24px rgba(28, 28, 32, .06);
+  --shadow-md: 0 5px 0 rgba(28, 28, 32, .06), 0 18px 36px rgba(28, 28, 32, .1);
+  --shadow-lg: 0 8px 0 rgba(28, 28, 32, .07), 0 28px 70px rgba(28, 28, 32, .16);
+  --r: 7px;
+  --r-lg: 10px;
+  --r-xl: 14px;
+  --ease: cubic-bezier(.22, .8, .24, 1);
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --duration-fast: 140ms;
+  --duration-ui: 190ms;
+  --duration-panel: 300ms;
+  --shell-width: 1480px;
+  --noise-url: none;
+}
+
+:root:not([data-theme="aero"]) html,
+:root:not([data-theme="aero"]) body {
+  background-color: var(--paper);
+  color: var(--ink);
+}
+
+:root:not([data-theme="aero"]) html {
+  scroll-behavior: smooth;
+  scrollbar-color: var(--line-strong) var(--paper);
+}
+
+:root:not([data-theme="aero"]) body {
+  position: relative;
+  min-height: 100%;
+  background-image: var(--noise-url);
+  background-repeat: repeat;
+  background-blend-mode: multiply;
+  font-family: "IBM Plex Sans", "Segoe UI", Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  letter-spacing: -.008em;
+}
+
+/* Noise is a surface treatment, never a decorative overlay that blocks input. */
+:root:not([data-theme="aero"]) body::after {
+  content: "";
+  position: fixed;
+  z-index: 90;
+  inset: 0;
+  pointer-events: none;
+  background-image: var(--noise-url);
+  background-repeat: repeat;
+  mix-blend-mode: multiply;
+  opacity: .07;
+}
+
+:root:not([data-theme="aero"]) ::selection {
+  background: var(--accent);
+  color: #fff;
+}
+
+:root:not([data-theme="aero"]) :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+:root:not([data-theme="aero"]) button,
+:root:not([data-theme="aero"]) input,
+:root:not([data-theme="aero"]) select,
+:root:not([data-theme="aero"]) textarea { font: inherit; }
+
+:root:not([data-theme="aero"]) :where(a, button, input, select, textarea) {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:root:not([data-theme="aero"]) button,
+:root:not([data-theme="aero"]) .btn,
+:root:not([data-theme="aero"]) .nav-link { touch-action: manipulation; }
+
+:root:not([data-theme="aero"]) .site-video-background,
+:root:not([data-theme="aero"]) .background-motion-toggle { display: none !important; }
+
+/* The frame: a quiet rail, a ruled utility bar, an open paper canvas. */
+:root:not([data-theme="aero"]) .app {
+  min-height: 100dvh;
+  grid-template-columns: 248px minmax(0, 1fr);
+  background: var(--paper);
+}
+
+:root:not([data-theme="aero"]) .rail {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  height: 100dvh;
+  padding: 26px 17px 20px;
+  border-right: 1px solid var(--line-strong);
+  background: var(--paper);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:root:not([data-theme="aero"]) .brand { gap: 11px; min-height: 40px; }
+:root:not([data-theme="aero"]) .brand img {
+  width: 38px;
+  height: 38px;
+  padding: 4px;
+  border: 1px solid var(--ink);
+  border-radius: 7px;
+  background: var(--ink);
+  box-shadow: 3px 4px 0 rgba(28, 28, 32, .11);
+}
+:root:not([data-theme="aero"]) .brand-name {
+  color: var(--ink);
+  font: 700 16px/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+  letter-spacing: -.045em;
+}
+:root:not([data-theme="aero"]) .brand-name b { font-weight: 400; }
+
+:root:not([data-theme="aero"]) .nav {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 31px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+:root:not([data-theme="aero"]) .nav-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 40px;
+  width: 100%;
+  margin: 0;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--mute);
+  font: 500 13px/1.2 "IBM Plex Sans", "Segoe UI", sans-serif;
+  transition: color var(--duration-ui) var(--ease), background-color var(--duration-ui) var(--ease), border-color var(--duration-ui) var(--ease), translate var(--duration-fast) var(--ease);
+}
+:root:not([data-theme="aero"]) .nav-link .i { width: 17px; height: 17px; opacity: .82; }
+:root:not([data-theme="aero"]) .nav-link:hover {
+  color: var(--ink);
+  background: rgba(251, 250, 247, .72);
+  border-color: var(--line);
+  translate: 3px 0;
+  text-decoration: none;
+}
+:root:not([data-theme="aero"]) .nav-link[aria-current="page"] {
+  color: var(--ink);
+  background: var(--fog);
+  border-color: var(--line-strong);
+  box-shadow: inset 3px 0 0 var(--accent), 3px 4px 0 rgba(28, 28, 32, .045);
+  font-weight: 650;
+}
+:root:not([data-theme="aero"]) .nav-link[aria-current="page"] .i,
+:root:not([data-theme="aero"]) .motion-lab-nav .i { color: var(--accent); opacity: 1; }
+
+:root:not([data-theme="aero"]) .rail-account { margin-top: auto; }
+:root:not([data-theme="aero"]) .rail-account .rail-stat {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  width: 100%;
+  padding: 0 11px;
+  border: 1px solid var(--ink);
+  border-radius: var(--r);
+  background: var(--ink);
+  color: var(--paper);
+  font: 600 12px/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+  text-decoration: none;
+  transition: background-color var(--duration-ui) var(--ease), color var(--duration-ui) var(--ease), translate var(--duration-fast) var(--ease);
+}
+:root:not([data-theme="aero"]) .rail-account .rail-stat:hover {
+  background: var(--paper);
+  color: var(--ink);
+  translate: 0 -2px;
+}
+:root:not([data-theme="aero"]) .rail-foot {
+  margin-top: 18px;
+  padding-top: 15px;
+  border-top: 1px solid var(--line-strong);
+}
+:root:not([data-theme="aero"]) .rail-note { max-width: 27ch; color: var(--mute); font-size: 11px; line-height: 1.5; }
+:root:not([data-theme="aero"]) .rail-stat { color: var(--mute); font: 11px "IBM Plex Mono", Consolas, monospace; }
+:root:not([data-theme="aero"]) .theme-toggle {
+  min-height: 30px;
+  border: 0;
+  background: transparent;
+  color: var(--mute);
+}
+:root:not([data-theme="aero"]) .theme-toggle:hover { color: var(--ink); text-decoration: underline; }
+
+/* Utility bar and search. */
+:root:not([data-theme="aero"]) .main { min-width: 0; background: var(--paper); }
+:root:not([data-theme="aero"]) .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-height: 68px;
+  height: 68px;
+  padding: 0 clamp(22px, 3vw, 46px);
+  border-bottom: 1px solid var(--line-strong);
+  background: rgba(241, 239, 233, .93);
+  box-shadow: 0 3px 0 rgba(28, 28, 32, .025);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+:root:not([data-theme="aero"]) .search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(600px, 100%);
+  max-width: 600px;
+  min-height: 41px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  background: var(--fog);
+  color: var(--mute);
+  transition: border-color var(--duration-ui) var(--ease), box-shadow var(--duration-ui) var(--ease), translate var(--duration-fast) var(--ease);
+}
+:root:not([data-theme="aero"]) .search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(29, 87, 232, .12);
+  translate: 0 -1px;
+}
+:root:not([data-theme="aero"]) .search input {
+  min-width: 0;
+  min-height: 39px;
+  padding: 0;
+  color: var(--ink);
+  font: 13px "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+:root:not([data-theme="aero"]) .search input::placeholder { color: var(--mute); opacity: .85; }
+:root:not([data-theme="aero"]) .topbar-actions { align-items: center; gap: 8px; }
+:root:not([data-theme="aero"]) .theme-toggle-mobile {
+  display: grid;
+  place-items: center;
+  width: 39px;
+  height: 39px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  background: var(--fog);
+  color: var(--ink);
+  cursor: pointer;
+}
+:root:not([data-theme="aero"]) .theme-toggle-mobile:hover { border-color: var(--accent); background: var(--accent-soft, #e4ebff); }
+
+/* Main rhythm and type. */
+:root:not([data-theme="aero"]) .view {
+  width: 100%;
+  max-width: var(--shell-width);
+  margin-inline: auto;
+  padding: clamp(30px, 4vw, 52px) clamp(20px, 3.6vw, 52px) 92px;
+}
+:root:not([data-theme="aero"]) .page-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 20px;
+  padding: 0 0 22px;
+  margin: 0 0 30px;
+  border-bottom: 1px solid var(--line-strong);
+}
+:root:not([data-theme="aero"]) .page-head h1,
+:root:not([data-theme="aero"]) .view h1 {
+  color: var(--ink);
+  font-size: clamp(30px, 3.7vw, 50px);
+  font-weight: 650;
+  line-height: 1.02;
+  letter-spacing: -.06em;
+  text-wrap: balance;
+}
+:root:not([data-theme="aero"]) .page-sub {
+  max-width: 70ch;
+  margin-top: 9px;
+  color: var(--mute);
+  font-size: 14px;
+  line-height: 1.55;
+}
+:root:not([data-theme="aero"]) .page-head .spacer { flex: 1 1 auto; }
+:root:not([data-theme="aero"]) .page-title-row { display: inline-flex; align-items: center; gap: 10px; }
+
+/* One reusable tactile surface: matte card + one-pixel rule + noise. */
+:root:not([data-theme="aero"]) :where(.panel, .card, .notice, .auth-card, .profile-card, .stat-card, .item-card,
+  .download-detail, .download-release, .download-hero, .mail-side, .mail-main, .mail-message,
+  .chat-wrap, .chat-list, .chat-start-card, .chat-call-layer, .lock-panel, .queue-row, .drop,
+  .st-card, .settings-card, .carousel, .media-item) {
+  position: relative;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  background-color: var(--fog);
+  background-image: var(--noise-url);
+  background-repeat: repeat;
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+:root:not([data-theme="aero"]) :where(.download-hero, .chat-wrap, .carousel, .media-item) { overflow: hidden; }
+:root:not([data-theme="aero"]) :where(.panel, .card, .notice, .auth-card, .profile-card, .stat-card, .item-card,
+  .download-detail, .download-release, .download-hero, .mail-side, .mail-main, .mail-message,
+  .chat-wrap, .chat-list, .chat-start-card, .chat-call-layer, .lock-panel, .queue-row, .drop,
+  .st-card, .settings-card, .carousel, .media-item)::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background-image: var(--noise-url);
+  background-repeat: repeat;
+  mix-blend-mode: multiply;
+  opacity: .12;
+}
+:root:not([data-theme="aero"]) :where(.panel, .card, .notice, .auth-card, .profile-card, .stat-card, .item-card,
+  .download-detail, .download-release, .download-hero, .mail-side, .mail-main, .mail-message,
+  .chat-wrap, .chat-list, .chat-start-card, .chat-call-layer, .lock-panel, .queue-row, .drop,
+  .st-card, .settings-card, .carousel, .media-item) > * { position: relative; z-index: 1; }
+:root:not([data-theme="aero"]) .panel,
+:root:not([data-theme="aero"]) .card,
+:root:not([data-theme="aero"]) .mail-message,
+:root:not([data-theme="aero"]) .lock-panel { padding: 20px; }
+:root:not([data-theme="aero"]) .panel + .panel { margin-top: 15px; }
+:root:not([data-theme="aero"]) .panel-title {
+  margin-bottom: 12px;
+  color: var(--mute);
+  font: 600 11px/1.3 "IBM Plex Sans", "Segoe UI", sans-serif;
+  letter-spacing: .03em;
+}
+:root:not([data-theme="aero"]) .notice { padding: 14px 16px; gap: 12px; font-size: 13px; }
+:root:not([data-theme="aero"]) .empty {
+  padding: clamp(42px, 7vw, 82px) 6px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+}
+:root:not([data-theme="aero"]) .empty h2 { margin-bottom: 9px; font-size: 23px; letter-spacing: -.04em; }
+:root:not([data-theme="aero"]) .empty p { max-width: 50ch; color: var(--mute); }
+:root:not([data-theme="aero"]) .empty .btn { margin-top: 19px; }
+
+/* Controls: firm edges, no pill soup. */
+:root:not([data-theme="aero"]) .btn,
+:root:not([data-theme="aero"]) .icon-btn,
+:root:not([data-theme="aero"]) .tab,
+:root:not([data-theme="aero"]) .mail-folder,
+:root:not([data-theme="aero"]) .chat-attach,
+:root:not([data-theme="aero"]) .chat-send,
+:root:not([data-theme="aero"]) .cl-release-close {
+  border-radius: var(--r);
+  transition: color var(--duration-ui) var(--ease), background-color var(--duration-ui) var(--ease), border-color var(--duration-ui) var(--ease), box-shadow var(--duration-ui) var(--ease), translate var(--duration-fast) var(--ease), scale var(--duration-fast) var(--ease), opacity var(--duration-ui) var(--ease);
+}
+:root:not([data-theme="aero"]) .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--line-strong);
+  background: var(--fog);
+  color: var(--ink);
+  font: 600 13px/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+  letter-spacing: -.01em;
+  text-transform: none;
+  text-decoration: none;
+  cursor: pointer;
+}
+:root:not([data-theme="aero"]) .btn:hover,
+:root:not([data-theme="aero"]) .icon-btn:hover,
+:root:not([data-theme="aero"]) .tab:hover,
+:root:not([data-theme="aero"]) .mail-folder:hover,
+:root:not([data-theme="aero"]) .chat-attach:hover,
+:root:not([data-theme="aero"]) .chat-send:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft, #e4ebff);
+  color: var(--ink);
+  text-decoration: none;
+  translate: 0 -2px;
+  box-shadow: 3px 4px 0 rgba(28, 28, 32, .08);
+}
+:root:not([data-theme="aero"]) .btn:active:not(:disabled),
+:root:not([data-theme="aero"]) .icon-btn:active:not(:disabled),
+:root:not([data-theme="aero"]) .tab:active,
+:root:not([data-theme="aero"]) .mail-folder:active { scale: .97; }
+:root:not([data-theme="aero"]) .btn:disabled,
+:root:not([data-theme="aero"]) button:disabled { opacity: .42; cursor: not-allowed; }
+:root:not([data-theme="aero"]) .btn-primary,
+:root:not([data-theme="aero"]) .chat-send,
+:root:not([data-theme="aero"]) .cl-publish-global {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 3px 4px 0 rgba(28, 28, 32, .12);
+}
+:root:not([data-theme="aero"]) .btn-primary:hover,
+:root:not([data-theme="aero"]) .chat-send:hover,
+:root:not([data-theme="aero"]) .cl-publish-global:hover {
+  border-color: var(--accent-dark, #123ba7);
+  background: var(--accent-dark, #123ba7);
+  color: #fff;
+  box-shadow: 4px 6px 0 rgba(28, 28, 32, .14);
+}
+:root:not([data-theme="aero"]) .btn-ghost { background: transparent; }
+:root:not([data-theme="aero"]) .btn-ghost:hover { background: var(--fog); }
+:root:not([data-theme="aero"]) .btn-sm { min-height: 34px; padding-inline: 10px; font-size: 12px; }
+:root:not([data-theme="aero"]) .icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  background: var(--fog);
+  color: var(--ink);
+  cursor: pointer;
+}
+:root:not([data-theme="aero"]) .btn-like.is-on { background: var(--accent); color: #fff; border-color: var(--accent); }
+:root:not([data-theme="aero"]) .btn .i,
+:root:not([data-theme="aero"]) .icon-btn .i,
+:root:not([data-theme="aero"]) .nav-link .i,
+:root:not([data-theme="aero"]) .tab .i { width: 17px; height: 17px; filter: none; }
+
+/* Fields are mechanical controls on the same sheet. */
+:root:not([data-theme="aero"]) .label {
+  color: var(--mute);
+  font: 600 11px/1.3 "IBM Plex Sans", "Segoe UI", sans-serif;
+  letter-spacing: .025em;
+  text-transform: none;
+}
+:root:not([data-theme="aero"]) .input,
+:root:not([data-theme="aero"]) .select,
+:root:not([data-theme="aero"]) .textarea,
+:root:not([data-theme="aero"]) .chat-input,
+:root:not([data-theme="aero"]) .chat-kind,
+:root:not([data-theme="aero"]) input:not([type="checkbox"]):not([type="radio"]),
+:root:not([data-theme="aero"]) textarea,
+:root:not([data-theme="aero"]) select {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  background: var(--fog);
+  color: var(--ink);
+  box-shadow: none;
+  font: 14px/1.5 "IBM Plex Sans", "Segoe UI", sans-serif;
+  transition: border-color var(--duration-ui) var(--ease), box-shadow var(--duration-ui) var(--ease), translate var(--duration-fast) var(--ease);
+}
+:root:not([data-theme="aero"]) .textarea,
+:root:not([data-theme="aero"]) code,
+:root:not([data-theme="aero"]) pre { font-family: "IBM Plex Mono", Consolas, monospace; }
+:root:not([data-theme="aero"]) .input:focus,
+:root:not([data-theme="aero"]) .select:focus,
+:root:not([data-theme="aero"]) .textarea:focus,
+:root:not([data-theme="aero"]) .chat-input:focus,
+:root:not([data-theme="aero"]) .chat-kind:focus,
+:root:not([data-theme="aero"]) input:focus,
+:root:not([data-theme="aero"]) textarea:focus,
+:root:not([data-theme="aero"]) select:focus {
+  border-color: var(--accent);
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(29, 87, 232, .13);
+  translate: 0 -1px;
+}
+:root:not([data-theme="aero"]) .input::placeholder,
+:root:not([data-theme="aero"]) textarea::placeholder { color: var(--mute); opacity: .82; }
+
+/* Editorial feed rows: no floating card wall. */
+:root:not([data-theme="aero"]) .list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border-top: 1px solid var(--line-strong);
+}
+:root:not([data-theme="aero"]) .row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px 9px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  transition: background-color var(--duration-ui) var(--ease), border-color var(--duration-ui) var(--ease), translate var(--duration-fast) var(--ease);
+}
+:root:not([data-theme="aero"]) .row:hover {
+  background: var(--fog);
+  border-color: var(--line-strong);
+  translate: 3px 0;
+  text-decoration: none;
+}
+:root:not([data-theme="aero"]) .row-mark { color: var(--mute); }
+:root:not([data-theme="aero"]) .row-title {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -.02em;
+  overflow-wrap: anywhere;
+}
+:root:not([data-theme="aero"]) .row-meta { color: var(--mute); font-size: 11px; }
+:root:not([data-theme="aero"]) .row-right { color: var(--mute); font: 11px "IBM Plex Mono", Consolas, monospace; }
+:root:not([data-theme="aero"]) .row-thumb {
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  background: var(--fog-2);
+}
+:root:not([data-theme="aero"]) .row-thumb img,
+:root:not([data-theme="aero"]) .media-img { filter: none; transition: scale 240ms var(--ease); }
+:root:not([data-theme="aero"]) .row:hover .row-thumb img { scale: 1.04; }
+:root:not([data-theme="aero"]) .tag,
+:root:not([data-theme="aero"]) .chip,
+:root:not([data-theme="aero"]) .badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 22px;
+  padding: 2px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--fog);
+  color: var(--mute);
+  font-size: 11px;
+  line-height: 1.25;
+}
+:root:not([data-theme="aero"]) .pill-danger { border-color: rgba(160, 68, 60, .36); color: var(--danger); }
+:root:not([data-theme="aero"]) .pill-mute { color: var(--mute); }
+
+/* Code and media retain dark code ink but use the same outer grammar. */
+:root:not([data-theme="aero"]) .code,
+:root:not([data-theme="aero"]) pre {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  background: #202126;
+  color: #f1efe9;
+  font: 13px/1.7 "IBM Plex Mono", Consolas, monospace;
+}
+:root:not([data-theme="aero"]) .code-bar {
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid var(--line-strong);
+  border-bottom: 0;
+  border-radius: var(--r) var(--r) 0 0;
+  background: #e8e5de;
+  color: var(--mute);
+  font: 11px "IBM Plex Mono", Consolas, monospace;
+}
+:root:not([data-theme="aero"]) .code-bar + .code { border-radius: 0 0 var(--r) var(--r); }
+:root:not([data-theme="aero"]) .media-item,
+:root:not([data-theme="aero"]) .carousel {
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  background: var(--fog);
+  box-shadow: var(--shadow-sm);
+}
+:root:not([data-theme="aero"]) .media-item > figcaption,
+:root:not([data-theme="aero"]) .carousel-head {
+  min-height: 38px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--fog);
+  color: var(--mute);
+  font: 11px "IBM Plex Mono", Consolas, monospace;
+}
+:root:not([data-theme="aero"]) .drop {
+  min-height: 104px;
+  padding: 22px;
+  border-style: dashed;
+  color: var(--mute);
+}
+:root:not([data-theme="aero"]) .drop:hover,
+:root:not([data-theme="aero"]) .drop.is-over { border-color: var(--accent); background: #e4ebff; color: var(--ink); }
+:root:not([data-theme="aero"]) .files th {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--mute);
+  font: 600 10px "IBM Plex Sans", "Segoe UI", sans-serif;
+  text-transform: none;
+}
+:root:not([data-theme="aero"]) .files td { padding: 12px; border-bottom: 1px solid var(--line); }
+:root:not([data-theme="aero"]) .files tr:hover td { background: var(--fog); }
+
+/* Chat and mail: nested applications use the same warm sheet, not glass. */
+:root:not([data-theme="aero"]) .chat-wrap {
+  overflow: hidden;
+  border-radius: var(--r-lg) !important;
+  background: var(--paper);
+}
+:root:not([data-theme="aero"]) .chat-top,
+:root:not([data-theme="aero"]) .mail-toolbar,
+:root:not([data-theme="aero"]) .chat-compose-row { border-color: var(--line-strong); background: var(--fog); }
+:root:not([data-theme="aero"]) .chat-log { padding: 20px; background: var(--paper); }
+:root:not([data-theme="aero"]) .chat-body {
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px 12px 12px 4px !important;
+  background: var(--fog);
+}
+:root:not([data-theme="aero"]) .chat-msg.is-mine .chat-body {
+  border-color: var(--accent);
+  border-radius: 12px 12px 4px 12px !important;
+  background: var(--accent);
+  color: #fff;
+}
+:root:not([data-theme="aero"]) .chat-msg.is-grouped .chat-body { border-top-left-radius: 4px !important; }
+:root:not([data-theme="aero"]) .chat-msg.is-mine.is-grouped .chat-body { border-top-right-radius: 4px !important; }
+:root:not([data-theme="aero"]) .chat-compose-row {
+  margin: 10px;
+  padding: 6px;
+  border: 1px solid var(--line-strong) !important;
+  border-radius: var(--r-lg);
+  background: var(--fog) !important;
+}
+:root:not([data-theme="aero"]) .chat-field { background: transparent !important; border: 0 !important; box-shadow: none !important; }
+:root:not([data-theme="aero"]) .chat-list,
+:root:not([data-theme="aero"]) .chat-start-card,
+:root:not([data-theme="aero"]) .chat-call-layer,
+:root:not([data-theme="aero"]) .mail-side,
+:root:not([data-theme="aero"]) .mail-main { border-color: var(--line-strong); border-radius: var(--r-lg); }
+:root:not([data-theme="aero"]) .mail-address,
+:root:not([data-theme="aero"]) .mail-folder,
+:root:not([data-theme="aero"]) .mail-code-card,
+:root:not([data-theme="aero"]) .mail-compose-tools,
+:root:not([data-theme="aero"]) .mail-attachment-chip { border-radius: var(--r); }
+:root:not([data-theme="aero"]) .messenger-drawer {
+  border-color: var(--line-strong);
+  background: var(--fog);
+  box-shadow: var(--shadow-lg);
+}
+
+/* Dialogs, release sheet and feedback. */
+:root:not([data-theme="aero"]) .modal-backdrop,
+:root:not([data-theme="aero"]) .st-back,
+:root:not([data-theme="aero"]) .cl-release-backdrop {
+  background: rgba(28, 28, 32, .42);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+:root:not([data-theme="aero"]) .modal-backdrop .auth-card,
+:root:not([data-theme="aero"]) .st-back .st,
+:root:not([data-theme="aero"]) .cl-release-dialog {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xl);
+  background: var(--fog);
+  box-shadow: var(--shadow-lg);
+}
+:root:not([data-theme="aero"]) .toast {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  background: var(--fog);
+  color: var(--ink);
+  box-shadow: var(--shadow-md);
+}
+
+/* Purposeful motion: arrive as a surface, then respond like a physical control. */
+@keyframes cl-material-page-in {
+  from { opacity: 0; translate: 0 10px; }
+  to { opacity: 1; translate: 0 0; }
+}
+@keyframes cl-material-dialog-in {
+  from { opacity: 0; translate: 0 13px; scale: .975; }
+  to { opacity: 1; translate: 0 0; scale: 1; }
+}
+@keyframes cl-material-toast-in {
+  from { opacity: 0; translate: 0 6px; }
+  to { opacity: 1; translate: 0 0; }
+}
+:root:not([data-theme="aero"]) #view.cl-view-enter > :first-child { animation: cl-material-page-in var(--duration-panel) var(--ease-out) both; }
+:root:not([data-theme="aero"]) .modal-backdrop .auth-card,
+:root:not([data-theme="aero"]) .st-back .st,
+:root:not([data-theme="aero"]) .cl-release-dialog { animation: cl-material-dialog-in var(--duration-panel) var(--ease-out) both; }
+:root:not([data-theme="aero"]) .toast:not([hidden]) { animation: cl-material-toast-in 180ms var(--ease-out) both; }
+
+:root:not([data-theme="aero"]) .cl-spring-target {
+  translate: var(--cl-mx, 0px) var(--cl-my, 0px);
+  will-change: translate;
+}
+:root:not([data-theme="aero"]) .cl-ripple-host {
+  position: relative;
+  overflow: hidden;
+}
+:root:not([data-theme="aero"]) .cl-ripple-host > * { position: relative; z-index: 1; }
+:root:not([data-theme="aero"]) .cl-ripple {
+  position: absolute;
+  z-index: 0;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: .18;
+  pointer-events: none;
+  translate: -50% -50%;
+  animation: cl-material-ripple 520ms var(--ease-out) both;
+}
+:root:not([data-theme="aero"]) .cl-ripple ~ * { position: relative; z-index: 1; }
+@keyframes cl-material-ripple {
+  from { scale: 0; opacity: .24; }
+  to { scale: 22; opacity: 0; }
+}
+:root:not([data-theme="aero"]) .cl-publish-global { transition: translate var(--duration-fast) var(--ease), background-color var(--duration-ui) var(--ease), box-shadow var(--duration-ui) var(--ease); }
+:root:not([data-theme="aero"]) .cl-publish-global:hover { translate: 0 -3px; }
+
+/* Mobile: preserve the thumb-zone navigation without turning it into glass. */
+@media (max-width: 900px) {
+  :root:not([data-theme="aero"]) body { padding-bottom: calc(82px + env(safe-area-inset-bottom)) !important; }
+  :root:not([data-theme="aero"]) .rail {
+    position: static !important;
+    height: auto !important;
+    min-height: 58px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 9px 15px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line-strong);
+  }
+  :root:not([data-theme="aero"]) .brand img { width: 32px; height: 32px; }
+  :root:not([data-theme="aero"]) .rail-account { margin: 0; }
+  :root:not([data-theme="aero"]) .rail-account .rail-stat { width: auto; min-height: 34px; padding-inline: 11px; }
+  :root:not([data-theme="aero"]) .nav {
+    position: fixed !important;
+    z-index: 35 !important;
+    left: 50% !important;
+    right: auto !important;
+    top: auto !important;
+    bottom: calc(9px + env(safe-area-inset-bottom)) !important;
+    transform: translateX(-50%) !important;
+    box-sizing: border-box !important;
+    display: flex !important;
+    flex-flow: row nowrap !important;
+    align-items: center !important;
+    gap: 3px !important;
+    width: min(360px, calc(100vw - 28px)) !important;
+    max-width: calc(100vw - 28px) !important;
+    height: 56px !important;
+    min-height: 56px !important;
+    margin: 0 !important;
+    padding: 5px 36px 5px 8px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    white-space: nowrap !important;
+    scrollbar-width: none !important;
+    -webkit-overflow-scrolling: touch !important;
+    touch-action: pan-x !important;
+    overscroll-behavior-x: contain !important;
+    border: 1px solid var(--line-strong) !important;
+    border-radius: 14px !important;
+    background: rgba(251, 250, 247, .94) !important;
+    box-shadow: var(--shadow-md) !important;
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+  }
+  :root:not([data-theme="aero"]) .nav::-webkit-scrollbar { display: none !important; }
+  :root:not([data-theme="aero"]) .nav > .nav-link {
+    display: flex !important;
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 62px !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 5px 7px !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 2px !important;
+    border: 0 !important;
+    border-radius: 9px !important;
+    font-size: 10px !important;
+    line-height: 1.1 !important;
+    white-space: nowrap !important;
+  }
+  :root:not([data-theme="aero"]) .nav > .nav-link:hover { translate: 0 0; }
+  :root:not([data-theme="aero"]) .nav > .nav-link[aria-current="page"] {
+    background: var(--accent) !important;
+    color: #fff !important;
+    box-shadow: none !important;
+  }
+  :root:not([data-theme="aero"]) .nav > .nav-link[aria-current="page"] .i { color: #fff !important; }
+  :root:not([data-theme="aero"]) .nav-scroll-hint {
+    display: flex !important;
+    position: absolute !important;
+    z-index: 5 !important;
+    top: 50% !important;
+    right: 5px !important;
+    left: auto !important;
+    bottom: auto !important;
+    width: 25px !important;
+    height: 32px !important;
+    align-items: center !important;
+    justify-content: center !important;
+    transform: translateY(-50%) !important;
+    border: 1px solid var(--line) !important;
+    border-radius: 7px !important;
+    background: var(--paper) !important;
+    color: var(--ink) !important;
+    font-size: 22px !important;
+    line-height: 1 !important;
+    pointer-events: none !important;
+    opacity: 1;
+  }
+  :root:not([data-theme="aero"]) .nav-scroll-hint.is-hidden { opacity: 0 !important; }
+  :root:not([data-theme="aero"]) .topbar {
+    min-height: 58px;
+    height: 58px;
+    padding: 8px 13px;
+    background: rgba(241, 239, 233, .96);
+  }
+  :root:not([data-theme="aero"]) .topbar-actions .btn-primary { min-height: 38px; padding-inline: 11px; }
+  :root:not([data-theme="aero"]) .view { padding: 25px 14px calc(108px + env(safe-area-inset-bottom)) !important; }
+  :root:not([data-theme="aero"]) .page-head { align-items: flex-start; flex-direction: column; gap: 12px; margin-bottom: 22px; }
+  :root:not([data-theme="aero"]) .page-head .spacer { display: none; }
+  :root:not([data-theme="aero"]) .page-head h1,
+  :root:not([data-theme="aero"]) .view h1 { font-size: clamp(29px, 8vw, 40px); }
+  :root:not([data-theme="aero"]) .row { grid-template-columns: 24px minmax(0, 1fr); padding: 14px 4px; }
+  :root:not([data-theme="aero"]) .row-right { display: none; }
+  :root:not([data-theme="aero"]) .panel { padding: 16px !important; }
+  :root:not([data-theme="aero"]) .split { grid-template-columns: 1fr; gap: 16px; }
+  :root:not([data-theme="aero"]) .chat-msg { max-width: 90%; }
+  :root:not([data-theme="aero"]) .mail-shell { grid-template-columns: 1fr; }
+  :root:not([data-theme="aero"]) .foot { padding: 14px; }
+  :root:not([data-theme="aero"]) .foot-links { margin-left: 0; }
+}
+
+@media (max-width: 560px) {
+  :root:not([data-theme="aero"]) .view { padding-inline: 13px !important; }
+  :root:not([data-theme="aero"]) .page-head h1,
+  :root:not([data-theme="aero"]) .view h1 { font-size: 30px; }
+  :root:not([data-theme="aero"]) .btn { min-height: 42px; }
+  :root:not([data-theme="aero"]) .topbar .search { flex: 1; }
+  :root:not([data-theme="aero"]) .topbar-actions .theme-toggle-mobile { display: none; }
+  :root:not([data-theme="aero"]) .topbar-actions .btn-primary { font-size: 0; width: 40px; padding: 0; }
+  :root:not([data-theme="aero"]) .topbar-actions .btn-primary .i { margin: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-theme="aero"]) *,
+  :root:not([data-theme="aero"]) *::before,
+  :root:not([data-theme="aero"]) *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+  :root:not([data-theme="aero"]) .cl-spring-target { translate: none !important; }
+  :root:not([data-theme="aero"]) .cl-ripple { display: none !important; }
+}
+
+@media (forced-colors: active) {
+  :root:not([data-theme="aero"]) :focus-visible { outline: 2px solid Highlight; }
+}

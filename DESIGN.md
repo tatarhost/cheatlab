@@ -6,12 +6,13 @@ CHEATLAB is a public creator workspace for publishing and discovering scripts, a
 The interface must feel like one coherent professional web product. Preserve every route, API call, permission rule, upload flow, account flow, editor, media viewer and mobile navigation behavior.
 
 ## Visual direction
-**Modern professional workspace.** A familiar, polished web-app design with a calm neutral foundation, clear blue accent, precise typography, subtle depth, clean surfaces and generous but efficient spacing. This is the default visual direction; it is not Frutiger Aero and should not look like a generic landing-page template.
+**Material paper workspace.** The default CHEATLAB interface is a tactile industrial/editorial desk: warm paper, matte cards, deep graphite controls, ruled dividers and one functional blue accent. It should feel closer to a well-made instrument or a Swiss editorial system than to a landing-page template.
 
-- Dark mode remains the default; light mode is fully supported.
-- Frutiger Aero remains an optional theme and keeps its existing visual identity and animated mascot logo.
-- Use restrained rounded surfaces, clear dividers, consistent iconography and readable metadata.
-- Avoid excessive nested cards, oversized pills, decorative gradients, visual clutter and gimmicky motion.
+- The default theme uses `#f1efe9` paper, `#fbfaf7` matte surfaces, `#1c1c20` graphite and `#1d57e8` blue.
+- Frutiger Aero remains an optional compatibility theme and keeps its existing mascot identity when explicitly selected.
+- Surface texture comes from one generated 96×96 film-grain tile, used through `--noise-url`; use ribbed headers, diagonal hatching and ruler grids only when they explain an interaction.
+- Use restrained radii, one-pixel rules, consistent iconography and readable metadata. Avoid dark neon, purple/pink gradients, decorative blobs, skeleton loaders and visual clutter.
+- Keep text and icons on an unfiltered HTML layer whenever an SVG filter is used for a physical/merging surface.
 
 ## Typography
 - UI: IBM Plex Sans with platform sans fallback.
@@ -25,14 +26,14 @@ The interface must feel like one coherent professional web product. Preserve eve
 - Lists stay scannable; use panels only for meaningful groups.
 
 ## Motion
-Motion is part of the interface system:
-- Buttons and icon controls respond on press (140ms).
-- Hover/focus states animate color, border and elevation on pointer devices.
-- Navigation and tabs animate selection and press states.
-- Panels, message workspaces and page surfaces enter with short, subtle transitions.
-- Dialogs, drawers and menus use 180–260ms ease-out transitions.
-- Use transform and opacity; never animate layout dimensions.
-- Respect `prefers-reduced-motion`; avoid motion that blocks interaction.
+Motion is part of the interface system and is calculated as an interruptible physical response:
+- The shared motion engine uses a fixed 60 Hz `requestAnimationFrame` step with spring stiffness and damping for hover travel, press feedback and route arrival.
+- Buttons and icon controls respond on press (140ms target), with a restrained ripple and a small magnetic offset on a fine pointer.
+- Navigation and tabs animate selection and press states without reflowing the page.
+- Panels, message workspaces and page surfaces enter as one coordinated surface rather than a cascade of unrelated cards.
+- Dialogs, drawers and menus use 180–300ms ease-out transitions.
+- Use transforms, `translate`/`scale` and opacity; never animate layout dimensions in the shared shell.
+- Respect `prefers-reduced-motion`; the spring engine settles immediately and decorative motion is disabled.
 
 ## Engineering constraints
 - CSS-only visual changes wherever possible; no new framework or dependency.
@@ -43,5 +44,7 @@ Motion is part of the interface system:
 ## Files
 - `public/style.css`: foundational styles.
 - `public/redesign.css` and `public/design-refresh.css`: existing shared redesign layers.
-- `public/professional.css`: final professional visual layer.
+- `public/professional.css`: legacy professional visual layer kept as a fallback.
+- `public/industrial.css`: final material-paper visual layer for the default theme.
 - `public/motion.css`: responsive motion refinements.
+- `public/motion.js`: route accessibility, noise generation and the shared spring interaction engine.
