@@ -24,3 +24,6 @@ jobs:
       - name: Run CAPTCHA fail-closed security tests
         working-directory: worker
         run: node --experimental-sqlite test/security.test.mjs
+      - name: Run guard CORS and fail-closed moderation tests
+        working-directory: worker
+        run: node --experimental-sqlite test/guard-security.test.mjs
