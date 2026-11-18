@@ -18,9 +18,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Run Worker regression suite
+      - name: Run Worker route and CORS regression tests
         working-directory: worker
-        run: npm test
+        run: node --experimental-sqlite test/worker.test.mjs
+      - name: Run CAPTCHA fail-closed security tests
+        working-directory: worker
+        run: node --experimental-sqlite test/security.test.mjs
+      - name: Run login-key, moderation, storage, client, views and chat tests
+        working-directory: worker
+        run: |
+          node --experimental-sqlite test/loginkeys.test.mjs
+          node --experimental-sqlite test/moderation.test.mjs
+          node --experimental-sqlite test/storage.test.mjs
+          node --experimental-sqlite test/client.test.mjs
+          node --experimental-sqlite test/views.e2e.mjs
+          node --experimental-sqlite test/chats.test.mjs
+          node --experimental-sqlite test/chats.routes.test.mjs
       - name: Run app login and authorization tests
         working-directory: worker
         run: node --experimental-sqlite test/app-login.test.mjs
