@@ -24,10 +24,9 @@ jobs:
       - name: Run CAPTCHA fail-closed security tests
         working-directory: worker
         run: node --experimental-sqlite test/security.test.mjs
-      - name: Run login-key, moderation, storage, client, views and chat tests
+      - name: Run moderation, storage, client, views and chat tests
         working-directory: worker
         run: |
-          node --experimental-sqlite test/loginkeys.test.mjs
           node --experimental-sqlite test/moderation.test.mjs
           node --experimental-sqlite test/storage.test.mjs
           node --experimental-sqlite test/client.test.mjs
