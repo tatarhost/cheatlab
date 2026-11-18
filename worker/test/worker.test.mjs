@@ -66,9 +66,9 @@ await t('GET / advertises the API', async (env) => {
 });
 
 await t('CORS preflight is allowed', async (env) => {
-  const res = await worker.fetch(new Request('https://api.cheatlab.test/api/items', { method: 'OPTIONS' }), env);
+  const res = await worker.fetch(new Request('https://api.cheatlab.test/api/items', { method: 'OPTIONS', headers: { Origin: 'https://tatarhost.github.io' } }), env);
   check('preflight 204', res.status === 204, `got ${res.status}`);
-  check('preflight origin', res.headers.get('Access-Control-Allow-Origin') === '*');
+  check('preflight origin', res.headers.get('Access-Control-Allow-Origin') === 'https://tatarhost.github.io');
   check('preflight has no body', (await res.text()) === '');
 
   // A cross-origin POST from the site is preflighted because of the custom
@@ -82,6 +82,15 @@ await t('CORS preflight is allowed', async (env) => {
   for (const m of ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS']) {
     check(`preflight allows ${m}`, methods.includes(m), `got "${methods}"`);
   }
+});
+
+await t('CORS rejects unlisted origins', async (env) => {
+  env.ALLOW_ORIGIN = 'https://cheatlab.fun,https://tatarhost.github.io';
+  const res = await worker.fetch(new Request('https://api.cheatlab.test/api/items', {
+    method: 'OPTIONS', headers: { Origin: 'https://evil.example' },
+  }), env);
+  check('unlisted origin rejected', res.status === 403, `got ${res.status}`);
+  check('unlisted origin gets no CORS grant', !res.headers.has('Access-Control-Allow-Origin'));
 });
 
 await t('unknown endpoint 404s as json', async (env) => {
@@ -575,7 +584,7 @@ await t('security headers on json', async (env) => {
 
 await t('CORS origin is configurable', async (env) => {
   const strict = makeEnv({ ALLOW_ORIGIN: 'https://tatarhost.github.io' });
-  const r = await call(worker, strict, '/api/stats');
+  const r = await call(worker, strict, '/api/stats', { headers: { Origin: 'https://tatarhost.github.io' } });
   check('configured origin echoed', r.res.headers.get('Access-Control-Allow-Origin') === 'https://tatarhost.github.io', r.res.headers.get('Access-Control-Allow-Origin'));
 });
 

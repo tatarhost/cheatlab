@@ -106,7 +106,6 @@ export async function solvePow(challenge, env = {}, maxTries = 1e8) {
  * and a replayed token is only good for 10 minutes.
  */
 const CAPTCHA_TTL_MS = 10 * 60 * 1000;
-const SECRETLESS = 'dev';
 
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
@@ -175,6 +174,7 @@ const PUZZLES = [
  * stays proportional to live challenges rather than to total requests.
  */
 export async function issueCaptcha(db, env, { risk = 0 } = {}) {
+  captchaKey(env); // validate configuration before creating a database row
   const p = pick(PUZZLES)();
   const id = newId(10);
   const issuedAt = now();
@@ -195,6 +195,7 @@ export async function issueCaptcha(db, env, { risk = 0 } = {}) {
 
 /** Visual ring CAPTCHA. The answer stays in D1; only drawing geometry reaches the browser. */
 export async function issueRingCaptcha(db, env) {
+  captchaKey(env); // validate configuration before creating a database row
   const id = newId(10);
   const issuedAt = now();
   const expires = issuedAt + CAPTCHA_TTL_MS;
@@ -259,18 +260,12 @@ export async function verifyCaptcha(db, env, token, answer) {
  * it is dev-only and says so once per isolate rather than failing silently.
  */
 function captchaKey(env) {
-  const key = env.CAPTCHA_SECRET;
-  if (key) return key;
-  if (!warnedAboutSecret) {
-    warnedAboutSecret = true;
-    console.warn(
-      '[cheatlab] CAPTCHA_SECRET is not set; using a public fallback. '
-      + 'Set it with: wrangler secret put CAPTCHA_SECRET',
-    );
-  }
-  return SECRETLESS;
+  const key = typeof env?.CAPTCHA_SECRET === 'string' ? env.CAPTCHA_SECRET : '';
+  // Never sign security tokens with a public/default key. Fail closed so a
+  // missing deployment secret cannot silently disable CAPTCHA integrity.
+  if (key.length < 32) throw new Error('CAPTCHA_SECRET must be configured with at least 32 characters');
+  return key;
 }
-let warnedAboutSecret = false;
 
 /* ---------------------------------------------------------------- quotas -- */
 

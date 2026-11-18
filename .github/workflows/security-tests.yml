@@ -1,0 +1,29 @@
+name: CHEATLAB security regression tests
+
+on:
+  pull_request:
+    paths:
+      - "worker/**"
+      - ".github/workflows/security-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  worker-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run Worker route and CORS regression tests
+        working-directory: worker
+        run: node --experimental-sqlite test/worker.test.mjs
+      - name: Run CAPTCHA fail-closed security tests
+        working-directory: worker
+        run: node --experimental-sqlite test/security.test.mjs
+      - name: Run guard CORS and fail-closed moderation tests
+        working-directory: worker
+        run: node --experimental-sqlite test/guard-security.test.mjs

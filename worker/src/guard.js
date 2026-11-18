@@ -6,9 +6,8 @@
  *   - the design gallery API (/api/themes).
  *
  * Anything this file does not recognise goes straight to index.js untouched.
- * If the guard itself throws on content moderation, the request is passed on
- * rather than blocked, so a model outage cannot take publishing down. Auth is the
- * opposite: it fails closed, because a bot check that opens on error is not one.
+ * Security checks fail closed: a moderation outage must never silently turn into
+ * an unmoderated write.
  */
 import worker, { ConversationRoom } from './index.js';
 import { Store } from './store.js';
@@ -20,18 +19,22 @@ export { ConversationRoom };
 
 const SMALL = 4_000_000;
 
-function replyFor(env) {
-  const origin = env.ALLOW_ORIGIN || '*';
-  return (status, obj) => new Response(JSON.stringify(obj), {
-    status,
-    headers: {
+function replyFor(env, request) {
+  const requestOrigin = request?.headers?.get('Origin');
+  const allowed = String(env.ALLOW_ORIGIN || '')
+    .split(',').map((value) => value.trim()).filter(Boolean);
+  return (status, obj) => {
+    const headers = {
       'Content-Type': 'application/json; charset=utf-8',
-      'Access-Control-Allow-Origin': origin,
       Vary: 'Origin',
       'X-Content-Type-Options': 'nosniff',
       'Cache-Control': 'no-store',
-    },
-  });
+    };
+    if (requestOrigin && allowed.includes(requestOrigin)) {
+      headers['Access-Control-Allow-Origin'] = requestOrigin;
+    }
+    return new Response(JSON.stringify(obj), { status, headers });
+  };
 }
 
 /** Returns a Response when the human check fails, otherwise null. */
@@ -103,7 +106,7 @@ async function guard(request, env, ctx) {
   const url = new URL(request.url);
   const p = url.pathname;
   const m = request.method;
-  const reply = replyFor(env);
+  const reply = replyFor(env, request);
   const declared = Number(request.headers.get('content-length') || 0);
 
   if (m === 'GET' && p === '/api/hc/challenge') {
@@ -135,8 +138,12 @@ async function guard(request, env, ctx) {
     const { raw, json } = await readBody(request);
     try {
       const verdict = await moderateText(env, route.pick(json));
+      if (verdict.source === 'unscanned') return reply(503, { error: 'Проверка содержимого временно недоступна. Попробуйте позже.' });
       if (!verdict.ok) return reply(422, rejection(verdict));
-    } catch (err) { console.warn('[guard] text moderation skipped', err?.message || err); }
+    } catch (err) {
+      console.error('[guard] text moderation unavailable', err?.message || err);
+      return reply(503, { error: 'Проверка содержимого временно недоступна. Попробуйте позже.' });
+    }
     return rebuild(request, raw);
   }
 
@@ -154,8 +161,12 @@ async function guard(request, env, ctx) {
         const verdict = image
           ? await moderateImage(env, new Uint8Array(raw))
           : await moderateText(env, new TextDecoder().decode(raw.slice(0, 20_000)));
+        if (verdict.source === 'unscanned') return reply(503, { error: 'Проверка файла временно недоступна. Попробуйте позже.' });
         if (!verdict.ok) return reply(422, rejection(verdict));
-      } catch (err) { console.warn('[guard] file moderation skipped', err?.message || err); }
+      } catch (err) {
+        console.error('[guard] file moderation unavailable', err?.message || err);
+        return reply(503, { error: 'Проверка файла временно недоступна. Попробуйте позже.' });
+      }
       return rebuild(request, raw);
     }
   }
@@ -179,7 +190,14 @@ export default {
       out = await guard(request, env, ctx);
     } catch (err) {
       console.error('[guard]', err?.stack || err);
-      if (isAuthPath(url.pathname)) return replyFor(env)(503, { error: 'Проверка временно недоступна. Попробуйте позже.' });
+      const path = url.pathname;
+      const guardedContent = path.startsWith('/api/themes')
+        || TEXT_ROUTES.some((route) => route.re.test(path))
+        || (path === '/api/auth/avatar')
+        || FILE_ROUTES.some((route) => route.test(path));
+      if (isAuthPath(path) || guardedContent) {
+        return replyFor(env, request)(503, { error: 'Защитная проверка временно недоступна. Попробуйте позже.' });
+      }
       out = undefined;
     }
     if (out instanceof Response) return out;
