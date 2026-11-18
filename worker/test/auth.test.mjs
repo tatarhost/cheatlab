@@ -119,6 +119,13 @@ await t('proof of work difficulty is clamped', async () => {
   check('in-range is honoured', powBits({ POW_BITS: '16' }) === 16);
 });
 
+await t('captcha signing fails closed without a strong secret', async () => {
+  const env = makeEnv({ CAPTCHA_SECRET: '' });
+  let rejected = false;
+  try { await issueCaptcha(env.DB, env); } catch (error) { rejected = /CAPTCHA_SECRET/.test(error.message); }
+  check('missing secret cannot mint captcha token', rejected);
+});
+
 await t('captcha keeps the answer server-side, is single-use, and expires', async () => {
   const env = makeEnv();
   const { token, q } = await issueCaptcha(env.DB, env);
