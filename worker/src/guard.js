@@ -138,6 +138,7 @@ async function guard(request, env, ctx) {
     const { raw, json } = await readBody(request);
     try {
       const verdict = await moderateText(env, route.pick(json));
+      if (verdict.source === 'unscanned') return reply(503, { error: 'Проверка содержимого временно недоступна. Попробуйте позже.' });
       if (!verdict.ok) return reply(422, rejection(verdict));
     } catch (err) {
       console.error('[guard] text moderation unavailable', err?.message || err);
@@ -160,6 +161,7 @@ async function guard(request, env, ctx) {
         const verdict = image
           ? await moderateImage(env, new Uint8Array(raw))
           : await moderateText(env, new TextDecoder().decode(raw.slice(0, 20_000)));
+        if (verdict.source === 'unscanned') return reply(503, { error: 'Проверка файла временно недоступна. Попробуйте позже.' });
         if (!verdict.ok) return reply(422, rejection(verdict));
       } catch (err) {
         console.error('[guard] file moderation unavailable', err?.message || err);
