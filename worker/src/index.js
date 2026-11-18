@@ -99,7 +99,7 @@ function config(env) {
     keyHintMax: 80,
     writeCap: Number(env.WRITE_CAP || 90),
     readCap: Number(env.READ_CAP || 240),
-    allowOrigin: env.ALLOW_ORIGIN || '*',
+    allowOrigin: String(env.ALLOW_ORIGIN || '').split(',').map((v) => v.trim()).filter(Boolean),
   };
 }
 
@@ -3145,7 +3145,7 @@ const ALLOWED_METHODS = 'GET, HEAD, POST, PATCH, DELETE, OPTIONS';
 
 function withCors(response, origin, preflight) {
   const h = new Headers(response.headers);
-  h.set('Access-Control-Allow-Origin', origin);
+  if (origin) h.set('Access-Control-Allow-Origin', origin);
   h.set('Vary', 'Origin');
   if (preflight) {
     h.set('Access-Control-Allow-Methods', ALLOWED_METHODS);
@@ -3172,7 +3172,9 @@ export default {
       BLOBS: new BlobStore(rawEnv),
       PLUGINS: pluginHost,
     };
-    const origin = config(env).allowOrigin;
+    const requestOrigin = request.headers.get('Origin');
+    const allowedOrigins = config(env).allowOrigin;
+    const origin = requestOrigin && allowedOrigins.includes(requestOrigin) ? requestOrigin : null;
     const url = new URL(request.url);
     if (url.pathname.startsWith('/api/ail/')) {
       const ailResponse = await handleAil(request, env);
@@ -3180,6 +3182,7 @@ export default {
     }
 
     if (request.method === 'OPTIONS') {
+      if (requestOrigin && !origin) return new Response(null, { status: 403 });
       // AIL AI endpoints share CHEATLAB sessions, D1 and the Workers AI binding.
       // Keep the AI router isolated so the existing site API routes remain untouched.
 
