@@ -185,6 +185,10 @@ export async function handleThemes(request, env, { whoami, reply }) {
     // Every part a person can write is moderated: the words, and each texture.
     const verdicts = [await moderateText(env, `${name}\n${description}`)];
     for (const d of tex) if (d) verdicts.push(await moderateImage(env, b64bytes(d)));
+    // Never publish a theme when its text or texture moderation could not run.
+    if (verdicts.some((v) => v.source === 'unscanned')) {
+      return reply(503, { error: 'Проверка дизайна временно недоступна. Попробуйте позже.' });
+    }
     const bad = verdicts.filter((v) => !v.ok);
     if (bad.length) return reply(422, rejection({ reasons: bad.flatMap((v) => v.reasons) }));
 
