@@ -584,7 +584,7 @@ await t('security headers on json', async (env) => {
 
 await t('CORS origin is configurable', async (env) => {
   const strict = makeEnv({ ALLOW_ORIGIN: 'https://tatarhost.github.io' });
-  const r = await call(worker, strict, '/api/stats');
+  const r = await call(worker, strict, '/api/stats', { headers: { Origin: 'https://tatarhost.github.io' } });
   check('configured origin echoed', r.res.headers.get('Access-Control-Allow-Origin') === 'https://tatarhost.github.io', r.res.headers.get('Access-Control-Allow-Origin'));
 });
 
