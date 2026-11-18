@@ -174,6 +174,7 @@ const PUZZLES = [
  * stays proportional to live challenges rather than to total requests.
  */
 export async function issueCaptcha(db, env, { risk = 0 } = {}) {
+  captchaKey(env); // validate configuration before creating a database row
   const p = pick(PUZZLES)();
   const id = newId(10);
   const issuedAt = now();
@@ -194,6 +195,7 @@ export async function issueCaptcha(db, env, { risk = 0 } = {}) {
 
 /** Visual ring CAPTCHA. The answer stays in D1; only drawing geometry reaches the browser. */
 export async function issueRingCaptcha(db, env) {
+  captchaKey(env); // validate configuration before creating a database row
   const id = newId(10);
   const issuedAt = now();
   const expires = issuedAt + CAPTCHA_TTL_MS;
