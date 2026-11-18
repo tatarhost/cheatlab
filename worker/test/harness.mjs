@@ -239,14 +239,14 @@ export function makeEnv(overrides = {}) {
     LABEL_MAX: '24',
     WRITE_CAP: '90',
     READ_CAP: '240',
-    ALLOW_ORIGIN: '*',
+    ALLOW_ORIGIN: 'https://cheatlab.fun,https://www.cheatlab.fun,https://tatarhost.github.io',
     SITE_URL: 'https://tatarhost.github.io/cheatlab',
     DENY_EXT: '',
     DENY_SHA: '',
     WEBHOOK_URL: '',
     // Signs captcha handles. Set as a Worker secret in production; present here
     // so the tests exercise the real signed path rather than the fallback.
-    CAPTCHA_SECRET: 'test-captcha-secret',
+    CAPTCHA_SECRET: 'test-captcha-secret-for-unit-tests-32chars',
     // Signs login keys (clab2-…). Server-only in production; present here so
     // the key routes run their real verification path instead of failing closed.
     LOGIN_KEY_SECRET: 'test-login-key-secret',
