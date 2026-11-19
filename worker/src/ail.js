@@ -95,6 +95,30 @@ const REMOTE_MCP_TOOLS = [
   },
 ];
 
+  {
+    name: 'pc_get_system_info',
+    description: 'Read basic OS and device information from the owner-approved connected PC. Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  {
+    name: 'pc_list_shared_files',
+    description: 'List supported text files in the explicitly shared CheatLab-Shared folder on the owner-approved PC. Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  {
+    name: 'pc_read_shared_file',
+    description: 'Read one named .txt, .md, .json, or .csv file from the top level of CheatLab-Shared on the owner-approved PC. Files are limited to 64 KB.',
+    inputSchema: {
+      type: 'object',
+      properties: { name: { type: 'string', minLength: 1, maxLength: 120 } },
+      required: ['name'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+
 function remoteRpc(id, result) {
   return new Response(JSON.stringify({ jsonrpc: '2.0', id, result }), {
     status: 200,
@@ -112,7 +136,55 @@ function remoteToolResult(value, isError = false) {
   return { content: [{ type: 'text', text: text.slice(0, 48_000) }], isError };
 }
 
-async function runRemoteMcpTool(env, userId, name, args) {
+async function runPcBridgeTool(env, serverId, userId, name, args) {
+  const allowedTools = new Set(['pc_get_system_info', 'pc_list_shared_files', 'pc_read_shared_file']);
+  if (!allowedTools.has(name)) throw new Error('Unknown PC tool.');
+  if (name === 'pc_read_shared_file') {
+    const filename = typeof args.name === 'string' ? args.name.trim() : '';
+    if (!/^[A-Za-z0-9][A-Za-z0-9._ -]{0,99}\.(?:txt|md|json|csv)$/i.test(filename)
+      || filename === '.' || filename === '..') {
+      throw new Error('Укажите имя текстового файла из общей папки. Путь к файлу передавать нельзя.');
+    }
+  }
+  const permit = await env.STORE.throttle('mcp-pc-call:' + serverId, 'tool', { cap: 30, windowMs: 60_000 });
+  if (!permit) throw new Error('Достигнут лимит запросов к подключённому ПК.');
+  const connection = await env.DB.prepare(
+    "SELECT id FROM mcp_connections WHERE server_id = ? AND user_id = ? AND status = 'approved' AND last_seen_at > ? ORDER BY last_seen_at DESC LIMIT 1"
+  ).bind(serverId, userId, now() - 45_000).first();
+  if (!connection) throw new Error('ПК не подключён или ещё не подтверждён владельцем.');
+  const t = now();
+  await env.DB.prepare(
+    "UPDATE mcp_pc_jobs SET status = 'expired' WHERE status IN ('queued','processing') AND expires_at <= ?"
+  ).bind(t).run();
+  await env.DB.prepare('DELETE FROM mcp_pc_jobs WHERE created_at < ?')
+    .bind(t - DAY).run();
+  const jobId = newId(12);
+  await env.DB.prepare(
+    "INSERT INTO mcp_pc_jobs (id, connection_id, server_id, user_id, tool_name, arguments_json, status, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?)"
+  ).bind(jobId, connection.id, serverId, userId, name, JSON.stringify(args || {}), t, t + 20_000).run();
+
+  for (let attempt = 0; attempt < 40; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const job = await env.DB.prepare(
+      'SELECT status, response_json, expires_at FROM mcp_pc_jobs WHERE id = ? AND connection_id = ?'
+    ).bind(jobId, connection.id).first();
+    if (!job) throw new Error('PC request disappeared.');
+    if (job.status === 'completed' || job.status === 'failed') {
+      let value = {};
+      try { value = JSON.parse(job.response_json || '{}'); } catch { throw new Error('ПК вернул некорректный ответ.'); }
+      if (value && typeof value.error === 'string') throw new Error(value.error);
+      return value;
+    }
+    if (job.status === 'expired' || Number(job.expires_at) <= now()) break;
+  }
+  await env.DB.prepare(
+    "UPDATE mcp_pc_jobs SET status = 'expired' WHERE id = ? AND status IN ('queued','processing')"
+  ).bind(jobId).run();
+  throw new Error('ПК не ответил за 20 секунд. Проверьте, что приложение запущено и подключено.');
+}
+
+async function runRemoteMcpTool(env, serverId, userId, name, args) {
+  if (String(name || '').startsWith('pc_')) return await runPcBridgeTool(env, serverId, userId, name, args);
   if (name === 'cheatlab_get_my_account') {
     const row = await env.DB.prepare(
       'SELECT nick, bio, posts, followers, following, created_at FROM user WHERE id = ? LIMIT 1'
@@ -206,7 +278,7 @@ async function handleRemoteMcp(request, env, match) {
       protocolVersion,
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: 'CHEATLAB MCP', version: '1.0.0' },
-      instructions: 'Read-only access to the connected CHEATLAB account. The server can only list and read publications owned by this account. It cannot execute commands, modify posts, or access another account.',
+      instructions: 'Read-only access to the connected CHEATLAB account and, when the owner has approved an online PC agent, basic PC information and text files from the explicit CheatLab-Shared folder. No shell, command execution, process launch, arbitrary filesystem access, or file modification is available.',
     });
   }
   if (message.method === 'notifications/initialized') return new Response(null, { status: 202, headers: { 'Cache-Control': 'no-store' } });
@@ -216,7 +288,7 @@ async function handleRemoteMcp(request, env, match) {
     const name = message.params?.name;
     const args = message.params?.arguments && typeof message.params.arguments === 'object' && !Array.isArray(message.params.arguments)
       ? message.params.arguments : {};
-    try { return remoteRpc(id, remoteToolResult(await runRemoteMcpTool(env, server.user_id, name, args))); }
+    try { return remoteRpc(id, remoteToolResult(await runRemoteMcpTool(env, server.id, server.user_id, name, args))); }
     catch (error) { return remoteRpc(id, remoteToolResult(String(error?.message || 'Tool call failed.'), true)); }
   }
   return remoteRpcError(id, -32601, 'Method not found.');
@@ -313,6 +385,26 @@ export async function handleAil(request, env) {
       remoteSecret,
       remoteUrl: 'https://cheatlab.tatarhost.workers.dev/mcp/' + rotateRemoteKey[1] + '/' + remoteSecret,
     }, 201);
+  }
+
+  const rotateLocalKey = /^\/api\/mcp\/servers\/([A-Za-z0-9_-]{8,24})\/pc-key$/.exec(path);
+  if (method === 'POST' && rotateLocalKey) {
+    const who = await sessionActor(request, env);
+    if (!who) return fail(401, 'login required');
+    if (who.error) return who.error;
+    const secret = 'mcp_' + newSecret();
+    const t = now();
+    const result = await env.DB.prepare(
+      'UPDATE mcp_servers SET secret_hash = ?, secret_prefix = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL'
+    ).bind(await secretHash(secret), secret.slice(0, 12), rotateLocalKey[1], who.user.id).run();
+    if (!(Number(result.meta?.changes || 0) > 0)) return fail(404, 'MCP server not found or revoked');
+    await env.DB.prepare(
+      "UPDATE mcp_connections SET status = 'revoked', disconnected_at = ? WHERE server_id = ? AND status IN ('pending','approved')"
+    ).bind(t, rotateLocalKey[1]).run();
+    await env.DB.prepare(
+      "UPDATE mcp_pc_jobs SET status = 'failed', response_json = ?, completed_at = ? WHERE server_id = ? AND status IN ('queued','processing')"
+    ).bind(JSON.stringify({ error: 'Код подключения ПК был перевыпущен.' }), t, rotateLocalKey[1]).run();
+    return json({ secret, prefix: secret.slice(0, 12) }, 201);
   }
 
   const serverConnections = /^\/api\/mcp\/servers\/([A-Za-z0-9_-]{8,24})\/connections$/.exec(path);
@@ -428,6 +520,55 @@ export async function handleAil(request, env) {
     if (!allowed) return fail(429, 'heartbeat rate limited');
     await env.DB.prepare('UPDATE mcp_connections SET last_seen_at = ? WHERE id = ?').bind(now(), row.id).run();
     return json({ status: row.status });
+  }
+
+  const agentNext = /^\/api\/mcp\/agent\/next\/([A-Za-z0-9_-]{8,24})$/.exec(path);
+  if (method === 'POST' && agentNext) {
+    if (!agentServer || agentServer.revoked_at) return fail(401, 'invalid or revoked MCP secret');
+    const connection = await env.DB.prepare(
+      'SELECT c.id, c.status, s.revoked_at FROM mcp_connections c JOIN mcp_servers s ON s.id = c.server_id WHERE c.id = ? AND c.server_id = ? LIMIT 1'
+    ).bind(agentNext[1], agentServer.id).first();
+    if (!connection) return fail(404, 'connection not found');
+    if (connection.revoked_at || !['pending','approved'].includes(connection.status)) return json({ status: connection.status, job: null });
+    if (connection.status !== 'approved') return json({ status: 'pending', job: null });
+    const allowed = await env.STORE.throttle('mcp-agent-next:' + agentServer.id, 'poll', { cap: 150, windowMs: 60_000 });
+    if (!allowed) return fail(429, 'poll rate limited');
+    const t = now();
+    await env.DB.prepare('UPDATE mcp_connections SET last_seen_at = ? WHERE id = ?').bind(t, connection.id).run();
+    const job = await env.DB.prepare(
+      "SELECT id, tool_name, arguments_json FROM mcp_pc_jobs WHERE connection_id = ? AND status = 'queued' AND expires_at > ? ORDER BY created_at LIMIT 1"
+    ).bind(connection.id, t).first();
+    if (!job) return json({ status: 'approved', job: null });
+    const claimed = await env.DB.prepare(
+      "UPDATE mcp_pc_jobs SET status = 'processing', claimed_at = ? WHERE id = ? AND status = 'queued' AND expires_at > ?"
+    ).bind(t, job.id, t).run();
+    if (!(Number(claimed.meta?.changes || 0) > 0)) return json({ status: 'approved', job: null });
+    let args = {};
+    try { args = JSON.parse(job.arguments_json || '{}'); } catch { args = {}; }
+    return json({ status: 'approved', job: { id: job.id, tool: job.tool_name, arguments: args } });
+  }
+
+  const agentResult = /^\/api\/mcp\/agent\/result\/([A-Za-z0-9_-]{8,24})\/([A-Za-z0-9_-]{8,24})$/.exec(path);
+  if (method === 'POST' && agentResult) {
+    if (!agentServer || agentServer.revoked_at) return fail(401, 'invalid or revoked MCP secret');
+    const connection = await env.DB.prepare(
+      "SELECT id, status FROM mcp_connections WHERE id = ? AND server_id = ? AND status = 'approved' LIMIT 1"
+    ).bind(agentResult[1], agentServer.id).first();
+    if (!connection) return fail(403, 'PC connection is not approved');
+    let payload;
+    try { payload = await readPayload(request, 64_000); } catch { return fail(400, 'invalid result payload'); }
+    if (!payload || !payload.result || typeof payload.result !== 'object' || Array.isArray(payload.result)) {
+      return fail(400, 'result object required');
+    }
+    const encoded = JSON.stringify(payload.result);
+    if (new TextEncoder().encode(encoded).byteLength > 48_000) return fail(413, 'PC result is too large');
+    const t = now();
+    const result = await env.DB.prepare(
+      "UPDATE mcp_pc_jobs SET status = 'completed', response_json = ?, completed_at = ? WHERE id = ? AND connection_id = ? AND server_id = ? AND status = 'processing' AND expires_at > ?"
+    ).bind(encoded, t, agentResult[2], connection.id, agentServer.id, t).run();
+    if (!(Number(result.meta?.changes || 0) > 0)) return fail(409, 'PC job is no longer active');
+    await env.DB.prepare('UPDATE mcp_connections SET last_seen_at = ? WHERE id = ?').bind(t, connection.id).run();
+    return json({ ok: true });
   }
 
   const agentDisconnect = /^\/api\/mcp\/agent\/disconnect\/([A-Za-z0-9_-]{8,24})$/.exec(path);
