@@ -52,6 +52,66 @@ await t('MCP server requires a signed-in owner and returns its secret once', asy
   check('list never reveals secret', !JSON.stringify(listed.json).includes(created.json.secret));
 });
 
+await t('remote MCP endpoint implements JSON-RPC and exposes only the owner own publications', async (env) => {
+  const reg = await createAccount(env, 'mcpremote');
+  const created = await call(worker, env, '/api/mcp/servers', {
+    method: 'POST', session: reg.token, body: { name: 'Remote MCP' },
+  });
+  check('remote endpoint URL returned', typeof created.json?.remoteUrl === 'string' && created.json.remoteUrl.includes('/mcp/'));
+  check('remote secret is strong', /^mcpr_[A-Za-z0-9_-]{32}$/.test(created.json?.remoteSecret || ''));
+  const secret = created.json.remoteSecret;
+  const path = new URL(created.json.remoteUrl).pathname;
+
+  const denied = await call(worker, env, path.replace(secret, 'mcpr_' + 'A'.repeat(32)), {
+    method: 'POST', body: { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26' } },
+  });
+  check('wrong remote token is refused', denied.status === 401);
+
+  const init = await call(worker, env, path, {
+    method: 'POST', body: { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26' } },
+  });
+  check('initialize succeeds', init.status === 200 && init.json?.result?.serverInfo?.name === 'CHEATLAB MCP');
+
+  const tools = await call(worker, env, path, {
+    method: 'POST', body: { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+  });
+  check('read-only tools are listed', tools.json?.result?.tools?.some(tool => tool.name === 'cheatlab_read_my_publication'));
+
+  await env.DB.prepare(
+    'INSERT INTO items (id, type, title, body, language, tags, author, author_label, secret_hash, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).bind('mcpitem1', 'paste', 'Private owner note', 'Text only for the owner.', 'text', 'mcp,test', reg.user.nick, reg.user.nick, 'test-secret-hash', 'unlisted', Date.now(), Date.now()).run();
+  await env.DB.prepare('INSERT INTO item_owner (item_id, user_id, bound_at) VALUES (?, ?, ?)')
+    .bind('mcpitem1', reg.user.id, Date.now()).run();
+
+  const list = await call(worker, env, path, {
+    method: 'POST', body: { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'cheatlab_list_my_publications', arguments: {} } },
+  });
+  check('owner publication appears in tool output', list.json?.result?.content?.[0]?.text?.includes('mcpitem1'));
+
+  const read = await call(worker, env, path, {
+    method: 'POST', body: { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'cheatlab_read_my_publication', arguments: { id: 'mcpitem1' } } },
+  });
+  check('owner can read publication body', read.json?.result?.content?.[0]?.text?.includes('Text only for the owner.'));
+
+  const stranger = await createAccount(env, 'mcpnotowner');
+  const notOwned = await call(worker, env, path, {
+    method: 'POST', body: { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'cheatlab_read_my_publication', arguments: { id: 'otheritem' } } },
+  });
+  check('tool returns controlled error for non-owned publication', notOwned.json?.result?.isError === true);
+
+  const remoteListed = await call(worker, env, '/api/mcp/servers', { session: reg.token });
+  check('remote secret is never returned by account listing', !JSON.stringify(remoteListed.json).includes(secret));
+  check('remote endpoint usage is recorded', Number(remoteListed.json?.servers?.[0]?.remoteLastUsedAt) > 0);
+
+  const rotated = await call(worker, env, '/api/mcp/servers/' + created.json.server.id + '/remote-key', {
+    method: 'POST', session: reg.token,
+  });
+  check('owner can rotate remote endpoint', rotated.status === 201 && rotated.json?.remoteUrl !== created.json.remoteUrl);
+  const oldToken = await call(worker, env, path, {
+    method: 'POST', body: { jsonrpc: '2.0', id: 6, method: 'ping' },
+  });
+  check('rotated endpoint immediately invalidates old URL', oldToken.status === 401);
+});
 await t('every PC process waits for explicit site approval and can be revoked', async (env) => {
   const reg = await createAccount(env, 'mcppair');
   const owner = reg.token;
