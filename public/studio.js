@@ -12,6 +12,16 @@
  */
 (() => {
   const KEY = 'cheatlab.userTheme';
+  // One-time recovery from legacy global CSS selections that could leave the
+  // whole application shell in a broken state. Published designs stay on the
+  // server; only the previously active local override is cleared.
+  const CLASSIC_RESET = 'cheatlab.classic-theme-reset-v1';
+  try {
+    if (localStorage.getItem(CLASSIC_RESET) !== '1') {
+      localStorage.removeItem(KEY);
+      localStorage.setItem(CLASSIC_RESET, '1');
+    }
+  } catch { /* storage may be unavailable in private mode */ }
   const cl = window.__cl || { session: '', client: '', api: '' };
   const ICON = (id) => `<svg class="i" aria-hidden="true"><use href="#${id}"/></svg>`;
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
