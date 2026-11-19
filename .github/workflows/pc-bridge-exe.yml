@@ -1,0 +1,60 @@
+name: Build CHEATLAB PC Bridge for Windows
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "pc-bridge/**"
+      - "worker/src/ail.js"
+      - "worker/migrations/0017_mcp_pc_bridge.sql"
+      - "worker/schema.sql"
+      - "worker/test/mcp.test.mjs"
+      - ".github/workflows/pc-bridge-exe.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "pc-bridge/**"
+      - "worker/src/ail.js"
+      - "worker/migrations/0017_mcp_pc_bridge.sql"
+      - "worker/schema.sql"
+      - "worker/test/mcp.test.mjs"
+      - ".github/workflows/pc-bridge-exe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  worker-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test MCP bridge and existing MCP endpoints
+        working-directory: worker
+        run: node --experimental-sqlite test/mcp.test.mjs
+
+  windows-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install packager
+        run: python -m pip install --upgrade pip pyinstaller
+      - name: Build standalone Windows application
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name CHEATLAB-PC-Bridge pc-bridge/main.py
+      - name: Verify executable exists
+        shell: pwsh
+        run: |
+          if (!(Test-Path "dist/CHEATLAB-PC-Bridge.exe")) { throw "EXE was not created" }
+          Get-Item "dist/CHEATLAB-PC-Bridge.exe" | Format-List Name,Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CHEATLAB-PC-Bridge-Windows
+          path: dist/CHEATLAB-PC-Bridge.exe
+          if-no-files-found: error
+          retention-days: 14
