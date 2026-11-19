@@ -32,6 +32,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Check browser JavaScript syntax
+        run: |
+          for file in public/*.js; do
+            echo "Checking $file"
+            node --check "$file"
+          done
+          node --check worker/src/ail.js
       - name: Test MCP bridge and existing MCP endpoints
         working-directory: worker
         run: node --experimental-sqlite test/mcp.test.mjs
