@@ -1251,3 +1251,98 @@ a.stat-box:hover .stat-label { color: var(--ink); }
   .mcp-create > .btn { width:100%; }
   .mcp-server-head,.mcp-connection { display:grid; grid-template-columns:1fr; }
 }
+
+
+/* ---- accessible shell and stable navigation ---- */
+/* The skip link is available to keyboard users without occupying page space. */
+.cl-skip-link {
+  position: fixed;
+  z-index: 1000;
+  top: 10px;
+  left: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  background: var(--fog);
+  color: var(--ink);
+  transform: translateY(calc(-100% - 14px));
+  transition: transform .16s ease;
+}
+.cl-skip-link:focus {
+  transform: translateY(0);
+}
+
+/* The scroll cue belongs only to the phone navigation strip. */
+.nav-scroll-hint { display: none; }
+.nav-scroll-hint.is-hidden { visibility: hidden; opacity: 0; }
+
+@media (max-width: 900px) {
+  body > .nav.mobile-floating-nav {
+    position: fixed !important;
+    z-index: 30 !important;
+    top: auto !important;
+    left: 50% !important;
+    right: auto !important;
+    bottom: calc(8px + env(safe-area-inset-bottom)) !important;
+    transform: translateX(-50%) !important;
+    display: flex !important;
+    flex-flow: row nowrap !important;
+    align-items: center !important;
+    gap: 4px !important;
+    width: min(640px, calc(100vw - 24px)) !important;
+    max-width: calc(100vw - 24px) !important;
+    height: 58px !important;
+    min-height: 58px !important;
+    margin: 0 !important;
+    padding: 5px 36px 5px 8px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    white-space: nowrap !important;
+    scrollbar-width: none !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    border: 1px solid var(--line);
+    background: var(--fog);
+    box-shadow: 0 8px 28px rgba(0,0,0,.34);
+  }
+  body > .nav.mobile-floating-nav::-webkit-scrollbar { display: none; }
+  body > .nav.mobile-floating-nav > .nav-link {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    min-height: 44px;
+    margin: 0;
+    padding: 8px 10px;
+    border: 0;
+    color: var(--mute);
+    font-size: 12px;
+  }
+  body > .nav.mobile-floating-nav > .nav-link[aria-current="page"] {
+    background: var(--ink);
+    color: var(--paper);
+  }
+  body > .nav.mobile-floating-nav .nav-scroll-hint {
+    position: absolute;
+    top: 50%;
+    right: 5px;
+    display: grid;
+    place-items: center;
+    width: 25px;
+    height: 34px;
+    transform: translateY(-50%);
+    border: 1px solid var(--line);
+    background: var(--fog-2);
+    color: var(--ink);
+    font: 600 20px/1 var(--sans);
+    pointer-events: none;
+    transition: opacity .14s ease;
+  }
+  body > .nav.mobile-floating-nav .nav-scroll-hint.is-hidden {
+    visibility: hidden;
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cl-skip-link,
+  body > .nav.mobile-floating-nav .nav-scroll-hint { transition: none; }
+}
