@@ -21,6 +21,9 @@ jobs:
       - name: Run Worker route and CORS regression tests
         working-directory: worker
         run: node --experimental-sqlite test/worker.test.mjs
+      - name: Run MCP pairing and approval tests
+        working-directory: worker
+        run: node --experimental-sqlite test/mcp.test.mjs
       - name: Run CAPTCHA fail-closed security tests
         working-directory: worker
         run: node --experimental-sqlite test/security.test.mjs
