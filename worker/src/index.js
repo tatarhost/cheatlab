@@ -3176,7 +3176,7 @@ export default {
     const allowedOrigins = config(env).allowOrigin;
     const origin = requestOrigin && allowedOrigins.includes(requestOrigin) ? requestOrigin : null;
     const url = new URL(request.url);
-    if (url.pathname.startsWith('/api/ail/') || url.pathname.startsWith('/api/mcp/')) {
+    if (url.pathname.startsWith('/api/ail/') || url.pathname.startsWith('/api/mcp/') || url.pathname.startsWith('/mcp/')) {
       const ailResponse = await handleAil(request, env);
       if (ailResponse) return withCors(ailResponse, origin);
     }
