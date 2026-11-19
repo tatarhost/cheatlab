@@ -59,6 +59,169 @@ function equalSecret(a, b) {
   return diff === 0;
 }
 
+
+const REMOTE_MCP_TOOLS = [
+  {
+    name: 'cheatlab_get_my_account',
+    description: 'Use this to retrieve the connected CHEATLAB account profile and counters. Read-only.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  {
+    name: 'cheatlab_list_my_publications',
+    description: 'Use this to list publications owned by the connected CHEATLAB account. Returns metadata only. Read-only.',
+    inputSchema: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 25 } }, additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  {
+    name: 'cheatlab_search_my_publications',
+    description: 'Use this to search titles, tags, and text in the connected account own publications. Read-only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', minLength: 1, maxLength: 100, description: 'Text to find in title, body, or tags.' },
+        limit: { type: 'integer', minimum: 1, maximum: 25 },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  {
+    name: 'cheatlab_read_my_publication',
+    description: 'Use this to read one publication owned by the connected account. Only the owner can access it. Read-only.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', minLength: 4, maxLength: 16 } }, required: ['id'], additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+];
+
+function remoteRpc(id, result) {
+  return new Response(JSON.stringify({ jsonrpc: '2.0', id, result }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'MCP-Protocol-Version': '2025-03-26' },
+  });
+}
+function remoteRpcError(id, code, message) {
+  return new Response(JSON.stringify({ jsonrpc: '2.0', id, error: { code, message } }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'MCP-Protocol-Version': '2025-03-26' },
+  });
+}
+function remoteToolResult(value, isError = false) {
+  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+  return { content: [{ type: 'text', text: text.slice(0, 48_000) }], isError };
+}
+
+async function runRemoteMcpTool(env, userId, name, args) {
+  if (name === 'cheatlab_get_my_account') {
+    const row = await env.DB.prepare(
+      'SELECT nick, bio, posts, followers, following, created_at FROM user WHERE id = ? LIMIT 1'
+    ).bind(userId).first();
+    if (!row) throw new Error('Account not found.');
+    return {
+      nickname: row.nick, bio: row.bio || '', publications: Number(row.posts) || 0,
+      followers: Number(row.followers) || 0, following: Number(row.following) || 0,
+      createdAt: Number(row.created_at) || 0,
+    };
+  }
+  if (name === 'cheatlab_list_my_publications') {
+    const limit = Math.max(1, Math.min(25, Number.isInteger(args.limit) ? args.limit : 15));
+    const rows = await env.DB.prepare(
+      'SELECT i.id, i.type, i.title, i.language, i.tags, i.visibility, i.hits, i.likes, i.comments, i.created_at, i.updated_at ' +
+      'FROM items i JOIN item_owner o ON o.item_id = i.id WHERE o.user_id = ? ORDER BY i.created_at DESC LIMIT ?'
+    ).bind(userId, limit).all();
+    return { publications: (rows.results || []).map(row => ({
+      id: row.id, type: row.type, title: row.title, language: row.language, tags: row.tags,
+      visibility: row.visibility, views: row.hits, likes: row.likes, comments: row.comments,
+      createdAt: row.created_at, updatedAt: row.updated_at,
+    })) };
+  }
+  if (name === 'cheatlab_search_my_publications') {
+    const query = typeof args.query === 'string' ? args.query.trim().slice(0, 100) : '';
+    if (!query) throw new Error('Укажите поисковый запрос.');
+    const limit = Math.max(1, Math.min(25, Number.isInteger(args.limit) ? args.limit : 15));
+    const rows = await env.DB.prepare(
+      'SELECT i.id, i.type, i.title, i.language, i.tags, i.visibility, i.hits, i.likes, i.comments, i.created_at ' +
+      'FROM items i JOIN item_owner o ON o.item_id = i.id ' +
+      'WHERE o.user_id = ? AND (instr(lower(i.title), lower(?)) > 0 OR instr(lower(i.body), lower(?)) > 0 OR instr(lower(i.tags), lower(?)) > 0) ' +
+      'ORDER BY i.created_at DESC LIMIT ?'
+    ).bind(userId, query, query, query, limit).all();
+    return { query, publications: (rows.results || []).map(row => ({
+      id: row.id, type: row.type, title: row.title, language: row.language, tags: row.tags,
+      visibility: row.visibility, views: row.hits, likes: row.likes, comments: row.comments,
+      createdAt: row.created_at,
+    })) };
+  }
+  if (name === 'cheatlab_read_my_publication') {
+    const id = typeof args.id === 'string' ? args.id.trim() : '';
+    if (!/^[A-Za-z0-9]{4,16}$/.test(id)) throw new Error('Некорректный ID публикации.');
+    const row = await env.DB.prepare(
+      'SELECT i.id, i.type, i.title, i.body, i.language, i.tags, i.visibility, i.created_at, i.updated_at ' +
+      'FROM items i JOIN item_owner o ON o.item_id = i.id WHERE o.user_id = ? AND i.id = ? LIMIT 1'
+    ).bind(userId, id).first();
+    if (!row) throw new Error('Публикация не найдена в вашем аккаунте.');
+    const body = String(row.body || '');
+    return {
+      id: row.id, type: row.type, title: row.title, language: row.language, tags: row.tags,
+      visibility: row.visibility, body: body.slice(0, 24_000), truncated: body.length > 24_000,
+      createdAt: row.created_at, updatedAt: row.updated_at,
+    };
+  }
+  throw new Error('Unknown CHEATLAB tool.');
+}
+
+async function handleRemoteMcp(request, env, match) {
+  if (request.method !== 'POST') {
+    return new Response('MCP Streamable HTTP accepts POST requests.', {
+      status: 405, headers: { Allow: 'POST', 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
+    });
+  }
+  const serverId = match[1];
+  const token = match[2];
+  if (!/^mcpr_[A-Za-z0-9_-]{32}$/.test(token)) return fail(401, 'invalid MCP endpoint');
+  const server = await env.DB.prepare(
+    'SELECT id, user_id, revoked_at FROM mcp_servers WHERE id = ? AND remote_secret_hash = ? LIMIT 1'
+  ).bind(serverId, await secretHash(token)).first();
+  if (!server || server.revoked_at) return fail(401, 'invalid or revoked MCP endpoint');
+
+  const allowed = await env.STORE.throttle('mcp-remote:' + server.id, 'rpc', { cap: 180, windowMs: 60_000 });
+  if (!allowed) return fail(429, 'MCP request limit reached');
+  await env.DB.prepare('UPDATE mcp_servers SET remote_last_used_at = ? WHERE id = ?')
+    .bind(now(), server.id).run();
+
+  let message;
+  try { message = await readPayload(request, 96_000); }
+  catch { return remoteRpcError(null, -32700, 'Invalid JSON-RPC request.'); }
+  const hasId = message && Object.prototype.hasOwnProperty.call(message, 'id');
+  const id = hasId ? message.id : null;
+  if (!message || message.jsonrpc !== '2.0' || typeof message.method !== 'string') {
+    return remoteRpcError(id, -32600, 'Invalid JSON-RPC request.');
+  }
+  if (!hasId) return new Response(null, { status: 202, headers: { 'Cache-Control': 'no-store' } });
+
+  if (message.method === 'initialize') {
+    const requested = message.params?.protocolVersion;
+    const protocolVersion = ['2025-03-26', '2025-06-18'].includes(requested) ? requested : '2025-03-26';
+    return remoteRpc(id, {
+      protocolVersion,
+      capabilities: { tools: { listChanged: false } },
+      serverInfo: { name: 'CHEATLAB MCP', version: '1.0.0' },
+      instructions: 'Read-only access to the connected CHEATLAB account. The server can only list and read publications owned by this account. It cannot execute commands, modify posts, or access another account.',
+    });
+  }
+  if (message.method === 'notifications/initialized') return new Response(null, { status: 202, headers: { 'Cache-Control': 'no-store' } });
+  if (message.method === 'ping') return remoteRpc(id, {});
+  if (message.method === 'tools/list') return remoteRpc(id, { tools: REMOTE_MCP_TOOLS });
+  if (message.method === 'tools/call') {
+    const name = message.params?.name;
+    const args = message.params?.arguments && typeof message.params.arguments === 'object' && !Array.isArray(message.params.arguments)
+      ? message.params.arguments : {};
+    try { return remoteRpc(id, remoteToolResult(await runRemoteMcpTool(env, server.user_id, name, args))); }
+    catch (error) { return remoteRpc(id, remoteToolResult(String(error?.message || 'Tool call failed.'), true)); }
+  }
+  return remoteRpcError(id, -32601, 'Method not found.');
+}
+
 async function trainingStatus(env) {
   const latest = await env.DB.prepare(
     'SELECT * FROM ail_training_sessions ORDER BY created_at DESC LIMIT 1'
@@ -101,16 +264,17 @@ export async function handleAil(request, env) {
     const name = str(payload.name, 40, 'Мой компьютер').replace(/[\r\n\t]/g, ' ').trim() || 'Мой компьютер';
     const id = newId(12);
     const secret = 'mcp_' + newSecret();
+    const remoteSecret = 'mcpr_' + newSecret();
     const createdAt = now();
     try {
       await env.DB.prepare(
-        'INSERT INTO mcp_servers (id, user_id, name, secret_hash, secret_prefix, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-      ).bind(id, who.user.id, name, await secretHash(secret), secret.slice(0, 12), createdAt).run();
+        'INSERT INTO mcp_servers (id, user_id, name, secret_hash, secret_prefix, remote_secret_hash, remote_secret_prefix, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).bind(id, who.user.id, name, await secretHash(secret), secret.slice(0, 12), await secretHash(remoteSecret), remoteSecret.slice(0, 13), createdAt).run();
     } catch (error) {
       if (/MCP server limit/i.test(String(error?.message || error))) return fail(409, 'Можно создать не более пяти MCP-подключений.');
       throw error;
     }
-    return json({ secret, server: { id, name, prefix: secret.slice(0, 12), createdAt } }, 201);
+    return json({ secret, remoteSecret, remoteUrl: 'https://cheatlab.tatarhost.workers.dev/mcp/' + id + '/' + remoteSecret, server: { id, name, prefix: secret.slice(0, 12), remotePrefix: remoteSecret.slice(0, 13), remoteReady: true, createdAt } }, 201);
   }
 
   if (method === 'GET' && path === '/api/mcp/servers') {
@@ -118,16 +282,37 @@ export async function handleAil(request, env) {
     if (!who) return fail(401, 'login required');
     if (who.error) return who.error;
     const rows = await env.DB.prepare(
-      "SELECT s.id, s.name, s.secret_prefix, s.created_at, s.revoked_at, " +
+      "SELECT s.id, s.name, s.secret_prefix, s.remote_secret_prefix, s.remote_secret_hash, s.remote_last_used_at, s.created_at, s.revoked_at, " +
       "(SELECT COUNT(*) FROM mcp_connections c WHERE c.server_id = s.id AND c.status = 'pending' AND c.expires_at > ?) AS pending_count, " +
       "(SELECT COUNT(*) FROM mcp_connections c WHERE c.server_id = s.id AND c.status = 'approved' AND c.last_seen_at > ?) AS online_count " +
       "FROM mcp_servers s WHERE s.user_id = ? ORDER BY s.created_at DESC LIMIT 20"
     ).bind(now(), now() - 45_000, who.user.id).all();
     return json({ servers: (rows.results || []).map(row => ({
       id: row.id, name: row.name, prefix: row.secret_prefix, createdAt: row.created_at,
+      remotePrefix: row.remote_secret_prefix || '', remoteReady: !!row.remote_secret_hash,
+      remoteLastUsedAt: row.remote_last_used_at || null,
       revoked: !!row.revoked_at, pendingCount: Number(row.pending_count) || 0,
       onlineCount: Number(row.online_count) || 0,
     })) });
+  }
+
+  const remoteEndpoint = /^\\/mcp\\/([A-Za-z0-9_-]{8,24})\\/(mcpr_[A-Za-z0-9_-]{32})$/.exec(path);
+  if (remoteEndpoint) return handleRemoteMcp(request, env, remoteEndpoint);
+
+  const rotateRemoteKey = /^\\/api\\/mcp\\/servers\\/([A-Za-z0-9_-]{8,24})\\/remote-key$/.exec(path);
+  if (method === 'POST' && rotateRemoteKey) {
+    const who = await sessionActor(request, env);
+    if (!who) return fail(401, 'login required');
+    if (who.error) return who.error;
+    const remoteSecret = 'mcpr_' + newSecret();
+    const result = await env.DB.prepare(
+      'UPDATE mcp_servers SET remote_secret_hash = ?, remote_secret_prefix = ?, remote_last_used_at = NULL WHERE id = ? AND user_id = ? AND revoked_at IS NULL'
+    ).bind(await secretHash(remoteSecret), remoteSecret.slice(0, 13), rotateRemoteKey[1], who.user.id).run();
+    if (!(Number(result.meta?.changes || 0) > 0)) return fail(404, 'MCP server not found or revoked');
+    return json({
+      remoteSecret,
+      remoteUrl: 'https://cheatlab.tatarhost.workers.dev/mcp/' + rotateRemoteKey[1] + '/' + remoteSecret,
+    }, 201);
   }
 
   const serverConnections = /^\/api\/mcp\/servers\/([A-Za-z0-9_-]{8,24})\/connections$/.exec(path);
