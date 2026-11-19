@@ -23,21 +23,35 @@ export async function viewMcpPage({ $view, account, h, icon, api, toast, copy, w
   }, icon("refresh", "i i-sm"), "Обновить");
   let createButton;
 
-  function showEndpoint(title, url) {
+  function showEndpoint(title, url, pcCode = "") {
     generated.hidden = false;
-    const endpoint = h("code", { class: "mcp-secret" }, url);
-    generated.replaceChildren(
-      h("h2", { text: title }),
-      h("p", { class: "mcp-note", text: "Это секретная ссылка доступа. Она показывается один раз. Не публикуйте её и не отправляйте посторонним." }),
-      endpoint,
-      h("div", { class: "mcp-generated-actions" },
-        h("button", {
-          class: "btn btn-primary", type: "button",
-          onclick: () => copy(url, "Адрес MCP скопирован"),
-        }, icon("copy", "i i-sm"), "Скопировать адрес"),
-      ),
-      h("p", { class: "mcp-meta", text: "Транспорт: MCP Streamable HTTP · обработка запросов: серверы CHEATLAB" }),
+    const content = [h("h2", { text: title })];
+    if (pcCode) {
+      content.push(
+        h("p", { class: "mcp-note", text: "Код для Windows EXE. Вставьте его в CHEATLAB PC Bridge. Полный код показывается один раз — сохраните его." }),
+        h("code", { class: "mcp-secret", text: pcCode }),
+        h("div", { class: "mcp-generated-actions" },
+          h("button", { class: "btn btn-primary", type: "button", onclick: () => copy(pcCode, "Код подключения ПК скопирован") },
+            icon("copy", "i i-sm"), "Скопировать код ПК"),
+        ),
+      );
+    }
+    if (url) {
+      content.push(
+        h("p", { class: "mcp-note", text: "Секретная ссылка туннеля для ИИ. Добавьте её в MCP-клиент и никому не пересылайте." }),
+        h("code", { class: "mcp-secret", text: url }),
+        h("div", { class: "mcp-generated-actions" },
+          h("button", { class: "btn btn-primary", type: "button", onclick: () => copy(url, "Адрес MCP скопирован") },
+            icon("copy", "i i-sm"), "Скопировать AI MCP URL"),
+        ),
+      );
+    }
+    content.push(
+      h("p", { class: "mcp-meta", text: "Транспорт: MCP Streamable HTTP · туннель: серверы CHEATLAB · команды ПК отключены" }),
+      h("a", { href: "https://github.com/tatarhost/cheatlab/actions/workflows/pc-bridge-exe.yml", target: "_blank", rel: "noopener noreferrer" },
+        "Скачать CHEATLAB PC Bridge (Windows EXE) из последней сборки"),
     );
+    generated.replaceChildren(...content);
     generated.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
   }
 
@@ -50,7 +64,7 @@ export async function viewMcpPage({ $view, account, h, icon, api, toast, copy, w
         const created = await api("/api/mcp/servers", {
           method: "POST", body: { name: name.value.trim() },
         });
-        showEndpoint("Удалённый MCP готов · " + created.server.name, created.remoteUrl);
+        showEndpoint("Подключение готово · " + created.server.name, created.remoteUrl, created.secret);
         await refresh();
       } catch (err) {
         error.textContent = err.message || "Не удалось создать MCP-сервер.";
@@ -76,7 +90,7 @@ export async function viewMcpPage({ $view, account, h, icon, api, toast, copy, w
     ),
     error,
     h("div", { class: "mcp-safety" },
-      "Всё выполняется на серверах CHEATLAB. На компьютере не нужно устанавливать Python, открывать консоль или держать запущенный процесс. Секрет URL хранится в базе только как SHA-256-хеш; полный URL показывается при создании или перевыпуске.",
+      "Для ПК скачайте Windows EXE и вставьте в него код подключения. После запуска подтвердите запрос на этой странице. ИИ получает доступ только к сведениям о системе и текстовым файлам в папке CheatLab-Shared; терминал, запуск программ и произвольный доступ к диску отсутствуют.",
     ),
     h("section", { class: "mcp-install" },
       h("h2", { text: "Подключение к ChatGPT" }),
@@ -91,7 +105,7 @@ export async function viewMcpPage({ $view, account, h, icon, api, toast, copy, w
     ),
     h("section", { class: "mcp-install" },
       h("h2", { text: "Поддерживаемые возможности" }),
-      h("p", { class: "mcp-note", text: "Удалённый MCP открывает ИИ только данные твоего аккаунта CHEATLAB: сведения об аккаунте, список публикаций, поиск и чтение собственных публикаций. Все инструменты в этой версии доступны только для чтения; команды компьютера и доступ к чужим аккаунтам отсутствуют." }),
+      h("p", { class: "mcp-note", text: "MCP объединяет данные твоего аккаунта CHEATLAB и подтверждённого ПК: сведения о системе, список файлов и чтение .txt/.md/.json/.csv из папки CheatLab-Shared (до 64 КБ на файл). Нет доступа к командной строке, запуску программ, изменению файлов или всему диску." }),
     ),
     generated,
     h("div", { class: "mcp-section-head" },
@@ -109,6 +123,30 @@ export async function viewMcpPage({ $view, account, h, icon, api, toast, copy, w
       await refresh();
     } catch (err) {
       toast(err.message || "Не удалось создать адрес MCP", true);
+    }
+  }
+
+  async function rotatePcKey(server) {
+    if (!window.confirm("Перевыпустить код подключения ПК для «" + server.name + "»? Все текущие подключения этого компьютера будут отключены.")) return;
+    try {
+      const result = await api("/api/mcp/servers/" + server.id + "/pc-key", { method: "POST" });
+      showEndpoint("Новый код подключения ПК · " + server.name, "", result.secret);
+      await refresh();
+    } catch (err) {
+      toast(err.message || "Не удалось перевыпустить код ПК", true);
+    }
+  }
+
+  async function connectionAction(connection, action) {
+    try {
+      if (action === "disconnect") {
+        await api("/api/mcp/connections/" + connection.id, { method: "DELETE" });
+      } else {
+        await api("/api/mcp/connections/" + connection.id + "/" + action, { method: "POST" });
+      }
+      await refresh();
+    } catch (err) {
+      toast(err.message || "Не удалось изменить подключение ПК", true);
     }
   }
 
@@ -135,27 +173,65 @@ export async function viewMcpPage({ $view, account, h, icon, api, toast, copy, w
         }));
         return;
       }
-      const blocks = servers.map(server => h("article", { class: "mcp-server" },
-        h("div", { class: "mcp-server-head" },
-          h("div", {},
-            h("div", { class: "mcp-server-title", text: server.name }),
-            h("div", { class: "mcp-meta", text: "ID " + server.id + " · создан " + when(server.createdAt) }),
-            h("div", { class: "mcp-meta", text: server.revoked
-              ? "Сервер отозван"
-              : (server.remoteReady ? "Удалённый адрес активен · ключ " + server.remotePrefix + "…" : "Удалённый адрес ещё не создан") }),
-            h("div", { class: "mcp-meta", text: "Последний запрос: " + formatTime(server.remoteLastUsedAt, when) }),
+      const blocks = await Promise.all(servers.map(async server => {
+        let connections = [];
+        if (!server.revoked) {
+          try {
+            const info = await api("/api/mcp/servers/" + server.id + "/connections");
+            connections = info.connections || [];
+          } catch { /* server metadata remains visible */ }
+        }
+        const connectionNodes = connections.length
+          ? connections.map(connection => h("div", { class: "mcp-meta" },
+              h("span", { text: connection.deviceName + " · " + connection.platform + " · " +
+                (connection.status === "pending" ? "ожидает подтверждения" :
+                 connection.status === "approved" ? (connection.online ? "подключён" : "не в сети") :
+                 connection.status) }),
+              h("div", { class: "mcp-actions" },
+                connection.status === "pending" ? h("button", {
+                  class: "btn btn-primary", type: "button",
+                  onclick: () => connectionAction(connection, "approve"),
+                }, "Разрешить") : null,
+                connection.status === "pending" ? h("button", {
+                  class: "btn", type: "button",
+                  onclick: () => connectionAction(connection, "deny"),
+                }, "Отклонить") : null,
+                connection.status === "approved" ? h("button", {
+                  class: "btn", type: "button",
+                  onclick: () => connectionAction(connection, "disconnect"),
+                }, "Отключить") : null,
+              ),
+            ))
+          : [h("div", { class: "mcp-meta", text: "Подключённых ПК пока нет" })];
+        return h("article", { class: "mcp-server" },
+          h("div", { class: "mcp-server-head" },
+            h("div", {},
+              h("div", { class: "mcp-server-title", text: server.name }),
+              h("div", { class: "mcp-meta", text: "ID " + server.id + " · создан " + when(server.createdAt) }),
+              h("div", { class: "mcp-meta", text: server.revoked
+                ? "Сервер отозван"
+                : (server.remoteReady ? "AI MCP-туннель активен · ключ " + server.remotePrefix + "…" : "AI MCP-туннель не создан") }),
+              h("div", { class: "mcp-meta", text: "Последний запрос ИИ: " + formatTime(server.remoteLastUsedAt, when) }),
+              h("div", { class: "mcp-meta", text: "Код ПК: " + server.prefix + "… (хранится в виде хеша)" }),
+            ),
+            h("div", { class: "mcp-actions" },
+              !server.revoked ? h("button", {
+                class: "btn btn-primary", type: "button", onclick: () => rotateEndpoint(server),
+              }, server.remoteReady ? "Новый AI URL" : "Создать AI URL") : null,
+              !server.revoked ? h("button", {
+                class: "btn", type: "button", onclick: () => rotatePcKey(server),
+              }, "Новый код ПК") : null,
+              !server.revoked ? h("button", {
+                class: "btn", type: "button", onclick: () => revokeServer(server),
+              }, "Отозвать всё") : null,
+            ),
           ),
-          h("div", { class: "mcp-actions" },
-            !server.revoked ? h("button", {
-              class: "btn btn-primary", type: "button",
-              onclick: () => rotateEndpoint(server),
-            }, server.remoteReady ? "Новый адрес" : "Создать адрес") : null,
-            !server.revoked ? h("button", {
-              class: "btn", type: "button", onclick: () => revokeServer(server),
-            }, "Отозвать") : null,
+          h("div", { class: "mcp-connections" },
+            h("div", { class: "mcp-server-title", text: "Подключения компьютеров" }),
+            ...connectionNodes,
           ),
-        ),
-      ));
+        );
+      }));
       list.replaceChildren(...blocks);
     } catch (err) {
       list.replaceChildren(h("div", {

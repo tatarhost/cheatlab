@@ -1,4 +1,4 @@
-import { viewMcpPage } from './mcp.js?v=2';
+import { viewMcpPage } from './mcp.js?v=3';
 const KEY_STORE = 'cheatlab.keys';
 /**
  * Access keys for locked publications.

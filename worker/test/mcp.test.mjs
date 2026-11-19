@@ -175,6 +175,63 @@ await t('revoking a server disables every attached script', async (env) => {
   check('revoked secret cannot reconnect', reconnect.status === 401);
 });
 
+
+await t('remote MCP can call only read-only tools on an explicitly approved PC agent', async (env) => {
+  const reg = await createAccount(env, 'mcppctunnel');
+  const server = await call(worker, env, '/api/mcp/servers', {
+    method: 'POST', session: reg.token, body: { name: 'Approved PC' },
+  });
+  const secret = server.json.secret;
+  const endpoint = new URL(server.json.remoteUrl).pathname;
+  const created = await call(worker, env, '/api/mcp/agent/connect', {
+    method: 'POST', body: { deviceName: 'Test Windows PC', platform: 'Windows', pythonVersion: '3.12' },
+    ...agentOpts(secret),
+  });
+  const connectionId = created.json.connectionId;
+  const tools = await call(worker, env, endpoint, {
+    method: 'POST', body: { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+  });
+  check('PC exposes only named safe read tools', ['pc_get_system_info','pc_list_shared_files','pc_read_shared_file']
+    .every(name => tools.json?.result?.tools?.some(tool => tool.name === name)));
+  const noApproval = await call(worker, env, endpoint, {
+    method: 'POST', body: { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'pc_get_system_info', arguments: {} } },
+  });
+  check('PC tool refuses pending connection', noApproval.json?.result?.isError === true);
+
+  const approved = await call(worker, env, '/api/mcp/connections/' + connectionId + '/approve', {
+    method: 'POST', session: reg.token,
+  });
+  check('owner approves PC link', approved.status === 200);
+  const callPromise = call(worker, env, endpoint, {
+    method: 'POST', body: { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'pc_get_system_info', arguments: {} } },
+  });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  const claimed = await call(worker, env, '/api/mcp/agent/next/' + connectionId, {
+    method: 'POST', body: {}, ...agentOpts(secret),
+  });
+  check('approved agent receives queued PC job', claimed.status === 200 && claimed.json?.job?.tool === 'pc_get_system_info');
+  const returned = await call(worker, env, '/api/mcp/agent/result/' + connectionId + '/' + claimed.json.job.id, {
+    method: 'POST', body: { result: { computer_name: 'TEST-PC', system: 'Windows' } }, ...agentOpts(secret),
+  });
+  check('agent can return read-only tool result', returned.status === 200 && returned.json?.ok);
+  const response = await callPromise;
+  check('remote MCP receives PC result through tunnel', response.json?.result?.content?.[0]?.text?.includes('TEST-PC'));
+
+  const traversal = await call(worker, env, endpoint, {
+    method: 'POST', body: { jsonrpc: '2.0', id: 4, method: 'tools/call', params: {
+      name: 'pc_read_shared_file', arguments: { name: '..\\\\secret.txt' },
+    } },
+  });
+  check('PC file tool rejects path traversal without contacting device', traversal.json?.result?.isError === true);
+
+  const rotated = await call(worker, env, '/api/mcp/servers/' + server.json.server.id + '/pc-key', {
+    method: 'POST', session: reg.token,
+  });
+  check('owner can rotate PC pairing code', rotated.status === 201 && /^mcp_[A-Za-z0-9_-]{32}$/.test(rotated.json?.secret || ''));
+  const oldSecret = await call(worker, env, '/api/mcp/agent/status/' + connectionId, agentOpts(secret));
+  check('rotating PC code revokes prior agent secret', oldSecret.status === 401);
+});
+
 if (fail) {
   console.error('MCP tests: ' + pass + ' passed, ' + fail + ' failed\n' + failures.join('\n'));
   process.exitCode = 1;
