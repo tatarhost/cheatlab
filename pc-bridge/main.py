@@ -42,6 +42,8 @@ def request_json(path, secret, payload=None, timeout=12):
 
 def shared_root():
     folder = Path.home() / "CheatLab-Shared"
+    if folder.is_symlink():
+        raise RuntimeError("Папка CheatLab-Shared не должна быть символической ссылкой.")
     folder.mkdir(parents=True, exist_ok=True)
     return folder.resolve()
 
@@ -62,7 +64,7 @@ def run_pc_tool(name, args):
         files = []
         for item in sorted(root.iterdir(), key=lambda p: p.name.lower()):
             try:
-                if item.is_symlink() or not item.is_file() or item.suffix.lower() not in ALLOWED_EXTENSIONS:
+                if item.name.startswith(".") or item.is_symlink() or not item.is_file() or item.suffix.lower() not in ALLOWED_EXTENSIONS:
                     continue
                 size = item.stat().st_size
                 if size <= MAX_FILE_BYTES and len(files) < 100:
