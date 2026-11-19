@@ -93,7 +93,6 @@ const REMOTE_MCP_TOOLS = [
     inputSchema: { type: 'object', properties: { id: { type: 'string', minLength: 4, maxLength: 16 } }, required: ['id'], additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
-];
 
   {
     name: 'pc_get_system_info',
@@ -118,6 +117,7 @@ const REMOTE_MCP_TOOLS = [
     },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
+];
 
 function remoteRpc(id, result) {
   return new Response(JSON.stringify({ jsonrpc: '2.0', id, result }), {
