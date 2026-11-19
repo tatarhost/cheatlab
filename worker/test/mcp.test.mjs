@@ -41,20 +41,20 @@ await t('MCP server requires a signed-in owner and returns its secret once', asy
   const anon = await call(worker, env, '/api/mcp/servers', { method: 'POST', body: { name: 'Desk' } });
   check('anonymous creation refused', anon.status === 401);
   const reg = await createAccount(env, 'mcpowner');
-  check('account registered', reg.status === 201);
+  check('test account session created', typeof reg.token === 'string');
   const created = await call(worker, env, '/api/mcp/servers', {
-    method: 'POST', session: reg.json.token, body: { name: 'Домашний ПК' },
+    method: 'POST', session: reg.token, body: { name: 'Домашний ПК' },
   });
   check('server created', created.status === 201, created.text);
   check('secret has strong format', /^mcp_[A-Za-z0-9_-]{32}$/.test(created.json?.secret || ''));
-  const listed = await call(worker, env, '/api/mcp/servers', { session: reg.json.token });
+  const listed = await call(worker, env, '/api/mcp/servers', { session: reg.token });
   check('server listed', listed.json?.servers?.length === 1);
   check('list never reveals secret', !JSON.stringify(listed.json).includes(created.json.secret));
 });
 
 await t('every PC process waits for explicit site approval and can be revoked', async (env) => {
   const reg = await createAccount(env, 'mcppair');
-  const owner = reg.json.token;
+  const owner = reg.token;
   const created = await call(worker, env, '/api/mcp/servers', {
     method: 'POST', session: owner, body: { name: 'Work PC' },
   });
@@ -74,7 +74,7 @@ await t('every PC process waits for explicit site approval and can be revoked', 
   const strangerClient = 'otherclient0987654321abcdef';
   const stranger = await createAccount(env, 'mcpstranger', strangerClient);
   const wrongOwner = await call(worker, env, '/api/mcp/connections/' + id + '/approve', {
-    method: 'POST', session: stranger.json.token, client: strangerClient,
+    method: 'POST', session: stranger.token, client: strangerClient,
   });
   check('another account cannot approve', wrongOwner.status === 409);
   const approved = await call(worker, env, '/api/mcp/connections/' + id + '/approve', {
@@ -94,17 +94,17 @@ await t('every PC process waits for explicit site approval and can be revoked', 
 await t('revoking a server disables every attached script', async (env) => {
   const reg = await createAccount(env, 'mcprevoke');
   const server = await call(worker, env, '/api/mcp/servers', {
-    method: 'POST', session: reg.json.token, body: { name: 'PC' },
+    method: 'POST', session: reg.token, body: { name: 'PC' },
   });
   const secret = server.json.secret;
   const conn = await call(worker, env, '/api/mcp/agent/connect', {
     method: 'POST', body: { deviceName: 'Laptop' }, ...agentOpts(secret),
   });
   await call(worker, env, '/api/mcp/connections/' + conn.json.connectionId + '/approve', {
-    method: 'POST', session: reg.json.token,
+    method: 'POST', session: reg.token,
   });
   const deleted = await call(worker, env, '/api/mcp/servers/' + server.json.server.id, {
-    method: 'DELETE', session: reg.json.token,
+    method: 'DELETE', session: reg.token,
   });
   check('server revoked', deleted.json?.ok === true);
   const status = await call(worker, env, '/api/mcp/agent/status/' + conn.json.connectionId, agentOpts(secret));
