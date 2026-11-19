@@ -229,6 +229,8 @@ class BridgeApp:
                         raise RuntimeError("Подключение отклонено, отозвано или истекло.")
                 if approved:
                     packet = request_json("/api/mcp/agent/next/" + connection_id, secret, {})
+                    if packet.get("status") != "approved":
+                        raise RuntimeError("Подключение было отключено или отозвано владельцем на сайте.")
                     job = packet.get("job")
                     if job:
                         try:
