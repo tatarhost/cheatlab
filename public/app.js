@@ -1,3 +1,4 @@
+import { viewMcpPage } from './mcp.js';
 const KEY_STORE = 'cheatlab.keys';
 /**
  * Access keys for locked publications.
@@ -5427,6 +5428,8 @@ async function route() {
       await viewMe();
     } else if (path === '/ail') {
       await viewAil();
+    } else if (path === '/mcp') {
+      await viewMcpPage({ $view, account, h, icon, api, toast, copy, when });
     } else if (path === '/mail') {
       await viewMail(url);
     } else if (path === '/chat' || path.startsWith('/chat/')) {

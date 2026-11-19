@@ -98,7 +98,7 @@ export async function handleAil(request, env) {
     if (who.error) return who.error;
     let payload;
     try { payload = await readPayload(request, 2048); } catch { return fail(400, 'invalid json'); }
-    const name = str(payload.name, 40, 'Мой компьютер').replace(/[\\r\\n\\t]/g, ' ').trim() || 'Мой компьютер';
+    const name = str(payload.name, 40, 'Мой компьютер').replace(/[\r\n\t]/g, ' ').trim() || 'Мой компьютер';
     const id = newId(12);
     const secret = 'mcp_' + newSecret();
     const createdAt = now();
@@ -130,7 +130,7 @@ export async function handleAil(request, env) {
     })) });
   }
 
-  const serverConnections = /^\\/api\\/mcp\\/servers\\/([A-Za-z0-9_-]{8,24})\\/connections$/.exec(path);
+  const serverConnections = /^\/api\/mcp\/servers\/([A-Za-z0-9_-]{8,24})\/connections$/.exec(path);
   if (method === 'GET' && serverConnections) {
     const who = await sessionActor(request, env);
     if (!who) return fail(401, 'login required');
@@ -153,7 +153,7 @@ export async function handleAil(request, env) {
     })) });
   }
 
-  const revokeServer = /^\\/api\\/mcp\\/servers\\/([A-Za-z0-9_-]{8,24})$/.exec(path);
+  const revokeServer = /^\/api\/mcp\/servers\/([A-Za-z0-9_-]{8,24})$/.exec(path);
   if (method === 'DELETE' && revokeServer) {
     const who = await sessionActor(request, env);
     if (!who) return fail(401, 'login required');
@@ -168,7 +168,7 @@ export async function handleAil(request, env) {
     return json({ ok: Number(result.meta?.changes || 0) > 0 });
   }
 
-  const connectionAction = /^\\/api\\/mcp\\/connections\\/([A-Za-z0-9_-]{8,24})\\/(approve|deny)$/.exec(path);
+  const connectionAction = /^\/api\/mcp\/connections\/([A-Za-z0-9_-]{8,24})\/(approve|deny)$/.exec(path);
   if (method === 'POST' && connectionAction) {
     const who = await sessionActor(request, env);
     if (!who) return fail(401, 'login required');
@@ -185,7 +185,7 @@ export async function handleAil(request, env) {
     return json({ ok: true, status: next });
   }
 
-  const revokeConnection = /^\\/api\\/mcp\\/connections\\/([A-Za-z0-9_-]{8,24})$/.exec(path);
+  const revokeConnection = /^\/api\/mcp\/connections\/([A-Za-z0-9_-]{8,24})$/.exec(path);
   if (method === 'DELETE' && revokeConnection) {
     const who = await sessionActor(request, env);
     if (!who) return fail(401, 'login required');
@@ -209,7 +209,7 @@ export async function handleAil(request, env) {
     if (!allowed) return fail(429, 'Слишком много попыток подключения.');
     let payload;
     try { payload = await readPayload(request, 2048); } catch { return fail(400, 'invalid json'); }
-    const deviceName = str(payload.deviceName, 64, 'Новый компьютер').replace(/[\\r\\n\\t]/g, ' ');
+    const deviceName = str(payload.deviceName, 64, 'Новый компьютер').replace(/[\r\n\t]/g, ' ');
     const platform = str(payload.platform, 40);
     const pythonVersion = str(payload.pythonVersion, 32);
     const id = newId(12);
@@ -222,7 +222,7 @@ export async function handleAil(request, env) {
     return json({ connectionId: id, status: 'pending', expiresAt }, 201);
   }
 
-  const agentStatus = /^\\/api\\/mcp\\/agent\\/status\\/([A-Za-z0-9_-]{8,24})$/.exec(path);
+  const agentStatus = /^\/api\/mcp\/agent\/status\/([A-Za-z0-9_-]{8,24})$/.exec(path);
   if (method === 'GET' && agentStatus) {
     if (!agentServer) return fail(401, 'invalid MCP secret');
     const row = await env.DB.prepare(
@@ -245,7 +245,7 @@ export async function handleAil(request, env) {
     return json({ status: row.status });
   }
 
-  const agentDisconnect = /^\\/api\\/mcp\\/agent\\/disconnect\\/([A-Za-z0-9_-]{8,24})$/.exec(path);
+  const agentDisconnect = /^\/api\/mcp\/agent\/disconnect\/([A-Za-z0-9_-]{8,24})$/.exec(path);
   if (method === 'POST' && agentDisconnect) {
     if (!agentServer) return fail(401, 'invalid MCP secret');
     const result = await env.DB.prepare(
