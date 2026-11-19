@@ -393,6 +393,9 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
   name TEXT NOT NULL,
   secret_hash TEXT NOT NULL UNIQUE,
   secret_prefix TEXT NOT NULL,
+  remote_secret_hash TEXT UNIQUE,
+  remote_secret_prefix TEXT,
+  remote_last_used_at INTEGER,
   created_at INTEGER NOT NULL,
   revoked_at INTEGER
 );
