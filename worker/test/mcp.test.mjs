@@ -3,7 +3,8 @@
  */
 import { makeEnv, call } from './harness.mjs';
 import worker from '../src/index.js';
-import { solvePow } from '../src/abuse.js';
+import { Store } from '../src/store.js';
+import { hashPassword, newUserId, newSession, nickKey, SESSION_TTL_MS } from '../src/accounts.js';
 
 let pass = 0;
 let fail = 0;
@@ -17,13 +18,20 @@ async function t(name, fn) {
   try { await fn(env); }
   catch (error) { fail++; failures.push(name + ' threw: ' + (error?.stack || error)); }
 }
-async function register(env, nick, client = 'testclient0123456789abcdef') {
-  const challenge = await call(worker, env, '/api/auth/pow', { client });
-  const nonce = await solvePow(challenge.json.challenge, env);
-  return call(worker, env, '/api/auth/register', {
-    method: 'POST', body: { nick, password: 'Tr0ub4dor-and-3-ducks' }, client,
-    headers: { 'x-cheatlab-pow': challenge.json.challenge, 'x-cheatlab-pow-nonce': nonce },
+async function createAccount(env, nick, client = 'testclient0123456789abcdef') {
+  const store = new Store(env.DB);
+  const password = await hashPassword('Tr0ub4dor-and-3-ducks');
+  const user = await store.createUser({
+    id: newUserId(), nick, nickKey: nickKey(nick),
+    passHash: password.passHash, passSalt: password.passSalt, iterations: password.iterations,
   });
+  const issued = await newSession();
+  const createdAt = Date.now();
+  await store.createSession({
+    tokenHash: issued.tokenHash, userId: user.id, createdAt,
+    expiresAt: createdAt + SESSION_TTL_MS, clientId: client, userAgent: 'MCP tests',
+  });
+  return { user, token: issued.token, client };
 }
 function agentOpts(secret) {
   return { headers: { 'x-cheatlab-mcp-secret': secret } };
@@ -32,7 +40,7 @@ function agentOpts(secret) {
 await t('MCP server requires a signed-in owner and returns its secret once', async (env) => {
   const anon = await call(worker, env, '/api/mcp/servers', { method: 'POST', body: { name: 'Desk' } });
   check('anonymous creation refused', anon.status === 401);
-  const reg = await register(env, 'mcpowner');
+  const reg = await createAccount(env, 'mcpowner');
   check('account registered', reg.status === 201);
   const created = await call(worker, env, '/api/mcp/servers', {
     method: 'POST', session: reg.json.token, body: { name: 'Домашний ПК' },
@@ -45,7 +53,7 @@ await t('MCP server requires a signed-in owner and returns its secret once', asy
 });
 
 await t('every PC process waits for explicit site approval and can be revoked', async (env) => {
-  const reg = await register(env, 'mcppair');
+  const reg = await createAccount(env, 'mcppair');
   const owner = reg.json.token;
   const created = await call(worker, env, '/api/mcp/servers', {
     method: 'POST', session: owner, body: { name: 'Work PC' },
@@ -64,7 +72,7 @@ await t('every PC process waits for explicit site approval and can be revoked', 
   const statusBefore = await call(worker, env, '/api/mcp/agent/status/' + id, agentOpts(secret));
   check('agent sees pending before approval', statusBefore.json?.status === 'pending');
   const strangerClient = 'otherclient0987654321abcdef';
-  const stranger = await register(env, 'mcpstranger', strangerClient);
+  const stranger = await createAccount(env, 'mcpstranger', strangerClient);
   const wrongOwner = await call(worker, env, '/api/mcp/connections/' + id + '/approve', {
     method: 'POST', session: stranger.json.token, client: strangerClient,
   });
@@ -84,7 +92,7 @@ await t('every PC process waits for explicit site approval and can be revoked', 
 });
 
 await t('revoking a server disables every attached script', async (env) => {
-  const reg = await register(env, 'mcprevoke');
+  const reg = await createAccount(env, 'mcprevoke');
   const server = await call(worker, env, '/api/mcp/servers', {
     method: 'POST', session: reg.json.token, body: { name: 'PC' },
   });
