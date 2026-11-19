@@ -3140,7 +3140,7 @@ route('GET', /^\/$/, async (_r, env) => json({
  * tests - the test harness calls the worker directly and never goes through a
  * preflight - it just fails in a real browser, as a CORS error with no explanation.
  */
-const ALLOWED_HEADERS = 'content-type, x-cheatlab-client, x-cheatlab-secret, x-cheatlab-session, x-cheatlab-pow, x-cheatlab-pow-nonce, x-cheatlab-key, x-filename, x-ail-api-key';
+const ALLOWED_HEADERS = 'content-type, x-cheatlab-client, x-cheatlab-secret, x-cheatlab-session, x-cheatlab-pow, x-cheatlab-pow-nonce, x-cheatlab-key, x-filename, x-ail-api-key, x-cheatlab-mcp-secret';
 const ALLOWED_METHODS = 'GET, HEAD, POST, PATCH, DELETE, OPTIONS';
 
 function withCors(response, origin, preflight) {
@@ -3176,7 +3176,7 @@ export default {
     const allowedOrigins = config(env).allowOrigin;
     const origin = requestOrigin && allowedOrigins.includes(requestOrigin) ? requestOrigin : null;
     const url = new URL(request.url);
-    if (url.pathname.startsWith('/api/ail/')) {
+    if (url.pathname.startsWith('/api/ail/') || url.pathname.startsWith('/api/mcp/')) {
       const ailResponse = await handleAil(request, env);
       if (ailResponse) return withCors(ailResponse, origin);
     }

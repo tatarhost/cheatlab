@@ -90,6 +90,171 @@ export async function handleAil(request, env) {
   const path = url.pathname;
   const method = request.method;
 
+
+  // MCP PC bridge: secrets are issued once, then stored only as SHA-256 hashes.
+  if (method === 'POST' && path === '/api/mcp/servers') {
+    const who = await sessionActor(request, env);
+    if (!who) return fail(401, 'login required');
+    if (who.error) return who.error;
+    let payload;
+    try { payload = await readPayload(request, 2048); } catch { return fail(400, 'invalid json'); }
+    const name = str(payload.name, 40, 'Мой компьютер').replace(/[\\r\\n\\t]/g, ' ').trim() || 'Мой компьютер';
+    const id = newId(12);
+    const secret = 'mcp_' + newSecret();
+    const createdAt = now();
+    try {
+      await env.DB.prepare(
+        'INSERT INTO mcp_servers (id, user_id, name, secret_hash, secret_prefix, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      ).bind(id, who.user.id, name, await secretHash(secret), secret.slice(0, 12), createdAt).run();
+    } catch (error) {
+      if (/MCP server limit/i.test(String(error?.message || error))) return fail(409, 'Можно создать не более пяти MCP-подключений.');
+      throw error;
+    }
+    return json({ secret, server: { id, name, prefix: secret.slice(0, 12), createdAt } }, 201);
+  }
+
+  if (method === 'GET' && path === '/api/mcp/servers') {
+    const who = await sessionActor(request, env);
+    if (!who) return fail(401, 'login required');
+    if (who.error) return who.error;
+    const rows = await env.DB.prepare(
+      "SELECT s.id, s.name, s.secret_prefix, s.created_at, s.revoked_at, " +
+      "(SELECT COUNT(*) FROM mcp_connections c WHERE c.server_id = s.id AND c.status = 'pending' AND c.expires_at > ?) AS pending_count, " +
+      "(SELECT COUNT(*) FROM mcp_connections c WHERE c.server_id = s.id AND c.status = 'approved' AND c.last_seen_at > ?) AS online_count " +
+      "FROM mcp_servers s WHERE s.user_id = ? ORDER BY s.created_at DESC LIMIT 20"
+    ).bind(now(), now() - 45_000, who.user.id).all();
+    return json({ servers: (rows.results || []).map(row => ({
+      id: row.id, name: row.name, prefix: row.secret_prefix, createdAt: row.created_at,
+      revoked: !!row.revoked_at, pendingCount: Number(row.pending_count) || 0,
+      onlineCount: Number(row.online_count) || 0,
+    })) });
+  }
+
+  const serverConnections = /^\\/api\\/mcp\\/servers\\/([A-Za-z0-9_-]{8,24})\\/connections$/.exec(path);
+  if (method === 'GET' && serverConnections) {
+    const who = await sessionActor(request, env);
+    if (!who) return fail(401, 'login required');
+    if (who.error) return who.error;
+    const server = await env.DB.prepare('SELECT id FROM mcp_servers WHERE id = ? AND user_id = ?')
+      .bind(serverConnections[1], who.user.id).first();
+    if (!server) return fail(404, 'MCP server not found');
+    await env.DB.prepare(
+      "UPDATE mcp_connections SET status = 'expired' WHERE server_id = ? AND status = 'pending' AND expires_at <= ?",
+    ).bind(server.id, now()).run();
+    const rows = await env.DB.prepare(
+      'SELECT id, device_name, platform, python_version, status, created_at, expires_at, approved_at, last_seen_at ' +
+      'FROM mcp_connections WHERE server_id = ? ORDER BY created_at DESC LIMIT 40'
+    ).bind(server.id).all();
+    return json({ connections: (rows.results || []).map(row => ({
+      id: row.id, deviceName: row.device_name, platform: row.platform, pythonVersion: row.python_version,
+      status: row.status, createdAt: row.created_at, expiresAt: row.expires_at,
+      approvedAt: row.approved_at, lastSeenAt: row.last_seen_at,
+      online: row.status === 'approved' && Number(row.last_seen_at || 0) > now() - 45_000,
+    })) });
+  }
+
+  const revokeServer = /^\\/api\\/mcp\\/servers\\/([A-Za-z0-9_-]{8,24})$/.exec(path);
+  if (method === 'DELETE' && revokeServer) {
+    const who = await sessionActor(request, env);
+    if (!who) return fail(401, 'login required');
+    if (who.error) return who.error;
+    const t = now();
+    const result = await env.DB.prepare(
+      'UPDATE mcp_servers SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL',
+    ).bind(t, revokeServer[1], who.user.id).run();
+    await env.DB.prepare(
+      "UPDATE mcp_connections SET status = 'revoked', disconnected_at = ? WHERE server_id = ? AND status IN ('pending','approved')",
+    ).bind(t, revokeServer[1]).run();
+    return json({ ok: Number(result.meta?.changes || 0) > 0 });
+  }
+
+  const connectionAction = /^\\/api\\/mcp\\/connections\\/([A-Za-z0-9_-]{8,24})\\/(approve|deny)$/.exec(path);
+  if (method === 'POST' && connectionAction) {
+    const who = await sessionActor(request, env);
+    if (!who) return fail(401, 'login required');
+    if (who.error) return who.error;
+    const t = now();
+    const next = connectionAction[2] === 'approve' ? 'approved' : 'denied';
+    const timestampColumn = next === 'approved' ? 'approved_at' : 'disconnected_at';
+    const result = await env.DB.prepare(
+      "UPDATE mcp_connections SET status = ?, " + timestampColumn + " = ? " +
+      "WHERE id = ? AND user_id = ? AND status = 'pending' AND expires_at > ? " +
+      "AND EXISTS (SELECT 1 FROM mcp_servers s WHERE s.id = mcp_connections.server_id AND s.revoked_at IS NULL)"
+    ).bind(next, t, connectionAction[1], who.user.id, t).run();
+    if (!(Number(result.meta?.changes || 0) > 0)) return fail(409, 'Запрос уже обработан или истёк.');
+    return json({ ok: true, status: next });
+  }
+
+  const revokeConnection = /^\\/api\\/mcp\\/connections\\/([A-Za-z0-9_-]{8,24})$/.exec(path);
+  if (method === 'DELETE' && revokeConnection) {
+    const who = await sessionActor(request, env);
+    if (!who) return fail(401, 'login required');
+    if (who.error) return who.error;
+    const result = await env.DB.prepare(
+      "UPDATE mcp_connections SET status = 'revoked', disconnected_at = ? " +
+      "WHERE id = ? AND user_id = ? AND status IN ('pending','approved')"
+    ).bind(now(), revokeConnection[1], who.user.id).run();
+    return json({ ok: Number(result.meta?.changes || 0) > 0 });
+  }
+
+  const agentSecret = request.headers.get('x-cheatlab-mcp-secret') || '';
+  const agentServer = /^mcp_[A-Za-z0-9_-]{32}$/.test(agentSecret)
+    ? await env.DB.prepare('SELECT id, user_id, revoked_at FROM mcp_servers WHERE secret_hash = ? LIMIT 1')
+      .bind(await secretHash(agentSecret)).first()
+    : null;
+
+  if (method === 'POST' && path === '/api/mcp/agent/connect') {
+    if (!agentServer || agentServer.revoked_at) return fail(401, 'invalid or revoked MCP secret');
+    const allowed = await env.STORE.throttle('mcp-connect:' + agentServer.id, 'connect', { cap: 12, windowMs: 60_000 });
+    if (!allowed) return fail(429, 'Слишком много попыток подключения.');
+    let payload;
+    try { payload = await readPayload(request, 2048); } catch { return fail(400, 'invalid json'); }
+    const deviceName = str(payload.deviceName, 64, 'Новый компьютер').replace(/[\\r\\n\\t]/g, ' ');
+    const platform = str(payload.platform, 40);
+    const pythonVersion = str(payload.pythonVersion, 32);
+    const id = newId(12);
+    const createdAt = now();
+    const expiresAt = createdAt + 5 * 60_000;
+    await env.DB.prepare(
+      "INSERT INTO mcp_connections (id, server_id, user_id, device_name, platform, python_version, status, created_at, expires_at, last_seen_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)"
+    ).bind(id, agentServer.id, agentServer.user_id, deviceName, platform, pythonVersion, createdAt, expiresAt, createdAt).run();
+    return json({ connectionId: id, status: 'pending', expiresAt }, 201);
+  }
+
+  const agentStatus = /^\\/api\\/mcp\\/agent\\/status\\/([A-Za-z0-9_-]{8,24})$/.exec(path);
+  if (method === 'GET' && agentStatus) {
+    if (!agentServer) return fail(401, 'invalid MCP secret');
+    const row = await env.DB.prepare(
+      'SELECT id, server_id, status, expires_at FROM mcp_connections WHERE id = ? AND server_id = ?',
+    ).bind(agentStatus[1], agentServer.id).first();
+    if (!row) return fail(404, 'connection not found');
+    if (agentServer.revoked_at) {
+      await env.DB.prepare(
+        "UPDATE mcp_connections SET status = 'revoked', disconnected_at = ? WHERE id = ? AND status IN ('pending','approved')",
+      ).bind(now(), row.id).run();
+      return json({ status: 'revoked' });
+    }
+    if (row.status === 'pending' && Number(row.expires_at) <= now()) {
+      await env.DB.prepare("UPDATE mcp_connections SET status = 'expired' WHERE id = ?").bind(row.id).run();
+      return json({ status: 'expired' });
+    }
+    const allowed = await env.STORE.throttle('mcp-status:' + agentServer.id, 'heartbeat', { cap: 90, windowMs: 60_000 });
+    if (!allowed) return fail(429, 'heartbeat rate limited');
+    await env.DB.prepare('UPDATE mcp_connections SET last_seen_at = ? WHERE id = ?').bind(now(), row.id).run();
+    return json({ status: row.status });
+  }
+
+  const agentDisconnect = /^\\/api\\/mcp\\/agent\\/disconnect\\/([A-Za-z0-9_-]{8,24})$/.exec(path);
+  if (method === 'POST' && agentDisconnect) {
+    if (!agentServer) return fail(401, 'invalid MCP secret');
+    const result = await env.DB.prepare(
+      "UPDATE mcp_connections SET status = 'disconnected', disconnected_at = ? " +
+      "WHERE id = ? AND server_id = ? AND status IN ('pending','approved')"
+    ).bind(now(), agentDisconnect[1], agentServer.id).run();
+    return json({ ok: Number(result.meta?.changes || 0) > 0 });
+  }
+
   if (method === 'POST' && path === '/api/ail/training/report') {
     const authorization = request.headers.get('authorization') || '';
     const supplied = authorization.replace(/^Bearer\s+/i, '').trim();
