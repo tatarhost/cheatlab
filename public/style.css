@@ -1346,3 +1346,85 @@ a.stat-box:hover .stat-label { color: var(--ink); }
   .cl-skip-link,
   body > .nav.mobile-floating-nav .nav-scroll-hint { transition: none; }
 }
+
+
+/* radiomedved online radio */
+.radio-page {
+  width: min(900px, 100%);
+  margin: 0 auto;
+  padding: clamp(18px, 4vw, 42px) 0 60px;
+  animation: radio-enter .45s ease both;
+}
+.radio-kicker {
+  margin: 0 0 16px;
+  color: var(--mute);
+  font: 600 11px/1.4 var(--sans);
+  letter-spacing: .16em;
+}
+.radio-player {
+  display: grid;
+  grid-template-columns: minmax(190px, 280px) minmax(0, 1fr);
+  gap: clamp(20px, 4vw, 38px);
+  align-items: center;
+  padding: clamp(18px, 4vw, 34px);
+  border: 1px solid var(--line);
+  background: var(--fog);
+  box-shadow: 0 18px 60px rgba(0,0,0,.18);
+}
+.radio-artwork {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  overflow: hidden;
+  background: var(--fog-2);
+  border: 1px solid var(--line);
+}
+.radio-artwork img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.radio-details { min-width: 0; }
+.radio-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--mute);
+  font: 700 10px/1.4 var(--sans);
+  letter-spacing: .13em;
+}
+.radio-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #e34b4b;
+  box-shadow: 0 0 0 4px rgba(227,75,75,.12);
+  animation: radio-pulse 1.8s ease-in-out infinite;
+}
+.radio-details h1 {
+  margin: 12px 0 4px;
+  font-size: clamp(30px, 5vw, 48px);
+  line-height: 1.05;
+  letter-spacing: -.045em;
+}
+.radio-subtitle { margin: 0 0 24px; color: var(--mute); }
+.radio-audio { display: block; width: 100%; min-width: 0; }
+.radio-note { margin: 12px 0 0; color: var(--mute); font-size: 12px; line-height: 1.6; }
+.radio-source {
+  display: inline-block;
+  margin-top: 16px;
+  color: var(--mute);
+  font-size: 12px;
+  text-decoration: none;
+}
+.radio-source:hover { color: var(--ink); }
+@keyframes radio-pulse { 50% { opacity: .45; transform: scale(.82); } }
+@keyframes radio-enter { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 620px) {
+  .radio-player { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .radio-artwork { width: min(100%, 260px); margin: 0 auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .radio-page, .radio-live-dot { animation: none; }
+}

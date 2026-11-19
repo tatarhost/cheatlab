@@ -5273,6 +5273,39 @@ async function viewKey(url) {
   }
 }
 
+// ---------------------------------------------------------------- Radio Medved
+
+function viewRadio() {
+  const page = h('section', { class: 'radio-page' },
+    h('div', { class: 'radio-kicker', text: 'CHEATLAB · INTERNET RADIO' }),
+    h('div', { class: 'radio-player' },
+      h('div', { class: 'radio-artwork' },
+        h('img', {
+          src: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTr9oRXOEvnpRkjAJs03zBON1xLWhJDolPoQt5iG3A2nQ&s=10',
+          alt: 'radiomedved',
+          loading: 'lazy',
+          onerror: function () { this.style.display = 'none'; }
+        })
+      ),
+      h('div', { class: 'radio-details' },
+        h('div', { class: 'radio-live' }, h('span', { class: 'radio-live-dot' }), 'ПРЯМОЙ ЭФИР'),
+        h('h1', { text: 'radiomedved' }),
+        h('p', { class: 'radio-subtitle', text: 'Радио Медведь · Онлайн-трансляция' }),
+        h('audio', {
+          class: 'radio-audio',
+          controls: true,
+          preload: 'none',
+          src: 'https://air.radiomedved.ru/rm320_main',
+          'aria-label': 'Проигрыватель radiomedved'
+        }),
+        h('p', { class: 'radio-note', text: 'Нажми ▶, чтобы начать прослушивание. Если поток не запускается, проверь доступность трансляции.' })
+      )
+    ),
+    h('a', { class: 'radio-source', href: 'https://air.radiomedved.ru/rm320_main', target: '_blank', rel: 'noopener noreferrer' }, 'Открыть поток отдельно ↗')
+  );
+  $view.replaceChildren(page);
+}
+
 // ---------------------------------------------------------------- app downloads
 
 async function viewDownloads() {
@@ -5422,6 +5455,8 @@ async function route() {
       await viewGame(path.slice('/games/'.length));
     } else if (path === '/downloads') {
       await viewDownloads();
+    } else if (path === '/radio') {
+      viewRadio();
     } else if (path === '/new') {
       await viewNew(url);
     } else if (path === '/me') {
