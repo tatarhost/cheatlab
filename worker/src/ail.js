@@ -296,10 +296,10 @@ export async function handleAil(request, env) {
     })) });
   }
 
-  const remoteEndpoint = /^\\/mcp\\/([A-Za-z0-9_-]{8,24})\\/(mcpr_[A-Za-z0-9_-]{32})$/.exec(path);
+  const remoteEndpoint = /^\/mcp\/([A-Za-z0-9_-]{8,24})\/(mcpr_[A-Za-z0-9_-]{32})$/.exec(path);
   if (remoteEndpoint) return handleRemoteMcp(request, env, remoteEndpoint);
 
-  const rotateRemoteKey = /^\\/api\\/mcp\\/servers\\/([A-Za-z0-9_-]{8,24})\\/remote-key$/.exec(path);
+  const rotateRemoteKey = /^\/api\/mcp\/servers\/([A-Za-z0-9_-]{8,24})\/remote-key$/.exec(path);
   if (method === 'POST' && rotateRemoteKey) {
     const who = await sessionActor(request, env);
     if (!who) return fail(401, 'login required');
