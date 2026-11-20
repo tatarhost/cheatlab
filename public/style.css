@@ -2010,3 +2010,36 @@ a.stat-box:hover .stat-label { color: var(--ink); }
   .radio-hub, .radio-player-screen, .radio-live-dot, .radio-orbit, .radio-orbit-dot,
   .radio-station-card, .radio-visualizer span, .radio-play-button { animation: none !important; transition: none !important; }
 }
+
+
+/* Compact radio catalogue: remove the oversized hero and use the available width. */
+.radio-hub {
+  width: 100%;
+  max-width: none;
+  padding-top: 16px;
+}
+.radio-player-screen {
+  width: 100%;
+  max-width: none;
+}
+.radio-section-heading {
+  margin-top: 0;
+  margin-bottom: 17px;
+}
+.radio-station-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 205px), 1fr));
+  gap: 12px;
+}
+.radio-station-card {
+  min-height: 220px;
+}
+.radio-card-logo {
+  height: clamp(78px, 7vw, 105px);
+}
+@media (max-width: 700px) {
+  .radio-hub { padding-top: 10px; }
+  .radio-station-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 420px) {
+  .radio-card-logo { height: 82px; }
+}
