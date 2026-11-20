@@ -5421,24 +5421,6 @@ function viewRadio() {
   stopActiveRadio();
   let selectedId = '';
   const page = h('section', { class: 'radio-hub' });
-  const hero = h('header', { class: 'radio-hub-hero' },
-    h('div', { class: 'radio-hub-copy' },
-      h('div', { class: 'radio-kicker' }, h('span', { class: 'radio-kicker-mark' }), ' CHEATLAB · RADIO'),
-      h('h1', {}, 'Твоя музыка. ', h('span', {}, 'Твой эфир.')),
-      h('p', { class: 'radio-hub-lead', text: 'Выбери радиостанцию, а затем перейди в её отдельный плеер.' }),
-      h('div', { class: 'radio-hub-facts' },
-        h('span', {}, icon('radio-tower'), ' 11 станций'),
-        h('span', {}, icon('headphones'), ' Прямые эфиры'),
-      ),
-    ),
-    h('div', { class: 'radio-orbit-art', 'aria-hidden': 'true' },
-      h('div', { class: 'radio-orbit radio-orbit-one' }),
-      h('div', { class: 'radio-orbit radio-orbit-two' }),
-      h('div', { class: 'radio-orbit-core' }, icon('audio-lines')),
-      h('span', { class: 'radio-orbit-dot radio-orbit-dot-a' }),
-      h('span', { class: 'radio-orbit-dot radio-orbit-dot-b' }),
-    ),
-  );
   const heading = h('div', { class: 'radio-section-heading' },
     h('div', {}, h('div', { class: 'radio-section-eyebrow', text: 'РАДИОСТАНЦИИ' }), h('h2', { text: 'Выбери свой звук' })),
     h('span', { class: 'radio-section-count', text: '01 / 11' }),
@@ -5492,7 +5474,7 @@ function viewRadio() {
   continueButton.addEventListener('click', () => {
     if (selectedId) navigate('/radio/' + selectedId);
   });
-  page.append(hero, heading, grid, selection,
+  page.append(heading, grid, selection,
     h('p', { class: 'radio-hub-footnote', text: 'Трансляции передаются источниками радиостанций. Доступность отдельных потоков может зависеть от региона и сети.' })
   );
   $view.replaceChildren(page);
@@ -5505,7 +5487,19 @@ function viewRadioPlayer(stationId) {
     return;
   }
   stopActiveRadio();
-  const audio = h('audio', { class: 'radio-audio-engine', preload: 'none' });
+  const audio = h('audio', {
+    class: 'radio-audio-engine',
+    preload: 'none',
+    'aria-label': 'Прямой эфир ' + station.name,
+  });
+  // Use the original direct Radio Medved source exactly as supplied.
+  // Assign ordinary audio streams before the click so play() is invoked
+  // synchronously from the user's gesture (some browsers reject awaited play()).
+  if (station.id === 'radiomedved') {
+    audio.src = 'https://air.radiomedved.ru/rm320_main';
+  } else if (station.kind !== 'hls') {
+    audio.src = station.stream;
+  }
   activeRadioAudio = audio;
   const status = h('span', { class: 'radio-player-status-text', text: 'ГОТОВ К ВОСПРОИЗВЕДЕНИЮ' });
   const liveBadge = h('div', { class: 'radio-live-badge' }, h('span', { class: 'radio-live-dot' }), 'ПРЯМОЙ ЭФИР');
@@ -5585,18 +5579,42 @@ function viewRadioPlayer(stationId) {
     status.textContent = 'ПОТОК НЕДОСТУПЕН · ПОПРОБУЙ ПОЗЖЕ';
     player.classList.remove('is-playing', 'is-buffering');
   });
-  playButton.addEventListener('click', async () => {
-    if (audio.paused) {
-      if (!audio.src && !activeRadioHls) await prepareRadioStream(audio, station, status);
-      try {
-        status.textContent = 'ПОДКЛЮЧЕНИЕ К ЭФИРУ…';
-        await audio.play();
-      } catch {
-        status.textContent = 'НЕ УДАЛОСЬ ЗАПУСТИТЬ · ПРОВЕРЬ ПОТОК';
-      }
-    } else {
-      audio.pause();
+  function startAudioPlayback() {
+    status.textContent = 'ПОДКЛЮЧЕНИЕ К ЭФИРУ…';
+    player.classList.add('is-buffering');
+    // Do not await play() for ordinary audio URLs: calling it directly inside
+    // the click handler preserves browser user activation.
+    const playback = audio.play();
+    if (playback && typeof playback.catch === 'function') {
+      playback.catch(() => {
+        status.textContent = 'НЕ УДАЛОСЬ ЗАПУСТИТЬ · ОТКРОЙ ПОТОК ОТДЕЛЬНО';
+        player.classList.remove('is-buffering', 'is-playing');
+      });
     }
+  }
+
+  playButton.addEventListener('click', () => {
+    if (!audio.paused) {
+      audio.pause();
+      return;
+    }
+    if (station.kind === 'hls' && !audio.src && !activeRadioHls) {
+      status.textContent = 'ПОДГОТОВКА HLS-ПОТОКА…';
+      prepareRadioStream(audio, station, status)
+        .then(() => {
+          if (activeRadioAudio === audio && !audio.src && !activeRadioHls) {
+            throw new Error('Не удалось подготовить HLS-поток.');
+          }
+          if (activeRadioAudio === audio) startAudioPlayback();
+        })
+        .catch(() => {
+          status.textContent = 'НЕ УДАЛОСЬ ПОДКЛЮЧИТЬ HLS · ОТКРОЙ ПОТОК ОТДЕЛЬНО';
+          player.classList.remove('is-buffering', 'is-playing');
+        });
+      return;
+    }
+    if (!audio.src && !activeRadioHls) audio.src = station.stream;
+    startAudioPlayback();
   });
   volume.addEventListener('input', () => { audio.volume = Number(volume.value); });
   $view.replaceChildren(player);
