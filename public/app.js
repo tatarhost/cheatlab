@@ -5273,37 +5273,333 @@ async function viewKey(url) {
   }
 }
 
-// ---------------------------------------------------------------- Radio Medved
+// ---------------------------------------------------------------- CHEATLAB Radio
+
+const RADIO_STATIONS = [
+  {
+    id: 'radiomedved', name: 'radiomedved', subtitle: 'Радио Медведь', genre: 'Авторское радио',
+    description: 'Онлайн-трансляция radiomedved.',
+    logo: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTr9oRXOEvnpRkjAJs03zBON1xLWhJDolPoQt5iG3A2nQ&s=10',
+    stream: 'https://air.radiomedved.ru/rm320_main', site: 'https://air.radiomedved.ru/rm320_main',
+    color: '#d69b49', kind: 'audio'
+  },
+  {
+    id: 'record', name: 'Radio Record', subtitle: 'Радио Рекорд', genre: 'Танцевальная музыка',
+    description: 'Электронная музыка, танцевальные хиты и клубные миксы.',
+    logo: 'https://commons.wikimedia.org/wiki/Special:FilePath/Radio_Record_Logo_2026.svg',
+    stream: 'https://hls-01-radiorecord.hostingradio.ru/record-msk/playlist.m3u8', site: 'https://www.radiorecord.ru/',
+    color: '#e6e6e6', kind: 'hls'
+  },
+  {
+    id: 'europa-plus', name: 'Европа Плюс', subtitle: 'Europa Plus', genre: 'Поп · Хиты',
+    description: 'Современные российские и зарубежные хиты.',
+    logo: 'https://radiopotok.ru/f/station/512/1576.png',
+    stream: 'https://hls-01-regions.emgsound.ru/11_msk/96/playlist.m3u8', site: 'https://europaplus.ru/',
+    color: '#e94b5d', kind: 'hls'
+  },
+  {
+    id: 'dfm', name: 'DFM', subtitle: 'Dance Radio', genre: 'Dance · EDM',
+    description: 'Энергичная танцевальная музыка и электронные новинки.',
+    logo: 'https://commons.wikimedia.org/wiki/Special:FilePath/Логотип_радио_DFM_с_2025_года.png',
+    stream: 'https://dfm.hostingradio.ru/dfm96.aacp', site: 'https://dfm.ru/',
+    color: '#f1c84b', kind: 'audio'
+  },
+  {
+    id: 'avtoradio', name: 'Авторадио', subtitle: 'Авторадио · Москва', genre: 'Поп · Для дороги',
+    description: 'Популярные песни, программы и музыка для поездок.',
+    logo: 'https://www.radio.informexpress.ru/netcat_files/540/282/logo_avtoradio_0.png',
+    stream: 'https://srv21.gpmradio.ru:8443/stream/air/aac/64/100', site: 'https://avtoradio.ru/',
+    color: '#e24f55', kind: 'audio'
+  },
+  {
+    id: 'nashe-radio', name: 'Наше Радио', subtitle: 'НАШЕ · Русский рок', genre: 'Русский рок',
+    description: 'Русский рок, известные группы и новые песни.',
+    logo: 'https://commons.wikimedia.org/wiki/Special:FilePath/НАШЕ_РАДИО.jpg',
+    stream: 'https://nashe1.hostingradio.ru/nashe-256', site: 'https://nashe.ru/',
+    color: '#edbd43', kind: 'audio'
+  },
+  {
+    id: 'russkoe-radio', name: 'Русское Радио', subtitle: 'Золотой граммофон', genre: 'Русская поп-музыка',
+    description: 'Популярная музыка на русском языке.',
+    logo: 'https://bestradio.fm/uploads/posts/2020-03/1583096676_russkoe-radio-russia-min.jpg',
+    stream: 'https://rusradio.hostingradio.ru/rusradio96.aacp', site: 'https://rusradio.ru/',
+    color: '#4568d9', kind: 'audio'
+  },
+  {
+    id: 'retro-fm', name: 'Ретро FM', subtitle: 'Музыка проверенная временем', genre: 'Ретро · 70s–00s',
+    description: 'Любимые хиты прошлых десятилетий.',
+    logo: 'https://images.seeklogo.com/logo-png/48/1/retro-fm-russia-logo-png_seeklogo-486855.png',
+    stream: 'https://retro.hostingradio.ru:8043/retro256.mp3', site: 'https://retrofm.ru/',
+    color: '#ed5ca8', kind: 'audio'
+  },
+  {
+    id: 'comedy-radio', name: 'Comedy Radio', subtitle: 'Юмор и музыка', genre: 'Развлекательное',
+    description: 'Музыка, юмор и развлекательные программы.',
+    logo: 'https://radiopotok.ru/f/station/512/526.png',
+    stream: 'https://srv21.gpmradio.ru:8443/stream/air/aac/64/102', site: 'https://comedy-radio.ru/',
+    color: '#ef4545', kind: 'audio'
+  },
+  {
+    id: 'maximum', name: 'MAXIMUM', subtitle: 'Maximum Rock Radio', genre: 'Рок · Альтернатива',
+    description: 'Рок-хиты, альтернативная музыка и новые релизы.',
+    logo: 'https://commons.wikimedia.org/wiki/Special:FilePath/New2020autumn-rmaximum.png',
+    stream: 'https://maximum.hostingradio.ru/maximum96.aacp', site: 'https://maximum.ru/',
+    color: '#e2c348', kind: 'audio'
+  },
+  {
+    id: 'monte-carlo', name: 'Radio Monte Carlo', subtitle: 'Музыка вне времени', genre: 'Lounge · Pop',
+    description: 'Зарубежные хиты, лёгкая музыка и lounge-настроение.',
+    logo: 'https://radiomixer.net/images/2022/01/14/4SpJXzwc8VyEUhr1XTKlSH9wIB599buW9QQAqEar.png',
+    stream: 'https://montecarlo.hostingradio.ru/montecarlo96.aacp', site: 'https://montecarlo.ru/',
+    color: '#bd3b79', kind: 'audio'
+  }
+];
+
+let activeRadioAudio = null;
+let activeRadioHls = null;
+let radioHlsLoader = null;
+
+function stopActiveRadio() {
+  if (activeRadioHls) {
+    try { activeRadioHls.destroy(); } catch {}
+    activeRadioHls = null;
+  }
+  if (activeRadioAudio) {
+    try {
+      activeRadioAudio.pause();
+      activeRadioAudio.removeAttribute('src');
+      activeRadioAudio.load();
+    } catch {}
+    activeRadioAudio = null;
+  }
+}
+
+function loadRadioHls() {
+  if (window.Hls) return Promise.resolve(true);
+  if (!radioHlsLoader) {
+    radioHlsLoader = new Promise((resolve) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js';
+      script.async = true;
+      script.onload = () => resolve(!!window.Hls);
+      script.onerror = () => resolve(false);
+      document.head.appendChild(script);
+    });
+  }
+  return radioHlsLoader;
+}
+
+async function prepareRadioStream(audio, station, statusNode) {
+  if (!station.stream.endsWith('.m3u8')) {
+    audio.src = station.stream;
+    return;
+  }
+  if (audio.canPlayType('application/vnd.apple.mpegurl')) {
+    audio.src = station.stream;
+    return;
+  }
+  const loaded = await loadRadioHls();
+  if (activeRadioAudio !== audio) return;
+  if (loaded && window.Hls && window.Hls.isSupported()) {
+    activeRadioHls = new window.Hls({ enableWorker: true, lowLatencyMode: true });
+    activeRadioHls.loadSource(station.stream);
+    activeRadioHls.attachMedia(audio);
+    activeRadioHls.on(window.Hls.Events.ERROR, (_event, data) => {
+      if (data && data.fatal) {
+        statusNode.textContent = 'Не удалось получить поток. Попробуйте позже.';
+        try { activeRadioHls.destroy(); } catch {}
+        activeRadioHls = null;
+      }
+    });
+  } else {
+    audio.src = station.stream;
+    statusNode.textContent = 'HLS-поток может требовать браузер с поддержкой HLS.';
+  }
+}
 
 function viewRadio() {
-  const page = h('section', { class: 'radio-page' },
-    h('div', { class: 'radio-kicker', text: 'CHEATLAB · INTERNET RADIO' }),
-    h('div', { class: 'radio-player' },
-      h('div', { class: 'radio-artwork' },
-        h('img', {
-          src: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTr9oRXOEvnpRkjAJs03zBON1xLWhJDolPoQt5iG3A2nQ&s=10',
-          alt: 'radiomedved',
-          loading: 'lazy',
-          onerror: function () { this.style.display = 'none'; }
-        })
+  stopActiveRadio();
+  let selectedId = '';
+  const page = h('section', { class: 'radio-hub' });
+  const hero = h('header', { class: 'radio-hub-hero' },
+    h('div', { class: 'radio-hub-copy' },
+      h('div', { class: 'radio-kicker' }, h('span', { class: 'radio-kicker-mark' }), ' CHEATLAB · RADIO'),
+      h('h1', {}, 'Твоя музыка. ', h('span', {}, 'Твой эфир.')),
+      h('p', { class: 'radio-hub-lead', text: 'Выбери радиостанцию, а затем перейди в её отдельный плеер.' }),
+      h('div', { class: 'radio-hub-facts' },
+        h('span', {}, icon('radio-tower'), ' 11 станций'),
+        h('span', {}, icon('headphones'), ' Прямые эфиры'),
       ),
-      h('div', { class: 'radio-details' },
-        h('div', { class: 'radio-live' }, h('span', { class: 'radio-live-dot' }), 'ПРЯМОЙ ЭФИР'),
-        h('h1', { text: 'radiomedved' }),
-        h('p', { class: 'radio-subtitle', text: 'Радио Медведь · Онлайн-трансляция' }),
-        h('audio', {
-          class: 'radio-audio',
-          controls: true,
-          preload: 'none',
-          src: 'https://air.radiomedved.ru/rm320_main',
-          'aria-label': 'Проигрыватель radiomedved'
-        }),
-        h('p', { class: 'radio-note', text: 'Нажми ▶, чтобы начать прослушивание. Если поток не запускается, проверь доступность трансляции.' })
-      )
     ),
-    h('a', { class: 'radio-source', href: 'https://air.radiomedved.ru/rm320_main', target: '_blank', rel: 'noopener noreferrer' }, 'Открыть поток отдельно ↗')
+    h('div', { class: 'radio-orbit-art', 'aria-hidden': 'true' },
+      h('div', { class: 'radio-orbit radio-orbit-one' }),
+      h('div', { class: 'radio-orbit radio-orbit-two' }),
+      h('div', { class: 'radio-orbit-core' }, icon('audio-lines')),
+      h('span', { class: 'radio-orbit-dot radio-orbit-dot-a' }),
+      h('span', { class: 'radio-orbit-dot radio-orbit-dot-b' }),
+    ),
+  );
+  const heading = h('div', { class: 'radio-section-heading' },
+    h('div', {}, h('div', { class: 'radio-section-eyebrow', text: 'РАДИОСТАНЦИИ' }), h('h2', { text: 'Выбери свой звук' })),
+    h('span', { class: 'radio-section-count', text: '01 / 11' }),
+  );
+  const grid = h('div', { class: 'radio-station-grid' });
+  const selectedName = h('strong', { class: 'radio-selected-name', text: 'Станция не выбрана' });
+  const selectedHint = h('span', { class: 'radio-selected-hint', text: 'Нажми на карточку радиостанции выше' });
+  const continueButton = h('button', { class: 'radio-continue btn btn-primary', type: 'button', disabled: true },
+    h('span', { text: 'Перейти к плееру' }), icon('arrow-right'),
+  );
+  const selection = h('div', { class: 'radio-selection-bar' },
+    h('div', { class: 'radio-selection-copy' }, h('span', { class: 'radio-selection-label', text: 'ТВОЙ ВЫБОР' }), selectedName, selectedHint),
+    continueButton,
+  );
+
+  for (const station of RADIO_STATIONS) {
+    const image = h('img', {
+      src: station.logo, alt: 'Логотип ' + station.name, loading: 'lazy',
+      onerror: function () {
+        this.hidden = true;
+        if (this.parentElement) this.parentElement.classList.add('is-fallback');
+      },
+    });
+    const card = h('button', {
+      class: 'radio-station-card',
+      type: 'button',
+      'aria-pressed': 'false',
+      'data-station': station.id,
+      style: '--station-accent:' + station.color,
+    },
+      h('span', { class: 'radio-card-topline' }, h('span', { class: 'radio-card-index', text: String(RADIO_STATIONS.indexOf(station) + 1).padStart(2, '0') }), h('span', { class: 'radio-card-radio', text: 'RADIO' })),
+      h('span', { class: 'radio-card-logo' }, image, h('span', { class: 'radio-logo-fallback', text: station.name })),
+      h('span', { class: 'radio-card-name', text: station.name }),
+      h('span', { class: 'radio-card-genre', text: station.genre }),
+      h('span', { class: 'radio-card-bottom' }, h('span', { class: 'radio-card-dot' }), h('span', { text: 'Выбрать станцию' }), icon('arrow-up-right')),
+    );
+    card.addEventListener('click', () => {
+      selectedId = station.id;
+      grid.querySelectorAll('.radio-station-card').forEach((node) => {
+        const active = node.dataset.station === selectedId;
+        node.classList.toggle('is-selected', active);
+        node.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+      selectedName.textContent = station.name;
+      selectedHint.textContent = station.genre + ' · готова к запуску';
+      continueButton.disabled = false;
+    });
+    grid.append(card);
+  }
+
+  continueButton.addEventListener('click', () => {
+    if (selectedId) navigate('/radio/' + selectedId);
+  });
+  page.append(hero, heading, grid, selection,
+    h('p', { class: 'radio-hub-footnote', text: 'Трансляции передаются источниками радиостанций. Доступность отдельных потоков может зависеть от региона и сети.' })
   );
   $view.replaceChildren(page);
+}
+
+function viewRadioPlayer(stationId) {
+  const station = RADIO_STATIONS.find((item) => item.id === stationId);
+  if (!station) {
+    viewRadio();
+    return;
+  }
+  stopActiveRadio();
+  const audio = h('audio', { class: 'radio-audio-engine', preload: 'none' });
+  activeRadioAudio = audio;
+  const status = h('span', { class: 'radio-player-status-text', text: 'ГОТОВ К ВОСПРОИЗВЕДЕНИЮ' });
+  const liveBadge = h('div', { class: 'radio-live-badge' }, h('span', { class: 'radio-live-dot' }), 'ПРЯМОЙ ЭФИР');
+  const playGlyph = icon('play');
+  const playLabel = h('span', { text: 'Слушать эфир' });
+  const playButton = h('button', {
+    class: 'radio-play-button', type: 'button', 'aria-label': 'Начать воспроизведение',
+  }, playGlyph, playLabel);
+  const volume = h('input', { class: 'radio-volume-range', type: 'range', min: '0', max: '1', step: '0.01', value: '0.8', 'aria-label': 'Громкость' });
+  audio.volume = 0.8;
+
+  const visualizer = h('div', { class: 'radio-visualizer', 'aria-hidden': 'true' },
+    ...Array.from({ length: 36 }, (_, index) => h('span', { style: '--bar:' + (index % 7 + 1) }))
+  );
+  const artworkImage = h('img', {
+    src: station.logo, alt: 'Логотип ' + station.name, loading: 'eager',
+    onerror: function () {
+      this.hidden = true;
+      if (this.parentElement) this.parentElement.classList.add('is-fallback');
+    },
+  });
+  const art = h('div', { class: 'radio-player-art', style: '--station-accent:' + station.color },
+    h('div', { class: 'radio-player-art-glow' }),
+    h('div', { class: 'radio-player-art-image' }, artworkImage, h('span', { class: 'radio-logo-fallback', text: station.name })),
+    h('span', { class: 'radio-player-art-caption', text: 'CHEATLAB RADIO' }),
+  );
+  const controls = h('div', { class: 'radio-player-controls' },
+    playButton,
+    h('div', { class: 'radio-control-meta' },
+      h('div', { class: 'radio-control-status' }, status),
+      visualizer,
+    ),
+  );
+  const player = h('section', { class: 'radio-player-screen', style: '--station-accent:' + station.color },
+    h('a', { class: 'radio-back-link', href: '/radio' }, icon('arrow-left'), ' Все радиостанции'),
+    h('div', { class: 'radio-player-layout' },
+      art,
+      h('div', { class: 'radio-player-content' },
+        h('div', { class: 'radio-player-overline' }, liveBadge, h('span', { class: 'radio-player-index', text: 'CHEATLAB / ' + station.id.toUpperCase() })),
+        h('h1', { text: station.name }),
+        h('p', { class: 'radio-player-subtitle', text: station.description }),
+        h('div', { class: 'radio-player-chip' }, h('span', { class: 'radio-player-chip-dot' }), station.genre),
+        controls,
+        h('div', { class: 'radio-volume-row' },
+          icon('volume-2'),
+          h('span', { class: 'radio-volume-label', text: 'ГРОМКОСТЬ' }),
+          volume,
+        ),
+        h('p', { class: 'radio-player-help', text: 'Нажми «Слушать эфир». Первый запуск может занять несколько секунд.' }),
+        h('div', { class: 'radio-player-links' },
+          h('a', { href: station.site, target: '_blank', rel: 'noopener noreferrer' }, 'Сайт станции', icon('external-link')),
+          h('a', { href: station.stream, target: '_blank', rel: 'noopener noreferrer' }, 'Открыть поток', icon('arrow-up-right')),
+        ),
+      ),
+    ),
+    h('div', { class: 'radio-player-footer' }, h('span', {}, h('span', { class: 'radio-footer-dot' }), ' CHEATLAB RADIO'), h('span', { text: 'ОНЛАЙН · ПРЯМОЙ ПОТОК' })),
+    audio,
+  );
+  audio.addEventListener('playing', () => {
+    status.textContent = 'СЕЙЧАС В ЭФИРЕ';
+    playButton.replaceChildren(icon('pause'), h('span', { text: 'Пауза' }));
+    playButton.setAttribute('aria-label', 'Приостановить воспроизведение');
+    player.classList.add('is-playing');
+  });
+  audio.addEventListener('pause', () => {
+    status.textContent = 'ВОСПРОИЗВЕДЕНИЕ ПРИОСТАНОВЛЕНО';
+    playButton.replaceChildren(icon('play'), h('span', { text: 'Продолжить эфир' }));
+    playButton.setAttribute('aria-label', 'Продолжить воспроизведение');
+    player.classList.remove('is-playing');
+  });
+  audio.addEventListener('waiting', () => {
+    status.textContent = 'ПОДКЛЮЧЕНИЕ К ЭФИРУ…';
+    player.classList.add('is-buffering');
+  });
+  audio.addEventListener('canplay', () => player.classList.remove('is-buffering'));
+  audio.addEventListener('error', () => {
+    status.textContent = 'ПОТОК НЕДОСТУПЕН · ПОПРОБУЙ ПОЗЖЕ';
+    player.classList.remove('is-playing', 'is-buffering');
+  });
+  playButton.addEventListener('click', async () => {
+    if (audio.paused) {
+      if (!audio.src && !activeRadioHls) await prepareRadioStream(audio, station, status);
+      try {
+        status.textContent = 'ПОДКЛЮЧЕНИЕ К ЭФИРУ…';
+        await audio.play();
+      } catch {
+        status.textContent = 'НЕ УДАЛОСЬ ЗАПУСТИТЬ · ПРОВЕРЬ ПОТОК';
+      }
+    } else {
+      audio.pause();
+    }
+  });
+  volume.addEventListener('input', () => { audio.volume = Number(volume.value); });
+  $view.replaceChildren(player);
 }
 
 // ---------------------------------------------------------------- app downloads
@@ -5457,6 +5753,8 @@ async function route() {
       await viewDownloads();
     } else if (path === '/radio') {
       viewRadio();
+    } else if (/^\/radio\/[a-z0-9-]+$/i.test(path)) {
+      viewRadioPlayer(path.slice('/radio/'.length));
     } else if (path === '/new') {
       await viewNew(url);
     } else if (path === '/me') {
