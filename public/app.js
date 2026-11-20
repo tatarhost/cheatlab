@@ -5506,16 +5506,28 @@ function viewRadioPlayer(stationId) {
   const playGlyph = h('span', { class: 'radio-play-glyph', text: '▶', 'aria-hidden': 'true' });
   const playLabel = h('span', { class: 'radio-play-label', text: 'Слушать эфир' });
   const playButton = h('button', {
-    class: 'radio-play-button', type: 'button', 'aria-label': 'Начать воспроизведение',
+    class: station.id === 'radiomedved'
+      ? 'radio-play-button radio-play-button-medved'
+      : 'radio-play-button',
+    type: 'button',
+    'aria-label': 'Начать воспроизведение',
   }, playGlyph, playLabel);
   const medvedFallback = h('div', { class: 'radio-fallback', hidden: true },
     h('p', { class: 'radio-fallback-copy', text: 'Прямой поток не открылся в этом браузере. Радио продолжает работать — попробуй запасной веб-плеер.' }),
-    h('a', {
-      class: 'radio-fallback-link',
-      href: 'https://www.radioguide.fm/internet-radio-russia/radio-medved',
-      target: '_blank',
-      rel: 'noopener noreferrer',
-    }, 'Открыть запасной веб-плеер', h('span', { text: '↗', 'aria-hidden': 'true' })),
+    h('div', { class: 'radio-fallback-actions' },
+      h('a', {
+        class: 'radio-fallback-link radio-fallback-link-official',
+        href: 'https://radiomedved.ru/',
+        target: '_blank',
+        rel: 'noopener noreferrer',
+      }, 'Официальный сайт и эфир', h('span', { text: '↗', 'aria-hidden': 'true' })),
+      h('a', {
+        class: 'radio-fallback-link',
+        href: 'https://www.radioguide.fm/internet-radio-russia/radio-medved',
+        target: '_blank',
+        rel: 'noopener noreferrer',
+      }, 'Запасной веб-плеер', h('span', { text: '↗', 'aria-hidden': 'true' })),
+    ),
   );
   const volume = h('input', { class: 'radio-volume-range', type: 'range', min: '0', max: '1', step: '0.01', value: '0.8', 'aria-label': 'Громкость' });
   audio.volume = 0.8;
@@ -5637,6 +5649,15 @@ function viewRadioPlayer(stationId) {
           player.classList.remove('is-buffering', 'is-playing');
         });
       return;
+    }
+    if (station.id === 'radiomedved' && audio.error) {
+      // Retry the supplied AAC stream from a clean media element state.
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+      audio.src = 'https://air.radiomedved.ru/rm320_main';
+      status.textContent = 'ПОВТОРНОЕ ПОДКЛЮЧЕНИЕ К RADIO MEDVED…';
+      medvedFallback.hidden = true;
     }
     if (!audio.src && !activeRadioHls) audio.src = station.stream;
     startAudioPlayback();
