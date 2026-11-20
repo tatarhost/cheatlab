@@ -2043,3 +2043,76 @@ a.stat-box:hover .stat-label { color: var(--ink); }
 @media (max-width: 420px) {
   .radio-card-logo { height: 82px; }
 }
+
+
+/* High-contrast radio play control and explicit Medved fallback */
+.radio-play-button,
+.radio-play-button:visited {
+  min-width: 188px;
+  min-height: 56px;
+  padding: 0 22px;
+  border: 1px solid #b9ef59 !important;
+  border-radius: 4px;
+  color: #11170b !important;
+  background: linear-gradient(135deg, #b9ef59 0%, #d9ff83 100%) !important;
+  box-shadow: 0 8px 24px rgba(164, 224, 74, .16);
+  font: 800 13px/1 var(--sans);
+  -webkit-text-fill-color: #11170b !important;
+}
+.radio-play-button:hover {
+  background: linear-gradient(135deg, #cbff70 0%, #e7ffac 100%) !important;
+  border-color: #d6ff89 !important;
+  box-shadow: 0 12px 30px rgba(164, 224, 74, .24);
+}
+.radio-play-button:focus-visible {
+  outline: 3px solid rgba(185,239,89,.42);
+  outline-offset: 3px;
+}
+.radio-play-button .radio-play-glyph,
+.radio-play-button .radio-play-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #11170b !important;
+  -webkit-text-fill-color: #11170b !important;
+  opacity: 1 !important;
+}
+.radio-play-button .radio-play-glyph {
+  width: 19px;
+  font: 900 18px/1 Arial, sans-serif;
+}
+.radio-play-button .radio-play-label {
+  font: 800 13px/1 var(--sans);
+}
+.radio-fallback {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid rgba(185,239,89,.38);
+  background: rgba(185,239,89,.055);
+  animation: radio-hub-in .24s ease both;
+}
+.radio-fallback[hidden] { display: none !important; }
+.radio-fallback-copy {
+  margin: 0 0 10px;
+  color: var(--mute);
+  font-size: 11px;
+  line-height: 1.55;
+}
+.radio-fallback-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 0 13px;
+  border: 1px solid rgba(185,239,89,.55);
+  color: #d7ff91 !important;
+  background: rgba(185,239,89,.09);
+  font: 750 11px/1 var(--sans);
+  text-decoration: none;
+  transition: background .16s ease, transform .16s ease;
+}
+.radio-fallback-link:hover {
+  transform: translateY(-1px);
+  background: rgba(185,239,89,.16);
+}
+.radio-fallback-link span { font-size: 14px; }
