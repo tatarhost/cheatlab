@@ -5280,7 +5280,7 @@ const RADIO_STATIONS = [
     id: 'radiomedved', name: 'radiomedved', subtitle: 'Радио Медведь', genre: 'Авторское радио',
     description: 'Онлайн-трансляция radiomedved.',
     logo: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTr9oRXOEvnpRkjAJs03zBON1xLWhJDolPoQt5iG3A2nQ&s=10',
-    stream: 'https://air.radiomedved.ru/rm320_main', site: 'https://air.radiomedved.ru/rm320_main',
+    stream: 'https://air.radiomedved.ru/rm320_main', site: 'https://radiomedved.ru/',
     color: '#d69b49', kind: 'audio'
   },
   {
@@ -5503,11 +5503,20 @@ function viewRadioPlayer(stationId) {
   activeRadioAudio = audio;
   const status = h('span', { class: 'radio-player-status-text', text: 'ГОТОВ К ВОСПРОИЗВЕДЕНИЮ' });
   const liveBadge = h('div', { class: 'radio-live-badge' }, h('span', { class: 'radio-live-dot' }), 'ПРЯМОЙ ЭФИР');
-  const playGlyph = icon('play');
-  const playLabel = h('span', { text: 'Слушать эфир' });
+  const playGlyph = h('span', { class: 'radio-play-glyph', text: '▶', 'aria-hidden': 'true' });
+  const playLabel = h('span', { class: 'radio-play-label', text: 'Слушать эфир' });
   const playButton = h('button', {
     class: 'radio-play-button', type: 'button', 'aria-label': 'Начать воспроизведение',
   }, playGlyph, playLabel);
+  const medvedFallback = h('div', { class: 'radio-fallback', hidden: true },
+    h('p', { class: 'radio-fallback-copy', text: 'Прямой поток не открылся в этом браузере. Радио продолжает работать — попробуй запасной веб-плеер.' }),
+    h('a', {
+      class: 'radio-fallback-link',
+      href: 'https://www.radioguide.fm/internet-radio-russia/radio-medved',
+      target: '_blank',
+      rel: 'noopener noreferrer',
+    }, 'Открыть запасной веб-плеер', h('span', { text: '↗', 'aria-hidden': 'true' })),
+  );
   const volume = h('input', { class: 'radio-volume-range', type: 'range', min: '0', max: '1', step: '0.01', value: '0.8', 'aria-label': 'Громкость' });
   audio.volume = 0.8;
 
@@ -5543,6 +5552,7 @@ function viewRadioPlayer(stationId) {
         h('p', { class: 'radio-player-subtitle', text: station.description }),
         h('div', { class: 'radio-player-chip' }, h('span', { class: 'radio-player-chip-dot' }), station.genre),
         controls,
+        ...(station.id === 'radiomedved' ? [medvedFallback] : []),
         h('div', { class: 'radio-volume-row' },
           icon('volume-2'),
           h('span', { class: 'radio-volume-label', text: 'ГРОМКОСТЬ' }),
@@ -5560,13 +5570,14 @@ function viewRadioPlayer(stationId) {
   );
   audio.addEventListener('playing', () => {
     status.textContent = 'СЕЙЧАС В ЭФИРЕ';
-    playButton.replaceChildren(icon('pause'), h('span', { text: 'Пауза' }));
+    playButton.replaceChildren(h('span', { class: 'radio-play-glyph', text: 'Ⅱ', 'aria-hidden': 'true' }), h('span', { class: 'radio-play-label', text: 'Пауза' }));
     playButton.setAttribute('aria-label', 'Приостановить воспроизведение');
     player.classList.add('is-playing');
+    medvedFallback.hidden = true;
   });
   audio.addEventListener('pause', () => {
     status.textContent = 'ВОСПРОИЗВЕДЕНИЕ ПРИОСТАНОВЛЕНО';
-    playButton.replaceChildren(icon('play'), h('span', { text: 'Продолжить эфир' }));
+    playButton.replaceChildren(h('span', { class: 'radio-play-glyph', text: '▶', 'aria-hidden': 'true' }), h('span', { class: 'radio-play-label', text: 'Продолжить эфир' }));
     playButton.setAttribute('aria-label', 'Продолжить воспроизведение');
     player.classList.remove('is-playing');
   });
@@ -5576,8 +5587,15 @@ function viewRadioPlayer(stationId) {
   });
   audio.addEventListener('canplay', () => player.classList.remove('is-buffering'));
   audio.addEventListener('error', () => {
-    status.textContent = 'ПОТОК НЕДОСТУПЕН · ПОПРОБУЙ ПОЗЖЕ';
+    status.textContent = station.id === 'radiomedved'
+      ? 'ПРЯМОЙ ПОТОК НЕ ОТВЕТИЛ · ЕСТЬ ЗАПАСНОЙ ПЛЕЕР'
+      : 'ПОТОК НЕДОСТУПЕН · ПОПРОБУЙ ПОЗЖЕ';
     player.classList.remove('is-playing', 'is-buffering');
+    if (station.id === 'radiomedved') {
+      medvedFallback.hidden = false;
+      playButton.replaceChildren(h('span', { class: 'radio-play-glyph', text: '↻', 'aria-hidden': 'true' }), h('span', { class: 'radio-play-label', text: 'Повторить запуск' }));
+      playButton.setAttribute('aria-label', 'Повторить запуск');
+    }
   });
   function startAudioPlayback() {
     status.textContent = 'ПОДКЛЮЧЕНИЕ К ЭФИРУ…';
@@ -5587,8 +5605,15 @@ function viewRadioPlayer(stationId) {
     const playback = audio.play();
     if (playback && typeof playback.catch === 'function') {
       playback.catch(() => {
-        status.textContent = 'НЕ УДАЛОСЬ ЗАПУСТИТЬ · ОТКРОЙ ПОТОК ОТДЕЛЬНО';
+        status.textContent = station.id === 'radiomedved'
+          ? 'ПРЯМОЙ ПОТОК НЕ ОТВЕТИЛ · ЕСТЬ ЗАПАСНОЙ ПЛЕЕР'
+          : 'НЕ УДАЛОСЬ ЗАПУСТИТЬ · ОТКРОЙ ПОТОК ОТДЕЛЬНО';
         player.classList.remove('is-buffering', 'is-playing');
+        if (station.id === 'radiomedved') {
+          medvedFallback.hidden = false;
+          playButton.replaceChildren(h('span', { class: 'radio-play-glyph', text: '↻', 'aria-hidden': 'true' }), h('span', { class: 'radio-play-label', text: 'Повторить запуск' }));
+          playButton.setAttribute('aria-label', 'Повторить запуск');
+        }
       });
     }
   }
