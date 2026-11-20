@@ -2116,3 +2116,74 @@ a.stat-box:hover .stat-label { color: var(--ink); }
   background: rgba(185,239,89,.16);
 }
 .radio-fallback-link span { font-size: 14px; }
+
+
+/* Radio Medved: keep the primary control visibly contrasted in every theme. */
+.radio-play-button-medved {
+  color: #fff !important;
+  -webkit-text-fill-color: #fff !important;
+  background: linear-gradient(135deg, #ed535a 0%, #c83253 100%) !important;
+  border: 1px solid #ff858a !important;
+  box-shadow: 0 8px 24px rgba(211, 49, 78, .25), inset 0 1px 0 rgba(255,255,255,.2) !important;
+}
+.radio-play-button-medved:hover {
+  background: linear-gradient(135deg, #fa6268 0%, #d83c60 100%) !important;
+  box-shadow: 0 12px 28px rgba(211, 49, 78, .34) !important;
+}
+.radio-play-button-medved:focus-visible {
+  outline: 3px solid rgba(255, 133, 138, .65);
+  outline-offset: 3px;
+}
+.radio-play-button-medved > span {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  color: #fff !important;
+  -webkit-text-fill-color: #fff !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+.radio-play-button-medved .radio-play-glyph {
+  width: 17px;
+  font-size: 17px;
+  line-height: 1;
+}
+.radio-play-button-medved .radio-play-label {
+  font-size: 13px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.radio-fallback[hidden] { display: none !important; }
+.radio-fallback-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 12px;
+}
+.radio-fallback-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 38px;
+  padding: 0 13px;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  background: var(--fog-2);
+  font-size: 11px;
+  font-weight: 650;
+  text-decoration: none;
+  transition: border-color .16s ease, transform .16s ease, background .16s ease;
+}
+.radio-fallback-link:hover {
+  transform: translateY(-1px);
+  border-color: #ed535a;
+  background: var(--fog);
+}
+.radio-fallback-link-official {
+  border-color: rgba(237,83,90,.5);
+}
+@media (prefers-reduced-motion: reduce) {
+  .radio-play-button-medved,
+  .radio-fallback-link { transition: none !important; }
+}
