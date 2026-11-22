@@ -245,7 +245,7 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(ssid) && string.IsNullOrWhiteSpace(state))
             return "";
 
-        return $"Сеть: {string.IsNullOrWhiteSpace(ssid) ? "—" : ssid} · Статус: {state ?? "—"} · Канал: {channel ?? "—"} · Сигнал: {signal ?? "—"}";
+        return $"Сеть: {(string.IsNullOrWhiteSpace(ssid) ? "—" : ssid)} · Статус: {state ?? "—"} · Канал: {channel ?? "—"} · Сигнал: {signal ?? "—"}";
     }
 
     private static List<WirelessNetwork> ParseNetworks(string output)
