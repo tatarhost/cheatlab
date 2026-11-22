@@ -29,15 +29,8 @@ jobs:
 
       - uses: actions/configure-pages@v5
 
-      # Pages serves 404.html for any path it does not have on disk, and the app
-      # is a single page that routes on the client. public/404.html is a committed
-      # file that parks the requested path in sessionStorage and hands it to the
-      # app, which then takes the address bar back - so a shared link like
-      # /cheatlab/i/a1b2c3d4 opens the publication *and* keeps its URL. It used
-      # to be generated here by copying index.html over it, which rendered the app
-      # but left the address bar on the 404 path and could not be reasoned about
-      # from either file.
-
+      # Pages serves 404.html for paths that do not have a physical file.
+      # Keep the committed SPA fallback so deep links continue to work.
       - name: Check application JavaScript syntax
         run: |
           for file in public/*.js; do
@@ -45,9 +38,8 @@ jobs:
             node --check "$file"
           done
 
-      # Keep the Pages artifact unique to the workflow run and attempt.
-      # This avoids collisions when a job is re-run while preserving exact-name
-      # matching in deploy-pages.
+      # A run/attempt-specific name avoids collisions with artifacts left by
+      # previous retries of this workflow.
       - name: Upload static site
         uses: actions/upload-pages-artifact@v5.0.0
         with:
@@ -55,9 +47,9 @@ jobs:
           path: public
           retention-days: 1
 
-      # The Pages upload and the artifact metadata service can become visible
-      # at slightly different times. Poll the workflow-run artifact API first,
-      # then allow a short consistency window before calling deploy-pages.
+      # The artifact service and the workflow-run REST API can become visible
+      # at slightly different times. Verify the exact artifact, then allow the
+      # Pages artifact index a short consistency window before deployment.
       - name: Verify Pages artifact is available
         uses: actions/github-script@v7
         env:
@@ -89,62 +81,3 @@ jobs:
         uses: actions/deploy-pages@v5.0.1
         with:
           artifact_name: cheatlab-pages-${{ github.run_id }}-${{ github.run_attempt }}
-name: Deploy site
-
-# Publishes public/ to GitHub Pages. The API is a Cloudflare Worker deployed
-# separately with `wrangler deploy` (see worker/wrangler.toml), so this workflow
-# only ships static files.
-
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
-jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/configure-pages@v5
-
-      # Pages serves 404.html for any path it does not have on disk, and the app
-      # is a single page that routes on the client. public/404.html is a committed
-      # file that parks the requested path in sessionStorage and hands it to the
-      # app, which then takes the address bar back - so a shared link like
-      # /cheatlab/i/a1b2c3d4 opens the publication *and* keeps its URL. It used
-      # to be generated here by copying index.html over it, which rendered the app
-      # but left the address bar on the 404 path and could not be reasoned about
-      # from either file.
-
-      - name: Check application JavaScript syntax
-        run: |
-          for file in public/*.js; do
-            echo "Checking $file"
-            node --check "$file"
-          done
-
-      # A unique artifact name per attempt prevents stale artifacts from a
-      # previous rerun being selected alongside the current Pages artifact.
-      - name: Upload static site
-        uses: actions/upload-pages-artifact@v3
-        with:
-          name: github-pages-${{ github.run_attempt }}
-          path: public
-
-      - id: deployment
-        uses: actions/deploy-pages@v4
-        with:
-          artifact_name: github-pages-${{ github.run_attempt }}
