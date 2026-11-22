@@ -20,7 +20,7 @@
       </Grid.ColumnDefinitions>
       <StackPanel>
         <TextBlock Text="CHEATLAB / NETWORK TOOLS" Foreground="{StaticResource MutedBrush}"
-                   FontSize="10" FontWeight="Bold" CharacterSpacing="170"/>
+                   FontSize="10" FontWeight="Bold"/>
         <TextBlock Text="Wi-Fi Studio" FontSize="30" FontWeight="Bold" Margin="0,5,0,0"/>
         <TextBlock Text="Скорость интернета · эфир Wi-Fi · обратимые настройки адаптера"
                    Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,3,0,0"/>
