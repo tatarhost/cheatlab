@@ -1,0 +1,42 @@
+name: Build CHEATLAB Wi-Fi Studio for Windows
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "wifi-tool/**"
+      - ".github/workflows/wifi-studio-exe.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "wifi-tool/**"
+      - ".github/workflows/wifi-studio-exe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Build standalone Windows application
+        run: dotnet publish wifi-tool/CheatLab.WifiStudio.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=false --output publish
+      - name: Verify executable
+        shell: pwsh
+        run: |
+          $exe = "publish/CHEATLAB-WiFi-Studio.exe"
+          if (!(Test-Path $exe)) { throw "Wi-Fi Studio EXE was not created" }
+          $file = Get-Item $exe
+          if ($file.Length -lt 1000000) { throw "Executable looks unexpectedly small: $($file.Length) bytes" }
+          Write-Host "Created $($file.Name) ($($file.Length) bytes)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CHEATLAB-WiFi-Studio-Windows
+          path: publish/CHEATLAB-WiFi-Studio.exe
+          if-no-files-found: error
+          retention-days: 30
