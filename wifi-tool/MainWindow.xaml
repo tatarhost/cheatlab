@@ -124,7 +124,7 @@
             </StackPanel>
           </Border>
           <StackPanel Grid.Row="2" x:Name="ChannelBarsPanel" Margin="0,0,0,14"/>
-          <DataGrid Grid.Row="3" x:Name="NetworksGrid" ItemsSource="{Binding}"
+          <DataGrid Grid.Row="3" x:Name="NetworksGrid"
                     AlternationCount="2" MinHeight="180">
             <DataGrid.Columns>
               <DataGridTextColumn Header="Сеть" Binding="{Binding Ssid}" Width="2*"/>
