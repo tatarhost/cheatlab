@@ -483,6 +483,7 @@ $json = ConvertTo-Json -InputObject $result -Depth 8 -Compress
         finally
         {
             _loadingSettings = false;
+            PopulateSettingsForSelectedAdapter();
             UpdateApplyState();
         }
     }
@@ -499,9 +500,15 @@ $json = ConvertTo-Json -InputObject $result -Depth 8 -Compress
     private void AdapterPicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_loadingSettings) return;
+        PopulateSettingsForSelectedAdapter();
+    }
+
+    private void PopulateSettingsForSelectedAdapter()
+    {
         if (AdapterPicker.SelectedItem is not WifiAdapter adapter)
         {
             PropertyPicker.ItemsSource = null;
+            TargetValuePicker.ItemsSource = null;
             return;
         }
 
@@ -707,7 +714,9 @@ try {
     $payloadJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{json64}}'))
     $payload = ConvertFrom-Json -InputObject $payloadJson
     $pattern = '(?i)(preferred\s*band|roaming\s*aggressiveness|transmit\s*power|предпочитаемая\s*полоса|агрессивность\s*роуминга|мощность\s*передачи)'
-    $property = Get-NetAdapterAdvancedProperty -Name $payload.Adapter -RegistryKeyword $payload.RegistryKeyword -ErrorAction Stop
+    $property = @(Get-NetAdapterAdvancedProperty -Name $payload.Adapter -AllProperties -ErrorAction Stop | Where-Object { [string]$_.RegistryKeyword -ceq [string]$payload.RegistryKeyword } | Select-Object -First 1)
+    if ($property.Count -eq 0) { throw 'Параметр адаптера больше не найден.' }
+    $property = $property[0]
     if ($property.DisplayName -notmatch $pattern) { throw 'Параметр не входит в разрешённый список.' }
     $valid = @($property.ValidDisplayValues | ForEach-Object { [string]$_ })
     if ($valid -notcontains [string]$payload.Value) { throw 'Значение не поддерживается драйвером.' }
@@ -730,7 +739,9 @@ try {
     $items = @(ConvertFrom-Json -InputObject $payloadJson)
     $pattern = '(?i)(preferred\s*band|roaming\s*aggressiveness|transmit\s*power|предпочитаемая\s*полоса|агрессивность\s*роуминга|мощность\s*передачи)'
     foreach ($item in $items) {
-        $property = Get-NetAdapterAdvancedProperty -Name $item.Adapter -RegistryKeyword $item.RegistryKeyword -ErrorAction Stop
+        $property = @(Get-NetAdapterAdvancedProperty -Name $item.Adapter -AllProperties -ErrorAction Stop | Where-Object { [string]$_.RegistryKeyword -ceq [string]$item.RegistryKeyword } | Select-Object -First 1)
+        if ($property.Count -eq 0) { throw ('Параметр адаптера больше не найден: ' + $item.DisplayName) }
+        $property = $property[0]
         if ($property.DisplayName -notmatch $pattern) { throw ('Недопустимый параметр: ' + $item.DisplayName) }
         $valid = @($property.ValidDisplayValues | ForEach-Object { [string]$_ })
         if ($valid -notcontains [string]$item.Value) { throw ('Исходное значение больше не поддерживается: ' + $item.DisplayName) }
