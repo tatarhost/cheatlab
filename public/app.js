@@ -5666,6 +5666,153 @@ function viewRadioPlayer(stationId) {
   $view.replaceChildren(player);
 }
 
+// ---------------------------------------------------------------- CHEATLAB Wi-Fi tools
+
+function viewWifi() {
+  let controller = null;
+  const page = h('section', { class: 'wifi-page' });
+  const hero = h('div', { class: 'wifi-page-heading' },
+    h('div', { class: 'wifi-eyebrow', text: 'CHEATLAB / NETWORK TOOLS' }),
+    h('h1', { text: 'Интернет и Wi-Fi' }),
+    h('p', { class: 'wifi-page-lead', text: 'Проверь скорость соединения прямо в браузере, а для анализа радиоэфира и обратимых настроек адаптера скачай Windows-инструмент.' }),
+  );
+
+  const downloadMetric = h('div', { class: 'wifi-metric-value', text: '—' });
+  const uploadMetric = h('div', { class: 'wifi-metric-value', text: '—' });
+  const pingMetric = h('div', { class: 'wifi-metric-value', text: '—' });
+  const status = h('p', { class: 'wifi-test-status', text: 'Готово к проверке' });
+  const testButton = h('button', { class: 'btn btn-primary wifi-test-button', type: 'button', text: 'Запустить тест' });
+  const metric = (label, value, unit) => h('div', { class: 'wifi-metric' },
+    h('span', { class: 'wifi-metric-label', text: label }),
+    value,
+    h('span', { class: 'wifi-metric-unit', text: unit }),
+  );
+  const speedPanel = h('section', { class: 'wifi-speed-panel' },
+    h('div', { class: 'wifi-panel-heading' },
+      h('div', {}, h('div', { class: 'wifi-section-kicker', text: '01 / SPEED TEST' }), h('h2', { text: 'Скорость интернета' })),
+      h('span', { class: 'wifi-live-label', text: 'CLOUDFLARE EDGE' }),
+    ),
+    h('div', { class: 'wifi-metrics' },
+      metric('DOWNLOAD', downloadMetric, 'Мбит/с'),
+      metric('UPLOAD', uploadMetric, 'Мбит/с'),
+      metric('PING', pingMetric, 'мс'),
+    ),
+    h('div', { class: 'wifi-test-actions' }, testButton, status),
+    h('p', { class: 'wifi-test-note', text: 'Один тест передаёт примерно 10 МБ временных данных через Cloudflare. Личные файлы и содержимое устройства не отправляются. Итог зависит от Wi-Fi, роутера и загруженности сети.' }),
+    h('p', { class: 'wifi-test-error', hidden: true }),
+  );
+
+  const appPanel = h('section', { class: 'wifi-app-panel' },
+    h('div', { class: 'wifi-app-copy' },
+      h('div', { class: 'wifi-section-kicker', text: '02 / WINDOWS UTILITY' }),
+      h('h2', { text: 'CHEATLAB Wi-Fi Studio' }),
+      h('p', { text: 'Отдельное приложение для Windows: сканирование ближайших сетей, подсчёт занятых каналов 2,4 и 5/6 ГГц, рекомендации, чтение параметров Wi-Fi-адаптера и сравнение изменений до их применения.' }),
+      h('div', { class: 'wifi-app-points' },
+        h('span', {}, 'Сканер Wi-Fi каналов'),
+        h('span', {}, 'Настройки адаптера'),
+        h('span', {}, 'Предпросмотр до/после'),
+        h('span', {}, 'Резервная копия и откат'),
+      ),
+      h('a', {
+        class: 'btn btn-primary wifi-download-button',
+        href: 'https://github.com/tatarhost/cheatlab/actions/workflows/wifi-studio-exe.yml',
+        target: '_blank',
+        rel: 'noopener noreferrer',
+      }, 'Открыть сборку Windows', icon('download')),
+    ),
+    h('div', { class: 'wifi-app-mark', 'aria-hidden': 'true' },
+      h('div', { class: 'wifi-mark-ring' }),
+      h('div', { class: 'wifi-mark-core' }, icon('wifi')),
+      h('span', { class: 'wifi-mark-caption', text: 'WI-FI / 01' }),
+    ),
+  );
+
+  const routerNote = h('p', { class: 'wifi-router-note', text: 'Ограничение: сканер показывает, какие каналы заняты вокруг компьютера. Сам канал точки доступа настраивается в роутере — универсального способа менять его из Windows нет. Программа не входит в роутер и не меняет его настройки автоматически.' });
+  page.append(hero, speedPanel, appPanel, routerNote);
+  $view.replaceChildren(page);
+
+  const errorNode = speedPanel.querySelector('.wifi-test-error');
+  const setStatus = (value) => { status.textContent = value; };
+  const speed = (bytes, milliseconds) => bytes * 8 / (milliseconds / 1000) / 1_000_000;
+
+  async function measureDownload(bytes, signal) {
+    const started = performance.now();
+    const response = await fetch('https://speed.cloudflare.com/__down?bytes=' + bytes + '&nonce=' + crypto.randomUUID(), {
+      cache: 'no-store', mode: 'cors', signal,
+    });
+    if (!response.ok) throw new Error('Сервер теста ответил ' + response.status);
+    const data = await response.arrayBuffer();
+    return { value: speed(data.byteLength, performance.now() - started), bytes: data.byteLength };
+  }
+
+  async function runBrowserSpeedTest(signal) {
+    const latencySamples = [];
+    for (let i = 0; i < 3; i++) {
+      setStatus('Проверка задержки · ' + (i + 1) + '/3');
+      const started = performance.now();
+      const response = await fetch('https://speed.cloudflare.com/__down?bytes=16384&nonce=' + crypto.randomUUID(), {
+        cache: 'no-store', mode: 'cors', signal,
+      });
+      if (!response.ok) throw new Error('Сервер теста ответил ' + response.status);
+      await response.arrayBuffer();
+      latencySamples.push(performance.now() - started);
+    }
+    latencySamples.sort((a, b) => a - b);
+    pingMetric.textContent = latencySamples[1].toFixed(0);
+
+    setStatus('Измеряем загрузку…');
+    const down = await measureDownload(8_000_000, signal);
+    downloadMetric.textContent = down.value.toFixed(1);
+
+    setStatus('Измеряем отправку…');
+    const payload = new Uint8Array(1_500_000);
+    for (let offset = 0; offset < payload.length; offset += 65_536) {
+      crypto.getRandomValues(payload.subarray(offset, Math.min(offset + 65_536, payload.length)));
+    }
+    const started = performance.now();
+    const response = await fetch('https://speed.cloudflare.com/__up?nonce=' + crypto.randomUUID(), {
+      method: 'POST',
+      mode: 'cors',
+      cache: 'no-store',
+      signal,
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: payload,
+    });
+    if (!response.ok) throw new Error('Сервер теста ответил ' + response.status);
+    await response.arrayBuffer();
+    uploadMetric.textContent = speed(payload.byteLength, performance.now() - started).toFixed(1);
+  }
+
+  testButton.addEventListener('click', async () => {
+    if (controller) {
+      controller.abort();
+      return;
+    }
+    controller = new AbortController();
+    errorNode.hidden = true;
+    testButton.textContent = 'Остановить тест';
+    testButton.disabled = false;
+    downloadMetric.textContent = '…';
+    uploadMetric.textContent = '…';
+    pingMetric.textContent = '…';
+    try {
+      await runBrowserSpeedTest(controller.signal);
+      setStatus('Проверка завершена');
+    } catch (error) {
+      if (error && error.name === 'AbortError') {
+        setStatus('Тест остановлен');
+      } else {
+        setStatus('Не удалось завершить тест');
+        errorNode.textContent = (error && error.message ? error.message : 'Ошибка соединения') + ' · Можно открыть официальный тест Cloudflare.';
+        errorNode.hidden = false;
+      }
+    } finally {
+      controller = null;
+      testButton.textContent = 'Запустить тест';
+    }
+  });
+}
+
 // ---------------------------------------------------------------- app downloads
 
 async function viewDownloads() {
@@ -5815,6 +5962,8 @@ async function route() {
       await viewGame(path.slice('/games/'.length));
     } else if (path === '/downloads') {
       await viewDownloads();
+    } else if (path === '/wifi') {
+      viewWifi();
     } else if (path === '/radio') {
       viewRadio();
     } else if (/^\/radio\/[a-z0-9-]+$/i.test(path)) {
