@@ -11,6 +11,10 @@ import sqlite3
 import threading
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from kaggle.api.kaggle_api_extended import KaggleApi
 
 
