@@ -88,14 +88,16 @@ class NodePool:
             self.nodes[node_id] = Node(node_id=node_id, worker_url=worker_url, generation=generation)
             self.condition.notify_all()
 
-    async def heartbeat(self, node_id: str, status: str, active_requests: int) -> None:
+    async def heartbeat(self, node_id: str, status: str, active_requests: int | None) -> None:
         async with self.condition:
             node = self.nodes.get(node_id)
             if node is None:
                 raise KeyError(node_id)
             node.last_seen = time.monotonic()
             node.status = status if status in {"idle", "busy", "draining"} else "busy"
-            node.active_requests = max(0, min(active_requests, 128))
+            # Do not let periodic heartbeats erase in-flight counts tracked by the hub.
+            if active_requests is not None:
+                node.active_requests = max(0, min(active_requests, 128))
             self.condition.notify_all()
 
     async def acquire(self) -> Node:
@@ -224,7 +226,7 @@ async def heartbeat(payload: dict, x_cluster_secret: str | None = Header(default
     node_id = str(payload.get("node_id", ""))
     try:
         await pool.heartbeat(node_id, str(payload.get("status", "busy")),
-                             int(payload.get("active_requests", 0)))
+                             int(payload["active_requests"]) if "active_requests" in payload else None)
     except KeyError:
         raise HTTPException(404, "Node is not registered; register again")
     return {"ok": True}
@@ -325,8 +327,3 @@ async def openai_proxy(path: str, request: Request,
             await pool.release(node.node_id)
             raise
     raise HTTPException(502, f"No worker accepted the request: {type(last_error).__name__ if last_error else 'unavailable'}")
-
-
-@app.get("/v1/models")
-async def models_alias(request: Request, authorization: str | None = Header(default=None)):
-    return await openai_proxy("models", request, authorization)
