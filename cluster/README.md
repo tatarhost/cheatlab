@@ -41,7 +41,7 @@ cd cluster
 cp .env.example .env
 # Edit .env on the server
 docker build -f Dockerfile -t cheatlab-cluster ..
-docker run --env-file .env -p 8000:8000 cheatlab-cluster
+docker run --env-file .env -v cheatlab-kaggle-state:/data -p 8000:8000 cheatlab-cluster
 ```
 
 For a direct Python run:
@@ -66,7 +66,7 @@ Base URL: `https://api.cheatlab.fun/v1`
 
 API key: the value configured as `OPENAI_API_KEY`.
 
-The hub retries a request only when it fails before an upstream response is established (or when an upstream returns 502/503/504 before streaming starts). It cannot safely replay a generation after bytes have been sent to the client.
+Set `AUTO_SCALE_ENABLED=true` only after Kaggle credentials, Kaggle Secrets, model dataset, and Pinggy connectivity have been tested. The hub then requests one extra Kaggle kernel when a node is already serving traffic, subject to the live-kernel quota check and a five-minute cooldown. Scale-up is best-effort; requests remain queued while a node starts.\n\nThe hub retries a request only when it fails before an upstream response is established (or when an upstream returns 502/503/504 before streaming starts). It cannot safely replay a generation after bytes have been sent to the client.
 
 ## GitHub Actions
 
