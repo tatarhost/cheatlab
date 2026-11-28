@@ -29,7 +29,7 @@ MASTER = secret("MASTER_PUBLIC_URL").rstrip("/")
 CLUSTER_SECRET = secret("CLUSTER_SECRET")
 PINGGY_TARGET = secret("PINGGY_SSH_TARGET", "a.pinggy.io")
 MODEL_PATH = secret("MODEL_PATH", "/kaggle/input/ail-model/model.gguf")
-NODE_ID = os.getenv("KAGGLE_KERNEL_SLUG", "kaggle-worker-" + str(int(time.time())))
+NODE_ID = "__CHEATLAB_NODE_ID__"
 PORT = int(os.getenv("LLAMA_PORT", "8080"))
 if not MASTER.startswith("https://") or not CLUSTER_SECRET:
     raise RuntimeError("Missing MASTER_PUBLIC_URL or CLUSTER_SECRET in Kaggle Secrets")
@@ -99,13 +99,14 @@ def main() -> None:
     ], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
     wait_http(f"http://127.0.0.1:{PORT}/health")
     current_tunnel = None
+    tunnel_started = 0.0
     stop = threading.Event()
 
     def heartbeat() -> None:
         while not stop.is_set():
             try:
                 post("/api/cluster/heartbeat", {
-                    "node_id": NODE_ID, "status": "idle", "active_requests": 0,
+                    "node_id": NODE_ID, "status": "idle",
                 })
             except Exception:
                 pass
@@ -114,7 +115,8 @@ def main() -> None:
     threading.Thread(target=heartbeat, daemon=True).start()
     try:
         while llama.poll() is None:
-            if current_tunnel is None or current_tunnel.poll() is not None:
+            if (current_tunnel is None or current_tunnel.poll() is not None
+                    or time.monotonic() - tunnel_started >= 50 * 60):
                 if current_tunnel is not None:
                     current_tunnel.terminate()
                     try: current_tunnel.wait(timeout=8)
@@ -125,6 +127,7 @@ def main() -> None:
                     "-R", f"0:127.0.0.1:{PORT}", PINGGY_TARGET,
                 ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
                 public_url = tunnel_url(current_tunnel)
+                tunnel_started = time.monotonic()
                 post("/api/cluster/register", {
                     "node_id": NODE_ID, "worker_url": public_url + "/v1",
                 })
