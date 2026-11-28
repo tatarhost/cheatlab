@@ -186,8 +186,12 @@ async def _maybe_auto_scale() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     global client
-    if not settings.openai_api_key or not settings.cluster_secret or not settings.admin_password:
-        raise RuntimeError("Set OPENAI_API_KEY, CLUSTER_SECRET and ADMIN_PASSWORD before startup")
+    if not settings.openai_api_key or len(settings.openai_api_key) < 32:
+        raise RuntimeError("OPENAI_API_KEY must contain at least 32 characters")
+    if not settings.cluster_secret or len(settings.cluster_secret) < 32:
+        raise RuntimeError("CLUSTER_SECRET must contain at least 32 characters")
+    if not settings.admin_password or len(settings.admin_password) < 16:
+        raise RuntimeError("ADMIN_PASSWORD must contain at least 16 characters")
     client = httpx.AsyncClient(timeout=httpx.Timeout(connect=12, read=None, write=60, pool=20),
                                limits=httpx.Limits(max_connections=200, max_keepalive_connections=40))
     sweeper = asyncio.create_task(_sweep())
@@ -238,7 +242,7 @@ async def health():
 
 @app.post("/api/cluster/register")
 async def register_node(payload: dict, x_cluster_secret: str | None = Header(default=None)):
-    _require_cluster(x_cluster_secret or payload.get("secret"))
+    _require_cluster(x_cluster_secret)
     node_id = str(payload.get("node_id", ""))[:80]
     if not node_id or not all(c.isalnum() or c in "-_" for c in node_id):
         raise HTTPException(400, "Invalid node_id")
