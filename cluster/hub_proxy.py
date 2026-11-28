@@ -186,6 +186,7 @@ async def _maybe_auto_scale() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     global client
+    settings.max_gpu_nodes = min(2, max(1, settings.max_gpu_nodes))
     if not settings.openai_api_key or len(settings.openai_api_key) < 32:
         raise RuntimeError("OPENAI_API_KEY must contain at least 32 characters")
     if not settings.cluster_secret or len(settings.cluster_secret) < 32:
