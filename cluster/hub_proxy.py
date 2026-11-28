@@ -84,8 +84,13 @@ class NodePool:
     async def register(self, node_id: str, worker_url: str) -> None:
         async with self.condition:
             old = self.nodes.get(node_id)
-            generation = old.generation + 1 if old else 1
-            self.nodes[node_id] = Node(node_id=node_id, worker_url=worker_url, generation=generation)
+            if old:
+                # A Pinggy URL rotation is the same worker, not a new lease.
+                old.worker_url = worker_url
+                old.last_seen = time.monotonic()
+                old.generation += 1
+            else:
+                self.nodes[node_id] = Node(node_id=node_id, worker_url=worker_url)
             self.condition.notify_all()
 
     async def heartbeat(self, node_id: str, status: str, active_requests: int | None) -> None:
