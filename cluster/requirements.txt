@@ -3,3 +3,4 @@ uvicorn[standard]>=0.30,<1
 httpx>=0.27,<1
 pydantic-settings>=2.4,<3
 kaggle>=1.6,<2
+python-dotenv>=1,<2
