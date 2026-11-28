@@ -115,6 +115,8 @@ class NodePool:
                             node.active_requests += 1
                             node.status = "busy"
                             self.condition.notify_all()
+                            if settings.auto_scale_enabled and node.active_requests >= 1:
+                                asyncio.create_task(_maybe_auto_scale())
                             return node
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
@@ -154,6 +156,31 @@ class NodePool:
 
 pool = NodePool()
 client: httpx.AsyncClient | None = None
+_auto_scale_lock = asyncio.Lock()
+_last_auto_scale = 0.0
+
+
+async def _maybe_auto_scale() -> None:
+    global _last_auto_scale
+    if not settings.auto_scale_enabled:
+        return
+    async with _auto_scale_lock:
+        now = time.monotonic()
+        if now - _last_auto_scale < 300:
+            return
+        snapshot = await pool.snapshot()
+        nodes = snapshot["nodes"]
+        if len(nodes) >= settings.max_gpu_nodes or not nodes:
+            return
+        if not any(n["active_requests"] > 0 for n in nodes) and snapshot["queue_depth"] <= 1:
+            return
+        _last_auto_scale = now
+        try:
+            from kaggle_manager import KaggleManager
+            await KaggleManager().scale_up()
+        except Exception:
+            # Scaling is best-effort; requests remain in the FIFO queue.
+            return
 
 
 @asynccontextmanager
