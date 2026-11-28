@@ -49,9 +49,29 @@ class KaggleManager:
         with sqlite3.connect(self.state_db, timeout=20) as db:
             db.execute("CREATE TABLE IF NOT EXISTS launches (kernel TEXT PRIMARY KEY, node_id TEXT NOT NULL, launched_at INTEGER NOT NULL)")
             db.execute("DELETE FROM launches WHERE launched_at < ?", (now - 12 * 60 * 60,))
-            count = db.execute("SELECT COUNT(*) FROM launches").fetchone()[0]
-            if count >= self.max_nodes:
-                return {"ok": False, "reason": "GPU quota is already reserved by recent Kaggle launches", "limit": self.max_nodes}
+            rows = db.execute("SELECT kernel FROM launches").fetchall()
+            active = 0
+            stale: list[str] = []
+            for (kernel,) in rows:
+                status = subprocess.run(
+                    ["kaggle", "kernels", "status", kernel],
+                    capture_output=True, text=True, timeout=45,
+                    env={**os.environ, "KAGGLE_USERNAME": self.username, "KAGGLE_KEY": self.key},
+                    check=False,
+                )
+                state = (status.stdout + " " + status.stderr).upper()
+                if status.returncode == 0 and any(word in state for word in ("RUNNING", "QUEUED", "STARTING", "INITIALIZING")):
+                    active += 1
+                elif status.returncode == 0 and any(word in state for word in ("COMPLETE", "ERROR", "CANCELLED", "CANCELED")):
+                    stale.append(kernel)
+                else:
+                    # Unknown status is counted as active: fail closed rather than
+                    # risk exceeding Kaggle's concurrent GPU quota.
+                    active += 1
+            if stale:
+                db.executemany("DELETE FROM launches WHERE kernel=?", [(k,) for k in stale])
+            if active >= self.max_nodes:
+                return {"ok": False, "reason": "Kaggle GPU quota is already in use", "active": active, "limit": self.max_nodes}
             return self._push_kernel(db)
 
     def _push_kernel(self, db: sqlite3.Connection) -> dict:
