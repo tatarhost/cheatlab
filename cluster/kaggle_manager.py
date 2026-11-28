@@ -99,7 +99,6 @@ class KaggleManager:
                 "model_sources": [],
             }
             (folder / "kernel-metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-            import subprocess
             result = subprocess.run(
                 ["kaggle", "kernels", "push", "-p", str(folder)],
                 capture_output=True, text=True, timeout=180,
