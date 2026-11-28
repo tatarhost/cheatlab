@@ -1,0 +1,32 @@
+name: Cluster Python checks
+
+on:
+  push:
+    paths:
+      - "cluster/**"
+      - ".github/workflows/cluster-check.yml"
+  pull_request:
+    paths:
+      - "cluster/**"
+      - ".github/workflows/cluster-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-and-import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cluster/requirements.txt
+      - name: Install dependencies
+        run: pip install -r cluster/requirements.txt
+      - name: Compile Python modules
+        run: python -m compileall -q cluster
+      - name: Import service modules
+        working-directory: cluster
+        run: python -c "import hub_proxy, kaggle_manager"
